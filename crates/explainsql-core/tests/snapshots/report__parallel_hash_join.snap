@@ -1,0 +1,23 @@
+---
+source: crates/explainsql-core/tests/report.rs
+expression: text
+---
+82.4 ms. 34% of it in Parallel Hash Join.
+
+Planning 0.668 ms · Execution 82.4 ms · Buffers 4,372 pages, 64% from cache
+
+ Share      Time              Node                                                      Rows  Estimate  Buffers
+0.010%  0.008 ms              Finalize GroupAggregate                                      5         5        0
+  6.4%   5.25 ms  ▋           └─ Gather Merge                                             15        10        0
+0.041%  0.034 ms                 └─ Sort                                                5 ×3         5       16
+   18%   14.4 ms  █▊                └─ Partial HashAggregate                            5 ×3         5        0
+   34%   28.2 ms  ███▍                 └─ Parallel Hash Join                      100,000 ×3   125,000       28
+  9.1%   7.49 ms  ▉                       ├─ Parallel Seq Scan on order_items oi  100,000 ×3   125,000    1,911
+   23%   19.1 ms  ██▍                     └─ Parallel Hash                         66,667 ×3    83,333        0
+  9.3%   7.71 ms  ▉                          └─ Parallel Seq Scan on orders o      66,667 ×3    83,333    2,417
+
+No findings: none of the rules found a problem in this plan.
+
+Share and Time: time spent in each node itself, wall-clock. Rows: actual rows per loop, ×loops when
+it ran more than once. ▲/▼: actual rows above or below the estimate by 10× or more. Buffers: pages
+each node read itself.

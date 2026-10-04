@@ -11,7 +11,9 @@
     "anti_join": {
       "advice": null,
       "description": "NOT EXISTS subquery, planned as an anti join.",
-      "rules": [],
+      "rules": [
+        "ES001"
+      ],
       "status": "generated"
     },
     "bitmap_heap_scan": {
@@ -37,7 +39,9 @@
     "cte_materialized": {
       "advice": null,
       "description": "MATERIALIZED CTE scanned once: a CTE Scan plus the CTE subplan.",
-      "rules": [],
+      "rules": [
+        "ES004?"
+      ],
       "status": "generated"
     },
     "cte_multiple_scans": {
@@ -63,7 +67,9 @@
     "disabled_seqscan": {
       "advice": null,
       "description": "enable_seqscan = off on a table without indexes; PostgreSQL 18 marks the node as disabled, older versions add disable_cost to its estimate.",
-      "rules": [],
+      "rules": [
+        "ES012?"
+      ],
       "status": "generated"
     },
     "estimate_only": {
@@ -151,7 +157,10 @@
     "initplan": {
       "advice": null,
       "description": "Uncorrelated scalar subquery evaluated once as an InitPlan.",
-      "rules": [],
+      "rules": [
+        "ES001",
+        "ES002"
+      ],
       "status": "generated"
     },
     "insert_select_fk_checks": {
@@ -194,6 +203,7 @@
       "advice": null,
       "description": "city determines country, but the planner multiplies their selectivities and underestimates the row count 20x.",
       "rules": [
+        "ES001",
         "ES002"
       ],
       "status": "generated"
@@ -263,7 +273,10 @@
     "parallel_seq_scan": {
       "advice": null,
       "description": "Parallel sequential scan under a Gather node.",
-      "rules": [],
+      "rules": [
+        "ES001",
+        "ES002?"
+      ],
       "status": "generated"
     },
     "parallel_workers_not_launched": {
@@ -307,7 +320,10 @@
     "seq_scan_cast_on_column": {
       "advice": "rewrite",
       "description": "The column is cast to text, so even an index on customer_id could not be used.",
-      "rules": [],
+      "rules": [
+        "ES001",
+        "ES002"
+      ],
       "status": "generated"
     },
     "seq_scan_full_aggregate": {
@@ -319,7 +335,9 @@
     "seq_scan_function_on_column": {
       "advice": "rewrite",
       "description": "date_trunc() on a timestamptz column is not immutable, so the fix is a range predicate rather than an expression index.",
-      "rules": [],
+      "rules": [
+        "ES001"
+      ],
       "status": "generated"
     },
     "seq_scan_jsonb_containment": {
@@ -332,7 +350,8 @@
       "advice": "index",
       "description": "LIKE prefix search under a non-C collation; a btree index would need text_pattern_ops.",
       "rules": [
-        "ES001"
+        "ES001",
+        "ES002?"
       ],
       "status": "generated"
     },
@@ -425,7 +444,9 @@
     "timing_off": {
       "advice": null,
       "description": "EXPLAIN ANALYZE with TIMING OFF: actual rows and loops, but no per-node times.",
-      "rules": [],
+      "rules": [
+        "ES001"
+      ],
       "status": "generated"
     },
     "update_by_pk": {

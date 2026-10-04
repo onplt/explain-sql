@@ -15,7 +15,13 @@
 //! assert_eq!(plan.root().rows_removed_by_filter, 199990.0);
 //! ```
 
+pub mod analysis;
+pub mod format;
 pub mod ir;
+pub mod metrics;
 pub mod pg;
+pub mod report;
+pub mod rules;
 
+pub use analysis::{Analysis, analyze};
 pub use pg::{ParseError, parse};

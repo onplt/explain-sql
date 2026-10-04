@@ -1,0 +1,29 @@
+---
+source: crates/explainsql-core/tests/report.rs
+expression: text
+---
+15.1 ms. 50% of it in Nested Loop, which pairs each of 1,000 outer rows with all 100 inner rows,
+with no condition between them.
+
+Planning 0.426 ms · Execution 15.1 ms · Outside the plan tree 3.05 ms · Buffers 40 pages, 100% from
+cache
+
+Share      Time              Node                                                             Rows  Estimate  Buffers
+  50%   7.54 ms  █████       Nested Loop                                                   100,000   100,000        0
+ 3.4%  0.511 ms  ▍           ├─ Seq Scan on products p                                       1,000     1,000       37
+  26%   3.98 ms  ██▋         └─ Materialize                                             100 ×1,000       100        0
+0.13%  0.019 ms                 └─ Index Only Scan using customers_pkey on customers c         100       100        3
+
+Findings (1)
+
+  HIGH    ES010 Cartesian product
+          Nested Loop pairs each of 1,000 outer rows with all 100 inner rows, with no condition
+          between them.
+          Outer rows: 1,000
+          Inner rows per loop: 100
+          Rows produced: 100,000
+          → Check the query for a missing join condition between products and customers.
+
+Share and Time: time spent in each node itself, wall-clock. Rows: actual rows per loop, ×loops when
+it ran more than once. ▲/▼: actual rows above or below the estimate by 10× or more. Buffers: pages
+each node read itself.

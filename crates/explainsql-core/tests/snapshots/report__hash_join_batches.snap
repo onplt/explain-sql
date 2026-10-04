@@ -1,0 +1,30 @@
+---
+source: crates/explainsql-core/tests/report.rs
+expression: text
+---
+185.6 ms. 51% of it in Hash Join. The hash table of Hash Join was split into 128 batches because it
+did not fit in work_mem.
+
+Planning 0.627 ms · Execution 185.6 ms · Buffers 4,328 pages, 57% from cache, 12.1 MB written to
+temporary files
+
+Share     Time              Node                                 Rows  Estimate  Buffers
+ 7.5%  14.0 ms  ▊           Aggregate                               1         1        0
+  51%  94.6 ms  █████▏      └─ Hash Join                      300,000   300,000        0
+  15%  28.0 ms  █▌             ├─ Seq Scan on order_items oi  300,000   300,000    1,911
+  14%  25.2 ms  █▍             └─ Hash                        200,000   200,000        0
+  13%  23.8 ms  █▎                └─ Seq Scan on orders o     200,000   200,000    2,417
+
+Findings (1)
+
+  HIGH    ES004 Hash or aggregate spilled to disk
+          The hash table of Hash Join was split into 128 batches because it did not fit in work_mem.
+          Batches: 128
+          Memory used: 89 kB
+          Written to disk: 508 pages (4.0 MB)
+          → Raise work_mem (or hash_mem_multiplier) for this query so that the hash table fits in
+          memory: the whole table takes roughly 11.1 MB, 128 batches of 89 kB.
+
+Share and Time: time spent in each node itself, wall-clock. Rows: actual rows per loop, ×loops when
+it ran more than once. ▲/▼: actual rows above or below the estimate by 10× or more. Buffers: pages
+each node read itself.

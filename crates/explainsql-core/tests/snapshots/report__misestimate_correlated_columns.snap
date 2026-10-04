@@ -1,0 +1,32 @@
+---
+source: crates/explainsql-core/tests/report.rs
+expression: text
+---
+11.8 ms. 100% of it in Seq Scan on addresses, which reads 200,000 rows to keep 200.
+
+Planning 0.422 ms · Execution 11.8 ms · Buffers 1,274 pages, 5.0% from cache
+
+Share     Time              Node                   Rows  Estimate  Buffers
+ 100%  11.8 ms  ██████████  Seq Scan on addresses   200   10 ▲20×    1,274
+
+Findings (2)
+
+  HIGH    ES001 Selective sequential scan
+          Seq Scan on addresses reads 200,000 rows to keep 200.
+          Rows kept: 200 of 200,000 (0.10%)
+          Filter: ((addresses.city = 42) AND (addresses.country = 0))
+          Table size: 1,274 pages (10.0 MB)
+          Time in the node: 11.8 ms (100% of the runtime)
+          → An index on addresses (city, country) would let PostgreSQL read only the matching rows.
+
+  LOW     ES002 Row misestimate
+          Seq Scan on addresses returned 200 rows where the planner expected 10: 20× more.
+          Estimated rows: 10
+          Actual rows: 200
+          → Run ANALYZE addresses: its statistics may be out of date. If it stays off, the columns
+          in the condition are probably correlated: CREATE STATISTICS ON city, country FROM
+          addresses.
+
+Share and Time: time spent in each node itself, wall-clock. Rows: actual rows per loop, ×loops when
+it ran more than once. ▲/▼: actual rows above or below the estimate by 10× or more. Buffers: pages
+each node read itself.

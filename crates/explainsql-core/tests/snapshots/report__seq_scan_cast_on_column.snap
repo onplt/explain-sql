@@ -1,0 +1,34 @@
+---
+source: crates/explainsql-core/tests/report.rs
+expression: text
+---
+27.7 ms. 100% of it in Seq Scan on orders, which reads 200,000 rows to keep 10.
+
+Planning 0.377 ms · Execution 27.7 ms · Buffers 2,417 pages, 56% from cache
+
+Share     Time              Node                Rows     Estimate  Buffers
+ 100%  27.7 ms  ██████████  Seq Scan on orders    10  1,000 ▼100×    2,417
+
+Findings (2)
+
+  HIGH    ES001 Selective sequential scan
+          Seq Scan on orders reads 200,000 rows to keep 10.
+          Rows kept: 10 of 200,000 (0.005%)
+          Filter: ((orders.customer_id)::text = '4242'::text)
+          Table size: 2,417 pages (18.9 MB)
+          Time in the node: 27.7 ms (100% of the runtime)
+          → The filter applies a cast to customer_id, so an index on customer_id cannot serve it.
+          Rewrite the condition so that customer_id stands alone, or index the expression itself.
+
+  LOW     ES002 Row misestimate
+          Seq Scan on orders returned 10 rows where the planner expected 1,000: 100× fewer.
+          Estimated rows: 1,000
+          Actual rows: 10
+          → The planner has no statistics for an expression of customer_id, so it guessed. Rewriting
+          the condition so that customer_id stands alone fixes the estimate; otherwise CREATE
+          STATISTICS on the expression (PostgreSQL 14 and later) gives the planner something to go
+          on.
+
+Share and Time: time spent in each node itself, wall-clock. Rows: actual rows per loop, ×loops when
+it ran more than once. ▲/▼: actual rows above or below the estimate by 10× or more. Buffers: pages
+each node read itself.

@@ -4,19 +4,61 @@ use std::io::{IsTerminal, Read, Write};
 use std::process::ExitCode;
 use std::{env, fs, io};
 
+use clap::{Parser, ValueEnum};
 use explainsql_core::ir::{Node, Plan};
+use explainsql_core::report;
 
-const USAGE: &str = "\
-Usage: explainsql --debug-parse [--json] [FILE]
-       explainsql --version
+/// Find out why a PostgreSQL query is slow, from its EXPLAIN plan.
+///
+/// Reads a plan from FILE or standard input: JSON or text, as EXPLAIN prints
+/// it or still wrapped in psql output, a server log entry, cells copied from
+/// a GUI client or a Markdown code fence. Prints where the time went and what
+/// to do about it.
+///
+/// For the most useful report, capture the plan with
+/// EXPLAIN (ANALYZE, BUFFERS, VERBOSE, SETTINGS).
+#[derive(Parser)]
+#[command(name = "explainsql", version)]
+struct Cli {
+    /// The plan file; standard input when missing or `-`.
+    file: Option<String>,
 
-Reads a PostgreSQL EXPLAIN plan from FILE or standard input and prints what
-the parser understood: the plan tree, the statement summary and any warnings.
-The plan can be JSON or text, and may still be wrapped in psql output, a
-server log entry, cells copied from a GUI client or a Markdown code fence.
+    /// Report format.
+    #[arg(long, value_enum, default_value_t = Format::Text)]
+    format: Format,
 
-  --json   print the parsed plan as JSON instead
-";
+    /// Print a report instead of opening the interactive viewer. The viewer
+    /// is not built yet, so this is currently always the case.
+    #[arg(long)]
+    print: bool,
+
+    /// When to color the text report.
+    #[arg(long, value_enum, default_value_t = Color::Auto)]
+    color: Color,
+
+    /// Print what the parser understood instead of the analysis, to check
+    /// how a plan was read (with --format json: the parsed plan as JSON).
+    #[arg(long)]
+    debug_parse: bool,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum Format {
+    /// For a terminal.
+    Text,
+    /// Markdown, for an issue or a pull request.
+    Md,
+    /// JSON, for other programs.
+    Json,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum Color {
+    /// When the output is a terminal and NO_COLOR is not set.
+    Auto,
+    Always,
+    Never,
+}
 
 /// Appends a formatted line to a `String`.
 macro_rules! push_line {
@@ -27,53 +69,48 @@ macro_rules! push_line {
 }
 
 fn main() -> ExitCode {
-    let args: Vec<String> = env::args().skip(1).collect();
-    let version = env!("CARGO_PKG_VERSION");
-    match args.first().map(String::as_str) {
-        Some("--debug-parse") => {}
-        None | Some("-h" | "--help") => {
-            return emit(&format!(
-                "explainsql {version}: in early development. See https://github.com/onplt/explain-sql\n\n{USAGE}"
-            ));
-        }
-        Some("-V" | "--version") => return emit(&format!("explainsql {version}\n")),
-        Some(other) => {
-            eprintln!("error: unexpected argument `{other}`\n\n{USAGE}");
-            return ExitCode::from(2);
-        }
-    }
-    let mut json = false;
-    let mut file = None;
-    for arg in &args[1..] {
-        match arg.as_str() {
-            "--json" => json = true,
-            "-h" | "--help" => return emit(USAGE),
-            path if file.is_none() => file = Some(path.to_owned()),
-            other => {
-                eprintln!("error: unexpected argument `{other}`\n\n{USAGE}");
-                return ExitCode::from(2);
-            }
-        }
-    }
-
-    let input = match read_input(file.as_deref()) {
+    let cli = Cli::parse();
+    let input = match read_input(cli.file.as_deref()) {
         Ok(input) => input,
         Err(error) => {
             eprintln!("error: {error}");
             return ExitCode::FAILURE;
         }
     };
-    match explainsql_core::parse(&input) {
-        Ok(plan) if json => emit(&format!(
-            "{}\n",
-            serde_json::to_string_pretty(&plan).expect("the IR serializes")
-        )),
-        Ok(plan) => emit(&render(&plan)),
+    let plan = match explainsql_core::parse(&input) {
+        Ok(plan) => plan,
         Err(error) => {
             eprintln!("error: {error}");
-            ExitCode::FAILURE
+            return ExitCode::FAILURE;
         }
+    };
+    if cli.debug_parse {
+        return match cli.format {
+            Format::Json => emit(&format!(
+                "{}\n",
+                serde_json::to_string_pretty(&plan).expect("the IR serializes")
+            )),
+            Format::Text | Format::Md => emit(&render(&plan)),
+        };
     }
+    let analysis = explainsql_core::analyze(&plan);
+    let output = match cli.format {
+        Format::Text => {
+            let color = match cli.color {
+                Color::Always => true,
+                Color::Never => false,
+                Color::Auto => {
+                    io::stdout().is_terminal()
+                        && env::var_os("NO_COLOR").is_none_or(|value| value.is_empty())
+                        && env::var("TERM").map_or(true, |term| term != "dumb")
+                }
+            };
+            report::text(&plan, &analysis, color)
+        }
+        Format::Md => report::markdown(&plan, &analysis),
+        Format::Json => report::json(&plan, &analysis),
+    };
+    emit(&output)
 }
 
 /// Writes to standard output. A reader that stops early, such as `head`,
@@ -105,7 +142,8 @@ fn read_input(file: Option<&str>) -> io::Result<String> {
     Ok(String::from_utf8_lossy(&bytes).into_owned())
 }
 
-/// The plan tree, the statement summary and the warnings, as text.
+/// What the parser understood: the plan tree, the statement summary and
+/// the warnings.
 fn render(plan: &Plan) -> String {
     let mut out = String::new();
     let wrappers: Vec<String> = plan

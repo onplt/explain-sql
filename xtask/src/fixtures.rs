@@ -265,6 +265,40 @@ pub fn check_json_plan(json: &str, executed: bool) -> Result<(), String> {
     Ok(())
 }
 
+/// `cargo xtask sync-manifests`: copies each scenario's description, rules
+/// and advice into the manifests, which repeat them, without regenerating
+/// any plan.
+pub fn sync_manifests() -> Result<(), String> {
+    let root = workspace_root();
+    let scenarios = scenario::load_all(&root.join("fixtures/scenarios"))?;
+    for major in DEFAULT_VERSIONS {
+        let path = root
+            .join("fixtures/pg")
+            .join(major.to_string())
+            .join("manifest.json");
+        let mut manifest = read_manifest(&path)?;
+        let entries = manifest["scenarios"]
+            .as_object_mut()
+            .ok_or_else(|| format!("{}: no scenarios", path.display()))?;
+        for scenario in &scenarios {
+            let entry = entries.get_mut(&scenario.name).ok_or_else(|| {
+                format!(
+                    "PostgreSQL {major} / {}: not in manifest.json; run gen-fixtures",
+                    scenario.name
+                )
+            })?;
+            let fresh = manifest_entry(scenario, "", None);
+            for key in ["description", "rules", "advice"] {
+                entry[key] = fresh[key].clone();
+            }
+        }
+        let manifest = serde_json::to_string_pretty(&manifest).expect("manifest serializes");
+        write_file(&path, &manifest)?;
+    }
+    println!("updated {} manifests", DEFAULT_VERSIONS.len());
+    Ok(())
+}
+
 /// `cargo xtask check-fixtures`.
 pub fn check() -> Result<(), String> {
     let summary = check_corpus(&workspace_root())

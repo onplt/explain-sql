@@ -1,0 +1,27 @@
+---
+source: crates/explainsql-core/tests/report.rs
+expression: text
+---
+59.1 ms. 49% of it in Bitmap Heap Scan on orders, which kept only page numbers for 1,549 of 2,081
+pages, so it rechecked every row on them.
+
+Planning 0.431 ms · Execution 59.1 ms · Buffers 2,454 pages, 100% from cache
+
+Share     Time              Node                                                    Rows  Estimate  Buffers
+  41%  24.5 ms  ████▏       Aggregate                                                  1         1        0
+  49%  29.2 ms  █████       └─ Bitmap Heap Scan on orders                        149,877   149,768    2,081
+ 8.9%  5.26 ms  ▉              └─ Bitmap Index Scan using orders_created_at_idx  149,877   149,768      373
+
+Findings (1)
+
+  HIGH    ES008 Lossy bitmap or heavy recheck
+          Bitmap Heap Scan on orders kept only page numbers for 1,549 of 2,081 pages, so it
+          rechecked every row on them.
+          Heap blocks: 1,549 lossy, 532 exact
+          Rows removed by the recheck: 14,472
+          Time in the node: 29.2 ms (49% of the runtime)
+          → Raise work_mem for this query so that the bitmap stays exact.
+
+Share and Time: time spent in each node itself, wall-clock. Rows: actual rows per loop, ×loops when
+it ran more than once. ▲/▼: actual rows above or below the estimate by 10× or more. Buffers: pages
+each node read itself.

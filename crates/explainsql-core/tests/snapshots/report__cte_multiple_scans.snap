@@ -1,0 +1,20 @@
+---
+source: crates/explainsql-core/tests/report.rs
+expression: text
+---
+43.9 ms. 70% of it in [CTE per_status] HashAggregate.
+
+Planning 0.412 ms · Execution 43.9 ms · Buffers 2,417 pages, 93% from cache
+
+  Share      Time              Node                                  Rows  Estimate  Buffers
+ 0.023%  0.010 ms              Nested Loop                             10         8        0
+    70%   30.7 ms  ███████     ├─ [CTE per_status] HashAggregate        5         5        0
+    30%   13.1 ms  ███         │  └─ Seq Scan on orders           200,000   200,000    2,417
+ 0.032%  0.014 ms              ├─ CTE Scan on per_status a              5         5        1
+<0.001%  0.000 ms              └─ CTE Scan on per_status b           5 ×5         5
+
+No findings: none of the rules found a problem in this plan.
+
+Share and Time: time spent in each node itself, wall-clock. Rows: actual rows per loop, ×loops when
+it ran more than once. ▲/▼: actual rows above or below the estimate by 10× or more. Buffers: pages
+each node read itself.

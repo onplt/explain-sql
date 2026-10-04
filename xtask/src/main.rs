@@ -20,6 +20,7 @@ Tasks:
       --only <list>       Only these scenarios, comma-separated (default: all)
       --keep-containers   Leave the containers running for debugging
   check-fixtures    Check that the committed corpus matches fixtures/scenarios
+  sync-manifests    Copy scenario descriptions, rules and advice into the manifests
   help              Show this message
 ",
         versions.join(",")
@@ -33,6 +34,7 @@ fn main() -> ExitCode {
             fixtures::Options::parse(&args[1..]).and_then(|options| fixtures::generate(&options))
         }
         Some("check-fixtures") => fixtures::check(),
+        Some("sync-manifests") => fixtures::sync_manifests(),
         Some("help" | "--help" | "-h") | None => {
             print!("{}", usage());
             Ok(())

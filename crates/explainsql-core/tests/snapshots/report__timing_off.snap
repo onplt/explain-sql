@@ -1,0 +1,24 @@
+---
+source: crates/explainsql-core/tests/report.rs
+expression: text
+---
+11.0 ms. The plan has no per-node times (TIMING OFF). Seq Scan on orders reads 200,000 rows to keep
+10.
+
+Planning 0.378 ms · Execution 11.0 ms · Buffers 2,417 pages, 100% from cache
+
+Share  Time              Node                Rows  Estimate  Buffers
+                         Seq Scan on orders    10        10    2,417
+
+Findings (1)
+
+  HIGH    ES001 Selective sequential scan
+          Seq Scan on orders reads 200,000 rows to keep 10.
+          Rows kept: 10 of 200,000 (0.005%)
+          Filter: (orders.customer_id = 4242)
+          Table size: 2,417 pages (18.9 MB)
+          → An index on orders (customer_id) would let PostgreSQL read only the matching rows.
+
+Share and Time: time spent in each node itself, wall-clock. Rows: actual rows per loop, ×loops when
+it ran more than once. ▲/▼: actual rows above or below the estimate by 10× or more. Buffers: pages
+each node read itself.

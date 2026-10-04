@@ -1,0 +1,28 @@
+---
+source: crates/explainsql-core/tests/report.rs
+expression: text
+---
+305.5 ms. 100% of it in the trigger for order_items_order_id_fkey.
+
+Planning 0.333 ms · Execution 305.5 ms · Triggers 305.3 ms · Buffers 47 pages, 100% from cache
+
+ Share      Time              Node                                       Rows  Estimate  Buffers
+0.028%  0.085 ms              Delete on orders                              0         0       43
+0.004%  0.013 ms              └─ Index Scan using orders_pkey on orders    20        20        4
+
+Findings (1)
+
+  HIGH    ES009 Slow foreign-key trigger
+          The foreign-key trigger for order_items_order_id_fkey took 100% of the execution time.
+          Trigger: RI_ConstraintTrigger_a_16417
+          Constraint: order_items_order_id_fkey
+          Calls: 20
+          Time: 305.3 ms (100% of the execution)
+          Time per call: 15.3 ms
+          → Index the referencing columns of order_items_order_id_fkey on the referencing table:
+          each deleted or updated row looks up the rows that refer to it, and without an index every
+          lookup scans that table.
+
+Share and Time: time spent in each node itself, wall-clock. Rows: actual rows per loop, ×loops when
+it ran more than once. ▲/▼: actual rows above or below the estimate by 10× or more. Buffers: pages
+each node read itself.

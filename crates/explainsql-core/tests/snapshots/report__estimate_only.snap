@@ -1,0 +1,18 @@
+---
+source: crates/explainsql-core/tests/report.rs
+expression: text
+---
+Estimated plan only: run EXPLAIN ANALYZE for actual times and row counts. Estimated total cost:
+5,578.
+
+Share  Time              Node                           Rows  Estimate  Buffers
+                         Hash Join                               2,013
+                         ├─ Seq Scan on orders o                 2,013
+                         └─ Hash                                20,000
+                            └─ Seq Scan on customers c          20,000
+
+No findings: none of the rules found a problem in this plan.
+
+Share and Time: time spent in each node itself, wall-clock. Rows: actual rows per loop, ×loops when
+it ran more than once. ▲/▼: actual rows above or below the estimate by 10× or more. Buffers: pages
+each node read itself.

@@ -1,0 +1,26 @@
+---
+source: crates/explainsql-core/tests/report.rs
+expression: text
+---
+9.45 ms. 77% of it in Seq Scan on shipments, which returned 50,000 rows where the planner expected
+1: 50,000× more.
+
+Planning 0.260 ms · Execution 9.45 ms · Buffers 589 pages, 100% from cache
+
+Share     Time              Node                        Rows    Estimate  Buffers
+  22%  2.08 ms  ██▎         Aggregate                      1           1        0
+  77%  7.32 ms  ███████▊    └─ Seq Scan on shipments  50,000  1 ▲50,000×      589
+
+Findings (1)
+
+  LOW     ES002 Row misestimate
+          Seq Scan on shipments returned 50,000 rows where the planner expected 1: 50,000× more.
+          Estimated rows: 1
+          Actual rows: 50,000
+          → Run ANALYZE shipments: its statistics may be out of date. If the estimate stays off,
+          raise the statistics target of state (ALTER TABLE shipments ALTER COLUMN … SET
+          STATISTICS).
+
+Share and Time: time spent in each node itself, wall-clock. Rows: actual rows per loop, ×loops when
+it ran more than once. ▲/▼: actual rows above or below the estimate by 10× or more. Buffers: pages
+each node read itself.

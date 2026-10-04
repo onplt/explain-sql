@@ -1,0 +1,28 @@
+---
+source: crates/explainsql-core/tests/report.rs
+expression: text
+---
+194.4 ms. 91% of it in HashAggregate, which wrote 7.3 MB to disk because its hash table did not fit
+in work_mem.
+
+Planning 0.536 ms · Execution 194.4 ms · Buffers 2,417 pages, 100% from cache, 25.4 MB written to
+temporary files
+
+Share      Time              Node                      Rows  Estimate  Buffers
+  91%  177.3 ms  █████████▏  HashAggregate           20,000    19,904        0
+ 8.0%   15.6 ms  ▊           └─ Seq Scan on orders  200,000   200,000    2,417
+
+Findings (1)
+
+  HIGH    ES004 Hash or aggregate spilled to disk
+          HashAggregate wrote 7.3 MB to disk because its hash table did not fit in work_mem.
+          Batches: 306
+          Memory used: 173 kB
+          Disk used: 7.3 MB
+          Time in the node: 177.3 ms (91% of the runtime)
+          → Raise work_mem (or hash_mem_multiplier) for this query so that the aggregate's hash
+          table fits in memory.
+
+Share and Time: time spent in each node itself, wall-clock. Rows: actual rows per loop, ×loops when
+it ran more than once. ▲/▼: actual rows above or below the estimate by 10× or more. Buffers: pages
+each node read itself.

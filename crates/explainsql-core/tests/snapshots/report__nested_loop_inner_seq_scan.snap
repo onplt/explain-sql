@@ -1,0 +1,39 @@
+---
+source: crates/explainsql-core/tests/report.rs
+expression: text
+---
+369.3 ms. 51% of it in Seq Scan on order_items oi, which reads 3,000,000 rows over 10 loops, and the
+join filter above keeps 14 of them.
+
+Planning 0.526 ms · Execution 369.3 ms · Buffers 21,527 pages, 18% from cache
+
+Share      Time              Node                                  Rows  Estimate  Buffers
+  45%  167.8 ms  ████▌       Nested Loop                             14        15        0
+ 3.3%   12.1 ms  ▍           ├─ Seq Scan on orders o                 10        10    2,417
+  51%  189.3 ms  █████▏      └─ Seq Scan on order_items oi  300,000 ×10   300,000   19,110
+
+Findings (2)
+
+  HIGH    ES001 Selective sequential scan
+          Seq Scan on order_items oi reads 3,000,000 rows over 10 loops, and the join filter above
+          keeps 14 of them.
+          Rows kept: 14 of 3,000,000 (<0.001%)
+          Join filter: (o.id = oi.order_id)
+          Table size: 1,911 pages (14.9 MB)
+          Loops: 10
+          Time in the node: 189.3 ms (51% of the runtime)
+          → An index on order_items (order_id) would turn each loop's scan into an index lookup.
+
+  HIGH    ES005 Expensive nested-loop inner side
+          Nested Loop repeats Seq Scan on order_items oi 10 times; that takes 97% of the loop's
+          time.
+          Inner loops: 10
+          Inner side per loop: 18.9 ms
+          Repeated work: 357.1 ms of the loop's 369.2 ms, 189.3 ms of it in the inner scans
+          Rows removed by the join filter: 2,999,986
+          → An index on order_items (order_id) would turn each of the 10 inner scans into an index
+          lookup.
+
+Share and Time: time spent in each node itself, wall-clock. Rows: actual rows per loop, ×loops when
+it ran more than once. ▲/▼: actual rows above or below the estimate by 10× or more. Buffers: pages
+each node read itself.

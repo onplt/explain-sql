@@ -8,6 +8,7 @@ publish.workspace = true
 repository.workspace = true
 
 [dependencies]
+clap.workspace = true
 explainsql-core.workspace = true
 explainsql-db.workspace = true
 explainsql-tui.workspace = true

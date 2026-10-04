@@ -24,7 +24,9 @@ pub const OLDEST_VERSION: u32 = 12;
 pub struct Scenario {
     pub name: String,
     pub description: String,
-    /// IDs of the rules in `docs/rules.md` that this plan is expected to trigger.
+    /// IDs of the rules in `docs/rules.md` that this plan triggers; no other
+    /// rule may fire. An ID ending in `?` may or may not fire, depending on
+    /// the server version's estimates.
     pub rules: Vec<String>,
     /// What the index advisor is expected to conclude, when the scenario pins it down.
     pub advice: Option<Advice>,
@@ -113,12 +115,13 @@ impl Scenario {
                 "description" => description = Some(value.to_owned()),
                 "rules" => {
                     for rule in value.split(',').map(str::trim) {
-                        let valid = rule.len() == 5
-                            && rule.starts_with("ES")
-                            && rule[2..].bytes().all(|b| b.is_ascii_digit());
+                        let id = rule.strip_suffix('?').unwrap_or(rule);
+                        let valid = id.len() == 5
+                            && id.starts_with("ES")
+                            && id[2..].bytes().all(|b| b.is_ascii_digit());
                         if !valid {
                             return Err(format!(
-                                "line {number}: `{rule}` is not a rule ID like ES001"
+                                "line {number}: `{rule}` is not a rule ID like ES001 or ES001?"
                             ));
                         }
                         rules.push(rule.to_owned());
@@ -258,7 +261,7 @@ mod tests {
     fn parses_every_directive() {
         let source = "\
 -- description: Hash join that spills to disk.
--- rules: ES004, ES002
+-- rules: ES004, ES002?
 -- advice: index
 -- min_version: 13
 -- requires: jit
@@ -275,7 +278,7 @@ JOIN order_items oi ON oi.order_id = o.id;
             Scenario {
                 name: "hash_join_batches".to_owned(),
                 description: "Hash join that spills to disk.".to_owned(),
-                rules: vec!["ES004".to_owned(), "ES002".to_owned()],
+                rules: vec!["ES004".to_owned(), "ES002?".to_owned()],
                 advice: Some(Advice::IndexCandidate),
                 min_version: 13,
                 requires_jit: true,

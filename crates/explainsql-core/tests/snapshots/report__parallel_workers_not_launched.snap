@@ -1,0 +1,27 @@
+---
+source: crates/explainsql-core/tests/report.rs
+expression: text
+---
+29.6 ms. 83% of it in Parallel Seq Scan on orders. Gather started 0 of the 2 parallel workers it
+planned.
+
+Planning 0.329 ms · Execution 29.6 ms · Buffers 2,417 pages, 100% from cache
+
+ Share      Time              Node                                    Rows  Estimate  Buffers
+0.017%  0.005 ms              Finalize Aggregate                         1         1        0
+  1.2%  0.363 ms  ▏           └─ Gather                                  1         2        0
+   16%   4.63 ms  █▋             └─ Partial Aggregate                    1         1        0
+   83%   24.6 ms  ████████▎         └─ Parallel Seq Scan on orders  99,998    41,528    2,417
+
+Findings (1)
+
+  HIGH    ES011 Fewer parallel workers than planned
+          Gather started 0 of the 2 parallel workers it planned.
+          Workers planned: 2
+          Workers launched: 0
+          → The pool of parallel workers was exhausted: check max_parallel_workers and
+          max_worker_processes against the number of parallel queries running at once.
+
+Share and Time: time spent in each node itself, wall-clock. Rows: actual rows per loop, ×loops when
+it ran more than once. ▲/▼: actual rows above or below the estimate by 10× or more. Buffers: pages
+each node read itself.

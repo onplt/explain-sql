@@ -11,5 +11,8 @@ repository.workspace = true
 serde.workspace = true
 serde_json = { workspace = true, features = ["unbounded_depth"] }
 
+[dev-dependencies]
+insta = "1"
+
 [lints]
 workspace = true

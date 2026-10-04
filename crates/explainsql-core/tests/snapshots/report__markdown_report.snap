@@ -1,0 +1,29 @@
+---
+source: crates/explainsql-core/tests/report.rs
+expression: "report::markdown(&plan, &analyze(&plan))"
+---
+**312.6 ms. 100% of it in Index Scan using orders\_created\_at\_idx on orders, which finds 1,104,080 rows through orders\_created\_at\_idx and its filter throws away 1,104,020. Nested Loop repeats Index Scan using orders\_created\_at\_idx on orders 20 times; that takes 100% of the loop's time.**
+
+Planning 0.619 ms · Execution 312.6 ms · Buffers 1,109,606 pages, 100% from cache
+
+| Share | Time | Node | Rows | Estimate | Buffers |
+|---:|---:|---|---:|---:|---:|
+| 0.058% | 0.180 ms | Nested Loop | 60 | 60 | 0 |
+| 0.017% | 0.052 ms | &nbsp;&nbsp;↳ Index Only Scan using customers\_pkey on customers c | 20 | 20 | 3 |
+| 0.026% | 0.080 ms | &nbsp;&nbsp;↳ Limit | 3 ×20 | 3 | 0 |
+| 100% | 312.2 ms | &nbsp;&nbsp;&nbsp;&nbsp;↳ Index Scan using orders\_created\_at\_idx on orders | 3 ×20 | 10 | 1,109,603 |
+
+### Findings
+
+- **High · ES005 Expensive nested-loop inner side:** Nested Loop repeats Index Scan using orders\_created\_at\_idx on orders 20 times; that takes 100% of the loop's time.
+  - Inner loops: `20`
+  - Inner side per loop: `15.6 ms`
+  - Repeated work: `312.5 ms of the loop's 312.6 ms, 312.3 ms of it in the inner scans`
+  - Rows removed per loop: `55,201 by the filter of Index Scan using orders_created_at_idx on orders`
+  - **Action:** An index on orders (customer\_id) would turn each of the 20 inner scans into an index lookup.
+- **High · ES006 Index scan that filters most rows:** Index Scan using orders\_created\_at\_idx on orders finds 1,104,080 rows through orders\_created\_at\_idx and its filter throws away 1,104,020.
+  - Index: `orders_created_at_idx`
+  - Filter: `(orders.customer_id = c.id)`
+  - Rows removed by the filter: `55,201 of 55,204 found per loop`
+  - Loops: `20`
+  - **Action:** An index on orders that starts with customer\_id and continues with the columns of orders\_created\_at\_idx would let the index do the filtering.

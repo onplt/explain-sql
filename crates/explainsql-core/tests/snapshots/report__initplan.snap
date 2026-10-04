@@ -1,0 +1,34 @@
+---
+source: crates/explainsql-core/tests/report.rs
+expression: text
+---
+63.3 ms. 45% of it in Seq Scan on orders, which reads 200,000 rows to keep 1,000.
+
+Planning 0.312 ms · Execution 63.3 ms · Buffers 4,834 pages, 100% from cache
+
+Share     Time              Node                                       Rows     Estimate  Buffers
+  45%  28.5 ms  ████▌       Seq Scan on orders                        1,000  66,667 ▼67×    2,417
+  34%  21.8 ms  ███▌        └─ [InitPlan 1 (returns $0)] Aggregate        1            1        0
+  20%  12.9 ms  ██             └─ Seq Scan on orders orders_1       200,000      200,000    2,417
+
+Findings (2)
+
+  MEDIUM  ES001 Selective sequential scan
+          Seq Scan on orders reads 200,000 rows to keep 1,000.
+          Rows kept: 1,000 of 200,000 (0.50%)
+          Filter: (orders.amount > $0)
+          Table size: 4,834 pages (37.8 MB)
+          Time in the node: 28.5 ms (45% of the runtime)
+          → An index on orders (amount) would let PostgreSQL read only the matching rows.
+
+  LOW     ES002 Row misestimate
+          Seq Scan on orders returned 1,000 rows where the planner expected 66,667: 67× fewer.
+          Estimated rows: 66,667
+          Actual rows: 1,000
+          → The condition compares with $0, a value known only when the query runs, so the planner
+          used a default guess. ANALYZE cannot change that; it matters only if a plan choice above
+          depends on this estimate.
+
+Share and Time: time spent in each node itself, wall-clock. Rows: actual rows per loop, ×loops when
+it ran more than once. ▲/▼: actual rows above or below the estimate by 10× or more. Buffers: pages
+each node read itself.
