@@ -1,10 +1,21 @@
 //! The parser returns a plan or an error, but never panics or hangs,
-//! whatever it is given.
+//! whatever it is given; and whatever plan it returns can be analyzed and
+//! reported.
 
 mod common;
 
 use common::{corpus, fixtures, plan_path, read};
-use explainsql_core::parse;
+use explainsql_core::{analyze, report};
+
+/// Parses, and analyzes and renders whatever plan comes out.
+fn parse(input: &str) {
+    if let Ok(plan) = explainsql_core::parse(input) {
+        let analysis = analyze(&plan);
+        let _ = report::text(&plan, &analysis, true);
+        let _ = report::markdown(&plan, &analysis);
+        let _ = report::json(&plan, &analysis);
+    }
+}
 
 /// A small deterministic generator (xorshift64*), so failures reproduce.
 struct Random(u64);
@@ -74,11 +85,11 @@ fn mangled_plans_never_panic() {
         let step = (sample.len() / 25).max(1);
         for cut in (0..sample.len()).step_by(step) {
             if sample.is_char_boundary(cut) {
-                let _ = parse(&sample[..cut]);
+                parse(&sample[..cut]);
             }
         }
         for _ in 0..20 {
-            let _ = parse(&mutate(sample, &mut random));
+            parse(&mutate(sample, &mut random));
         }
     }
 }
@@ -139,9 +150,15 @@ fn odd_inputs_never_panic() {
         &open_json,
     ];
     for input in inputs {
-        let _ = parse(input);
+        parse(input);
     }
     // The large plans are read completely.
-    assert_eq!(parse(&deep_text).unwrap().nodes.len(), 1_500);
-    assert_eq!(parse(&wide_text).unwrap().nodes.len(), 20_001);
+    assert_eq!(
+        explainsql_core::parse(&deep_text).unwrap().nodes.len(),
+        1_500
+    );
+    assert_eq!(
+        explainsql_core::parse(&wide_text).unwrap().nodes.len(),
+        20_001
+    );
 }

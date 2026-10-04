@@ -18,6 +18,13 @@ test = false
 doc = false
 bench = false
 
+[[bin]]
+name = "analyze"
+path = "fuzz_targets/analyze.rs"
+test = false
+doc = false
+bench = false
+
 # Not part of the main workspace: fuzzing needs a nightly toolchain.
 [workspace]
 members = ["."]
