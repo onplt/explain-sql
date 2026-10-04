@@ -1,6 +1,6 @@
 # Fixture corpus
 
-Real `EXPLAIN` output captured from PostgreSQL 12–18. The parsers, the metrics engine, the rules and the index advisor are developed and tested against it.
+Real `EXPLAIN` output captured from PostgreSQL 12–18. The parsers, the metrics engine and the rules are tested against it, and so will the index advisor be.
 
 ```
 fixtures/
@@ -79,7 +79,7 @@ The header is every leading line that starts with `--`. Everything after it is t
 | Directive | Required | Meaning |
 |---|---|---|
 | `description` | yes | What the plan demonstrates |
-| `rules` | no | IDs from the [rule catalog](../docs/rules.md) that the plan is expected to trigger (at least these) |
+| `rules` | no | IDs from the [rule catalog](../docs/rules.md) that the plan triggers. No other rule may fire. An ID ending in `?` (`ES002?`) may fire on some server versions and not others, where their estimates differ |
 | `advice` | no | Expected advisor outcome: `index` (a candidate), `none` (no suggestion; a trap for naive advisors) or `rewrite` (fix the query rather than the schema) |
 | `min_version` | no | Oldest major version that supports the scenario (default 12) |
 | `requires` | no | `jit`: capture only on servers built with JIT |
@@ -87,6 +87,8 @@ The header is every leading line that starts with `--`. Everything after it is t
 | `options` | no | EXPLAIN options without `FORMAT` (default `ANALYZE, BUFFERS, VERBOSE, SETTINGS`) |
 
 To add a scenario, write the file, run `cargo xtask gen-fixtures` for every version, read the text plans to confirm they show what the description claims, and commit the `.sql` file together with `pg/`.
+
+The manifests repeat each scenario's description, rules and advice. After changing only those, `cargo xtask sync-manifests` updates the manifests without regenerating any plan (and without Docker).
 
 ## Dataset
 

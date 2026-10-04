@@ -1,6 +1,6 @@
 # Architecture
 
-This document describes the design. The plan IR and the parsers are implemented (Phase 1); everything from [Metrics](#metrics-inclusive-and-exclusive-time) onwards is still planned, and this document will be updated as that code lands.
+This document describes the design. The plan IR and the parsers (Phase 1), and the metrics engine, the rules and the static report (Phase 2) are implemented; everything from [Predicate parsing](#predicate-parsing) onwards is still planned, and this document will be updated as that code lands.
 
 ## Technology choice: Rust, Ratatui and Crossterm
 
@@ -28,7 +28,11 @@ explain-sql/
 │  ├─ explainsql-core/           # no I/O, no async, WASM-compatible
 │  │  ├─ src/ir.rs               # the plan IR
 │  │  ├─ src/pg/                 # PostgreSQL front end: normalize, json, text, raw, lower
-│  │  └─ tests/                  # corpus, captured inputs, text-format cases, robustness
+│  │  ├─ src/metrics.rs          # inclusive and exclusive time and buffers, misestimates
+│  │  ├─ src/rules/              # one file per rule, plus a small predicate reader
+│  │  ├─ src/analysis.rs         # metrics + findings + the one-sentence verdict
+│  │  ├─ src/report.rs           # static reports: text, Markdown, JSON
+│  │  └─ tests/                  # corpus, inputs, metrics, rules, report snapshots, robustness
 │  ├─ explainsql-db/             # tokio-postgres + rustls: safe executor, catalog reader, HypoPG/rollback prover
 │  ├─ explainsql-tui/            # Ratatui app: state, views, keymap, theme
 │  └─ explainsql/                # binary: clap CLI, mode dispatch (tui | print | pager | json)
@@ -38,12 +42,13 @@ explain-sql/
 │  ├─ pg/{12..18}/               # generated plans: <name>.json, <name>.txt, manifest.json
 │  └─ inputs/                    # one plan in each form it arrives in: psql output, server logs
 ├─ fuzz/                         # cargo-fuzz target for the parsers (its own workspace; needs nightly)
+├─ tools/cross-check/            # compares exclusive times with pev2 and explain.depesz.com
 ├─ docs/rules/                   # one page per rule
 ├─ xtask/                        # gen-fixtures and check-fixtures; later an anonymizer and release helpers
 └─ .github/workflows/            # ci, fixtures, release
 ```
 
-Not there yet: the `metrics`, `rules`, `advisor` and `expr` modules of `core`, the contents of `explainsql-db` and `explainsql-tui` (empty placeholders for now), `docs/rules/` and the release workflow. Until then, the binary has a single developer option, `--debug-parse`, which prints what the parsers made of an input.
+Not there yet: the `advisor` and `expr` modules of `core`, the contents of `explainsql-db` and `explainsql-tui` (empty placeholders for now), `docs/rules/` and the release workflow. Until the interactive viewer arrives, the binary prints a report (`--format text|md|json`); `--debug-parse` shows what the parsers made of an input.
 
 We use four crates and no more. Keeping `core` free of I/O is required for WebAssembly and for fast, deterministic tests; finer splits would slow down early development.
 
@@ -82,7 +87,7 @@ pub struct Node {
 - **Typed fields cover what later phases rely on; everything else is kept.** Other properties stay in `extra` under their PostgreSQL JSON names (`Heap Fetches`, `Sort Method`, `Hash Buckets`, ...), and the statement-level sections (planning, triggers, JIT, serialization) keep their unfamiliar keys the same way. Nothing in the input is lost, and properties added by future server versions show up without code changes.
 - **Node types are strings, not an enum.** Extensions and forks add their own (Citus and TimescaleDB custom scans, Greenplum's `Motion`), and code that cares matches on the names it knows.
 - **Absent and zero mean the same.** The text format leaves out zero counters and false flags, so the IR does too, whichever format a plan came from: all-zero buffers become `None`, a zero `Subplans Removed` is dropped, and so on. This is what lets the JSON and text forms of a plan lower to identical IR.
-- **Derived metrics live beside the IR.** Inclusive and exclusive time, shares of the total and misestimate factors will be computed by the metrics engine (Phase 2) and indexed by `NodeId`. Every derived value will carry its provenance (`Measured`, `Estimated`, `Derived` or `Unknown`), so the UI never presents a guess as a measurement.
+- **Derived metrics live beside the IR.** The metrics engine computes inclusive and exclusive time, shares of the total and misestimate factors into a separate structure indexed by `NodeId`. A figure the plan cannot support is `None`: without `ANALYZE` or with `TIMING OFF` there are no times, and nothing is filled in from estimates, so the UI never presents a guess as a measurement.
 
 The IR uses PostgreSQL's vocabulary, since PostgreSQL is the only engine for now, but its structure (arena, estimates, actuals, predicates, `extra`) is engine-neutral. A future MySQL front end would lower into the same IR, as the `pg` module does.
 
@@ -118,35 +123,48 @@ The parsers handle all of the above for PostgreSQL 12–18, and the corpus cover
 - **Fixture corpus** (`tests/corpus.rs`): all 882 generated plans parse without a single warning, and for each of the 441 scenario–version pairs the JSON and text forms lower to the same IR: tree shape, node types and relationships, every typed property, estimates, actual rows and loops, and everything in `extra`. The two forms come from separate executions (see [fixtures/README.md](../fixtures/README.md)), so timings, buffer counts and per-worker figures are not compared, and two kinds of values are excluded on principle: memory figures of nodes below a `Gather`, which depend on how much of the work the leader did, and estimates of data-modifying statements, because rolled-back writes still grow the table and the planner scales its estimates by the table's current size. A guard test checks that the comparison does notice changed values.
 - **Captured inputs** (`tests/inputs.rs`, [`fixtures/inputs/`](../fixtures/inputs)): one query's plan, captured from a real server in every form it arrives in (psql's aligned, Unicode, bordered, wrapped, expanded and CSV output, in text and JSON; `auto_explain` entries in stderr, `jsonlog` and `csvlog` logs), must yield the same tree as the plain text plan. Generated variants add cells copied from GUI clients, Markdown fences, CRLF, prompts, indentation, non-breaking spaces, truncation, several plans in one input, and inputs that must be rejected.
 - **Constructs the corpus does not reach** (`tests/text_format.rs`, `tests/unknown_properties.rs`): other join, aggregate and set-operation variants, quoted identifiers, foreign and custom scans, compound property lines, the statement summary, and unfamiliar properties at every level of both formats.
-- **Robustness** (`tests/robustness.rs`): thousands of truncated and mutated corpus plans, and pathological input (1,500 levels of indentation, a 20,000-child `Append`, JSON nested 100,000 levels deep, malformed fragments of every construct), must never cause a panic.
-- **Fuzzing** (`fuzz/`): `cargo +nightly fuzz run parse`, seeded with the corpus and the captured inputs. The Phase 1 exit criterion is one hour on three workers without a crash.
-- **Snapshots:** the IR and the rendered output will be snapshot-tested with `insta` once there is rendered output to check (Phase 2).
+- **Robustness** (`tests/robustness.rs`): thousands of truncated and mutated corpus plans, and pathological input (1,500 levels of indentation, a 20,000-child `Append`, JSON nested 100,000 levels deep, malformed fragments of every construct), must never cause a panic in the parsers, the analysis or the reports.
+- **Fuzzing** (`fuzz/`): `cargo +nightly fuzz run parse`, seeded with the corpus and the captured inputs; a second target, `analyze`, also runs the analysis and the reports. The Phase 1 exit run of `parse` lasted one hour on three workers: 2.9 million inputs and no crash, timeout or memory blow-up.
+- **Snapshots** of the rendered reports cover the parsers' output end to end; see [Testing the metrics and the rules](#testing-the-metrics-and-the-rules).
 
 ## Metrics: inclusive and exclusive time
 
-Getting per-node numbers right is harder than it looks, and everything else is built on it.
+Getting per-node numbers right is harder than it looks, and everything else is built on it. `metrics::compute` works on the IR alone.
 
-- **Times and rows are per-loop averages; buffers are totals across loops.** Multiply time by `loops`; never multiply buffers.
-- **Parallel query.** Below a `Gather` node, `loops` counts the processes that ran the node, so `avg × loops` is CPU time, not wall-clock time. Simple subtraction then makes the Gather's exclusive time negative. We offer two modes: wall-clock (divided by the number of processes) and CPU.
-- **CTEs and InitPlans.** A CTE subtree's time is counted both under the node it is listed beneath and inside the `CTE Scan` that pulls rows from it. An InitPlan's time is charged to whichever node first evaluates its parameter, which may not be the node it is displayed under. (SubPlans are correctly included in their parent.)
-- **Time outside the tree.** AFTER triggers (including foreign-key checks, which can dominate a slow `DELETE`), executor startup and JIT are not attributed to plan nodes. They are shown as separate buckets: triggers, and an "unattributed" remainder.
-- **Rounding.** Times are printed with 0.001 ms resolution, so with a million loops there are ±500 ms of uncertainty. Before PostgreSQL 18, per-loop row counts are rounded to integers (0.4 rows shows as 0).
-- **Other edge cases:** `TIMING OFF`, never-executed nodes, early termination under `Limit`, Memoize and Materialize rescans, and partitions pruned at run time (`Subplans Removed`).
+- **Times and rows are per-loop averages; buffers are totals across loops.** Time is multiplied by `loops`; buffers never are.
+- **Parallel query.** Below a `Gather` or `Gather Merge`, `loops` counts the processes that ran a node side by side, so `time × loops` is CPU time, not wall-clock time, and subtracting it makes the Gather's own time negative. The engine counts the processes as the loops of the Gather's child per loop of the Gather (workers plus the leader, when it takes part). It divides by that number for wall-clock time and keeps the undivided figure as CPU time.
+- **CTEs.** A CTE runs as the `CTE Scan`s reading it pull rows, so its time is already inside those scans. It is not subtracted from the node it is listed under. The scans subtract it instead, in proportion to their own time: the scan that pulls rows first computes them, and later ones read them from the CTE's store.
+- **InitPlans.** An InitPlan runs when its result is first needed, inside the node that needs it. That node subtracts it, rather than the node the InitPlan is listed under. The engine finds it by the reference to the result: `$0` before PostgreSQL 17, `(InitPlan 1).col1` from 17. When several nodes refer to it, the first in execution order (post-order) takes it.
+- **SubPlans** run from the expressions of the node they are listed under, which subtracts them like any child.
+- **Rounding.** Times are printed per loop with 0.001 ms resolution, so over 20,000 loops a figure can be off by 10 ms, and a parent can show less time than its children together. Within that tolerance, the engine moves the gap to the least precise figures (those with the most loops), never below what their own children need. Exclusive times then add up to the tree's time. A node whose children exceed it by more than rounding explains is flagged as inconsistent; none is in the corpus.
+- **Time outside the tree.** Triggers (including foreign-key checks, which can dominate a slow `DELETE`), `SERIALIZE` and executor startup are not part of any node. They are reported for the statement, along with an unattributed remainder: execution time minus the tree, triggers and serialization. JIT compilation falls partly inside node times and partly outside, so it is reported on its own.
+- **Misestimates** compare actual and estimated rows per loop, each counted as at least one row. A node that a `Limit`, a semi or anti join, a merge join or a subquery can stop early is marked, so that returning fewer rows than estimated is not mistaken for a bad estimate.
+- **Never-executed nodes** count as zero; with `TIMING OFF` or without `ANALYZE`, times are `None` and hotspots are ranked by buffers.
 
-Sketch:
+The results agree with pev2 and explain.depesz.com, compared node by node on 24 reference plans from PostgreSQL 13, 16 and 18 (see [tools/cross-check](../tools/cross-check/README.md)). Every node is within 5%, except in the Memoize plan above. There, both tools clamp the negative rounding gap to zero, so their exclusive times add up to more than the statement took.
 
-```
-for n in postorder(plan):
-    n.incl     = n.per_loop_time × n.loops ÷ procs(n)    # procs: number of parallel processes under a Gather, else 1
-    kids       = Σ c.incl for c in children(n), excluding CTE subtrees
-    if n is a CTE Scan: kids += cte_share(n)            # the scan that pulls from a CTE pays for it
-                                                        # (split by rows pulled if several scans share one CTE; approximate)
-    n.excl     = max(0, n.incl − kids)                  # a negative value means rounding or measurement error: flag it
-    n.excl_buf = n.buffers − Σ c.buffers                # no multiplication by loops
-unattributed = execution_time − root.incl − Σ trigger_time
-```
+## Rules and reports
 
-Results are cross-checked against pev2 and explain.depesz.com on a shared set of reference plans.
+- **Rules** (`rules/`) read the IR and the metrics and return findings: the rule, the node, a severity from the share of the runtime involved, the evidence, and an action. Each rule is one file with its thresholds as constants, and each documents when it stays silent. The catalog is [rules.md](rules.md).
+- **Conditions** are read by a small predicate reader. It is enough to tell which columns a filter compares with what, whether it wraps them in a cast or a function, and whether it ORs conditions on different columns. The full expression parser comes with the advisor (below).
+- **The verdict** is one sentence: the statement's time, where most of it went, and the finding about that node, if any. For example: `11.9 ms. 100% of it in Seq Scan on orders, which reads 200,000 rows to keep 10.`
+- **Reports** (`report.rs`) come in three formats:
+  - text for terminals: the verdict, statement figures, the plan tree with exclusive time, bars and misestimate marks, and the findings;
+  - Markdown for issues and pull requests;
+  - JSON with the plan, the metrics and the findings, for other programs.
+
+### Testing the metrics and the rules
+
+- **Metrics invariants over the corpus** (`tests/metrics.rs`), across 882 plans:
+  - no node is inconsistent;
+  - exclusive times add up to the tree's time;
+  - the tree never exceeds the execution time;
+  - shares add up to at most 100%.
+
+  Unit tests cover each exception above on small plans.
+- **Rules against the scenarios** (`tests/rules.rs`): each scenario's header lists the rules its plan triggers, and no other rule may fire, in either format on any version. A rule marked `?` may fire on some versions only, where the planner's estimates differ. Scenarios without rules, such as most of the traps for naive advisors, expect silence. A second test checks that the actions name the right columns and remedies.
+- **Snapshots** (`tests/report.rs`, with `insta`): the text report of 24 reference plans and a Markdown report. A change in the metrics, the rules or the layout shows up as a reviewable diff.
+- **The binary** (`crates/explainsql/tests/cli.rs`): formats, standard input, exit codes, and a reader that closes the pipe early.
 
 ## Predicate parsing
 
