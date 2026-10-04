@@ -2,7 +2,7 @@
 
 **Find out why your PostgreSQL query is slow, get a fix, and prove it works, without leaving the terminal.**
 
-> 🚧 **Early development.** There is no release yet. The repository holds the design documents, a corpus of real `EXPLAIN` plans from PostgreSQL 12–18, the parsers, and the analysis: exclusive times, twelve rules and a static report. The interactive viewer, the index advisor and the connected mode are not built yet. Watch the repository if you want to know when the first release ships.
+> 🚧 **Early development.** There is no release yet. The repository holds the design documents, a corpus of real `EXPLAIN` plans from PostgreSQL 12–18, the parsers, the analysis (exclusive times, twelve rules and a static report) and the interactive viewer. The index advisor and the connected mode are not built yet. Watch the repository if you want to know when the first release ships.
 
 ## What it will do
 
@@ -31,13 +31,21 @@ PostgreSQL comes first. MySQL is on the roadmap but out of scope for the first r
 
 ```sh
 cargo test --workspace                              # all tests, including the corpus checks
-cargo run -p explainsql -- plan.txt                 # analyze a plan: where the time went, and what to do
+cargo run -p explainsql -- --demo                   # try the viewer on a sample plan
+cargo run -p explainsql -- plan.txt                 # open a plan in the viewer (press ? for the keys)
+cargo run -p explainsql -- --print plan.txt         # print the report instead: where the time went, and what to do
 cargo run -p explainsql -- --format md plan.txt     # the same report as Markdown (or --format json)
 cargo run -p explainsql -- --debug-parse plan.txt   # show what the parser made of a plan
 cargo xtask gen-fixtures                            # regenerate the EXPLAIN corpus (requires Docker)
 ```
 
 The plan can come from a file or standard input, in JSON or text. It can be as `EXPLAIN` printed it, or still wrapped in psql output, a server log entry, cells copied from a GUI client or a Markdown code fence. For the most useful report, capture it with `EXPLAIN (ANALYZE, BUFFERS, VERBOSE, SETTINGS)`.
+
+To make every `EXPLAIN` in psql open in the viewer, set the pager. Other output goes on to `$PAGER` or `less -S`:
+
+```sh
+export PSQL_PAGER='explainsql --pager'   # in psql, \pset pager always shows short plans too
+```
 
 The parsers are fuzzed with [cargo-fuzz](https://github.com/rust-fuzz/cargo-fuzz), which needs a nightly toolchain:
 
@@ -50,4 +58,4 @@ The plan corpus and its scenario format are described in [fixtures/README.md](fi
 
 ## Status
 
-Pre-alpha. Phase 0 (workspace skeleton, CI and the fixture corpus) and Phase 1 (the parsers) are done. Phase 2 (the metrics engine, the rules and the static report) is code-complete. Phase 3 (the interactive viewer) is next. Feedback is welcome in the issues.
+Pre-alpha. Phase 0 (workspace skeleton, CI and the fixture corpus) and Phase 1 (the parsers) are done. Phase 2 (the metrics engine, the rules and the static report) and Phase 3 (the interactive viewer) are code-complete. Phase 4 (the index advisor and the connected mode) is next. Feedback is welcome in the issues.

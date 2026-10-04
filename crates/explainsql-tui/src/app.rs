@@ -1,0 +1,729 @@
+//! The viewer's state and what the keys do to it, independent of the
+//! terminal so that it can be tested directly.
+
+use std::collections::HashSet;
+
+use explainsql_core::Analysis;
+use explainsql_core::format;
+use explainsql_core::ir::{NodeId, Plan};
+
+/// Runs of at least this many similar siblings are shown as one row.
+const MIN_GROUP: usize = 4;
+
+/// One line of the plan tree.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Row {
+    /// The node, or the first node of a group.
+    pub node: NodeId,
+    /// Tree guides leading to the node: `│  ├─ `.
+    pub prefix: String,
+    /// For a group of similar siblings: all of them, in plan order.
+    pub group: Option<Vec<NodeId>>,
+    pub has_children: bool,
+    pub collapsed: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Focus {
+    Tree,
+    Findings,
+}
+
+/// What the Time, Share and bar columns show.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct View {
+    /// Time in the node and below it, rather than in the node itself.
+    pub inclusive: bool,
+    /// CPU time summed over parallel processes, rather than wall-clock time.
+    pub cpu: bool,
+    /// Bars and shares by buffers rather than by time.
+    pub buffers: bool,
+}
+
+/// What a key asks the event loop to do.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Outcome {
+    Continue,
+    Quit,
+}
+
+/// The search being typed or last confirmed.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Search {
+    pub query: String,
+    pub editing: bool,
+}
+
+pub struct App {
+    pub plan: Plan,
+    pub analysis: Analysis,
+    rows: Vec<Row>,
+    collapsed: HashSet<NodeId>,
+    /// Groups opened by the user, by their first node.
+    expanded: HashSet<NodeId>,
+    pub selected: usize,
+    /// The first tree row on screen.
+    pub offset: usize,
+    pub focus: Focus,
+    pub finding: usize,
+    pub detail_scroll: u16,
+    pub view: View,
+    pub search: Option<Search>,
+    pub help: bool,
+    /// A one-line notice in the status bar.
+    pub message: Option<String>,
+    /// Rows of the tree on screen at the last frame, for paging.
+    pub tree_height: usize,
+    /// The first finding on screen.
+    pub findings_offset: usize,
+    /// Each node's name, by node index.
+    labels: Vec<String>,
+    /// Widths of the rows, estimate and buffers columns.
+    widths: [usize; 3],
+    /// CPU time summed over all nodes.
+    cpu_total: f64,
+    /// CPU time summed over each node's subtree, by node index.
+    subtree_cpu: Vec<f64>,
+}
+
+/// Keys, independent of the terminal library.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Key {
+    Char(char),
+    Up,
+    Down,
+    Left,
+    Right,
+    PageUp,
+    PageDown,
+    Home,
+    End,
+    Enter,
+    Esc,
+    Tab,
+    Backspace,
+}
+
+impl App {
+    pub fn new(plan: Plan, analysis: Analysis) -> Self {
+        let mut app = App {
+            plan,
+            analysis,
+            rows: Vec::new(),
+            collapsed: HashSet::new(),
+            expanded: HashSet::new(),
+            selected: 0,
+            offset: 0,
+            focus: Focus::Tree,
+            finding: 0,
+            detail_scroll: 0,
+            view: View {
+                inclusive: false,
+                cpu: false,
+                buffers: false,
+            },
+            search: None,
+            help: false,
+            message: None,
+            tree_height: 10,
+            findings_offset: 0,
+            labels: Vec::new(),
+            widths: [0; 3],
+            cpu_total: 0.0,
+            subtree_cpu: Vec::new(),
+        };
+        app.labels = app.plan.nodes.iter().map(format::node).collect();
+        let mut widths = ["Rows".len(), "Estimate".len(), 0];
+        for node in &app.plan.nodes {
+            let counts = crate::ui::counts(&app, node.id);
+            for (width, cell) in
+                widths
+                    .iter_mut()
+                    .zip([&counts.rows, &counts.estimate, &counts.buffers])
+            {
+                *width = (*width).max(cell.chars().count());
+            }
+        }
+        if widths[2] > 0 {
+            widths[2] = widths[2].max("Buffers".len());
+        }
+        app.widths = widths;
+        // Children before their parents: pre-order, reversed.
+        let mut subtree: Vec<f64> = app
+            .analysis
+            .metrics
+            .nodes
+            .iter()
+            .map(|node| node.exclusive_cpu_time.unwrap_or(0.0))
+            .collect();
+        for (_, node) in app.plan.walk().into_iter().rev() {
+            if let Some(parent) = node.parent {
+                subtree[parent.index()] += subtree[node.id.index()];
+            }
+        }
+        app.cpu_total = subtree.first().copied().unwrap_or(0.0);
+        app.subtree_cpu = subtree;
+        app.rebuild();
+        app
+    }
+
+    /// A node's name: `Seq Scan on orders`.
+    pub fn label(&self, id: NodeId) -> &str {
+        &self.labels[id.index()]
+    }
+
+    pub fn widths(&self) -> [usize; 3] {
+        self.widths
+    }
+
+    pub fn cpu_total(&self) -> f64 {
+        self.cpu_total
+    }
+
+    /// CPU time in a node and everything below it.
+    pub fn subtree_cpu(&self, id: NodeId) -> f64 {
+        self.subtree_cpu[id.index()]
+    }
+
+    pub fn rows(&self) -> &[Row] {
+        &self.rows
+    }
+
+    pub fn selected_row(&self) -> &Row {
+        &self.rows[self.selected]
+    }
+
+    pub fn selected_node(&self) -> NodeId {
+        self.selected_row().node
+    }
+
+    /// Recomputes the visible rows, keeping the selected node selected.
+    fn rebuild(&mut self) {
+        let keep = self.rows.get(self.selected).map(|row| row.node);
+        self.rows = visible_rows(&self.plan, &self.collapsed, &self.expanded);
+        self.selected = keep
+            .and_then(|node| self.row_of(node))
+            .unwrap_or(0)
+            .min(self.rows.len().saturating_sub(1));
+    }
+
+    /// The row showing a node, directly or as part of a group.
+    fn row_of(&self, node: NodeId) -> Option<usize> {
+        self.rows.iter().position(|row| {
+            row.node == node
+                || row
+                    .group
+                    .as_ref()
+                    .is_some_and(|group| group.contains(&node))
+        })
+    }
+
+    /// Opens whatever hides a node and selects it.
+    pub fn reveal(&mut self, node: NodeId) {
+        let mut parent = self.plan.node(node).parent;
+        while let Some(id) = parent {
+            self.collapsed.remove(&id);
+            parent = self.plan.node(id).parent;
+        }
+        // Open the group the node belongs to, if it is not its first node.
+        if let Some(row) = self.row_of_in(node) {
+            if let Some(group) = &row.group {
+                if group[0] != node {
+                    self.expanded.insert(group[0]);
+                }
+            }
+        }
+        self.rebuild();
+        if let Some(index) = self.row_of(node) {
+            self.selected = index;
+        }
+        self.focus = Focus::Tree;
+        self.detail_scroll = 0;
+    }
+
+    /// The row a node would be in after opening its ancestors.
+    fn row_of_in(&self, node: NodeId) -> Option<Row> {
+        visible_rows(&self.plan, &self.collapsed, &self.expanded)
+            .into_iter()
+            .find(|row| {
+                row.node == node
+                    || row
+                        .group
+                        .as_ref()
+                        .is_some_and(|group| group.contains(&node))
+            })
+    }
+
+    /// Keeps the selection on screen for a tree area of `height` rows.
+    pub fn scroll_into_view(&mut self, height: usize) {
+        let height = height.max(1);
+        if self.selected < self.offset {
+            self.offset = self.selected;
+        } else if self.selected >= self.offset + height {
+            self.offset = self.selected + 1 - height;
+        }
+        self.offset = self.offset.min(self.rows.len().saturating_sub(1));
+    }
+
+    fn select(&mut self, index: usize) {
+        self.selected = index.min(self.rows.len().saturating_sub(1));
+        self.detail_scroll = 0;
+    }
+
+    pub fn handle(&mut self, key: Key, page: usize) -> Outcome {
+        self.message = None;
+        if let Some(search) = self.search.as_mut().filter(|search| search.editing) {
+            match key {
+                Key::Char(c) => search.query.push(c),
+                Key::Backspace => {
+                    search.query.pop();
+                }
+                Key::Enter => {
+                    search.editing = false;
+                    self.find(true, true);
+                }
+                Key::Esc => self.search = None,
+                _ => {}
+            }
+            return Outcome::Continue;
+        }
+        if self.help {
+            self.help = false;
+            return Outcome::Continue;
+        }
+        match key {
+            Key::Char('q') | Key::Esc => return Outcome::Quit,
+            Key::Char('?') => self.help = true,
+            Key::Tab | Key::Char('f') => {
+                self.focus = match self.focus {
+                    Focus::Tree if !self.analysis.findings.is_empty() => Focus::Findings,
+                    _ => Focus::Tree,
+                };
+            }
+            Key::Char('/') => {
+                self.search = Some(Search {
+                    query: String::new(),
+                    editing: true,
+                });
+            }
+            Key::Char('n') => self.find(true, false),
+            Key::Char('N') => self.find(false, false),
+            Key::Char('x') => self.view.inclusive = !self.view.inclusive,
+            Key::Char('w') => self.view.cpu = !self.view.cpu,
+            Key::Char('b') => self.view.buffers = !self.view.buffers,
+            Key::Char('J') => self.detail_scroll = self.detail_scroll.saturating_add(1),
+            Key::Char('K') => self.detail_scroll = self.detail_scroll.saturating_sub(1),
+            Key::Char(digit @ '1'..='9') => {
+                let index = digit as usize - '1' as usize;
+                match self.analysis.metrics.statement.hotspots.get(index) {
+                    Some(&node) => self.reveal(node),
+                    None => self.message = Some(format!("There is no hotspot {digit}.")),
+                }
+            }
+            _ if self.focus == Focus::Findings => self.findings_key(key, page),
+            _ => self.tree_key(key, page),
+        }
+        Outcome::Continue
+    }
+
+    fn tree_key(&mut self, key: Key, page: usize) {
+        let last = self.rows.len().saturating_sub(1);
+        match key {
+            Key::Down | Key::Char('j') => self.select(self.selected + 1),
+            Key::Up | Key::Char('k') => self.select(self.selected.saturating_sub(1)),
+            Key::PageDown => self.select(self.selected + page.max(1)),
+            Key::PageUp => self.select(self.selected.saturating_sub(page.max(1))),
+            Key::Home | Key::Char('g') => self.select(0),
+            Key::End | Key::Char('G') => self.select(last),
+            Key::Left | Key::Char('h') => self.close_or_parent(),
+            Key::Right | Key::Char('l') => self.open(),
+            Key::Enter | Key::Char(' ') => {
+                let row = self.selected_row().clone();
+                if row.collapsed || row.group.is_some() {
+                    self.open();
+                } else if row.has_children {
+                    self.close_or_parent();
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn findings_key(&mut self, key: Key, page: usize) {
+        let last = self.analysis.findings.len().saturating_sub(1);
+        match key {
+            Key::Down | Key::Char('j') => self.finding = (self.finding + 1).min(last),
+            Key::Up | Key::Char('k') => self.finding = self.finding.saturating_sub(1),
+            Key::PageDown => self.finding = (self.finding + page).min(last),
+            Key::PageUp => self.finding = self.finding.saturating_sub(page),
+            Key::Home | Key::Char('g') => self.finding = 0,
+            Key::End | Key::Char('G') => self.finding = last,
+            Key::Enter | Key::Right | Key::Char('l') => {
+                match self
+                    .analysis
+                    .findings
+                    .get(self.finding)
+                    .and_then(|finding| finding.node)
+                {
+                    Some(node) => self.reveal(node),
+                    None => {
+                        self.message = Some("This finding is about the whole statement.".to_owned())
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Opens a collapsed node or a group of siblings.
+    fn open(&mut self) {
+        let row = self.selected_row().clone();
+        if let Some(group) = &row.group {
+            self.expanded.insert(group[0]);
+        } else if row.collapsed {
+            self.collapsed.remove(&row.node);
+        } else {
+            return;
+        }
+        self.rebuild();
+    }
+
+    /// Collapses an open node; on a closed node or a leaf, goes to the
+    /// parent.
+    fn close_or_parent(&mut self) {
+        let row = self.selected_row().clone();
+        if row.has_children && !row.collapsed && row.group.is_none() {
+            self.collapsed.insert(row.node);
+            self.rebuild();
+            return;
+        }
+        // Closing a group that was opened: regroup it.
+        let node = row.node;
+        if let Some(first) = self.expanded.iter().copied().find(|&first| {
+            self.plan.node(first).parent == self.plan.node(node).parent && first <= node
+        }) {
+            if self.expanded.remove(&first) {
+                self.rebuild();
+                if let Some(index) = self.row_of(first) {
+                    self.selected = index;
+                }
+                return;
+            }
+        }
+        if let Some(parent) = self.plan.node(node).parent {
+            if let Some(index) = self.row_of(parent) {
+                self.select(index);
+            }
+        }
+    }
+
+    /// Nodes whose name or conditions contain the query, in plan order.
+    pub fn matches(&self) -> Vec<NodeId> {
+        let Some(query) = self
+            .search
+            .as_ref()
+            .map(|search| search.query.to_lowercase())
+        else {
+            return Vec::new();
+        };
+        if query.is_empty() {
+            return Vec::new();
+        }
+        self.plan
+            .walk()
+            .into_iter()
+            .map(|(_, node)| node)
+            .filter(|node| {
+                self.labels[node.id.index()].to_lowercase().contains(&query)
+                    || node
+                        .predicates
+                        .iter()
+                        .any(|predicate| predicate.text.to_lowercase().contains(&query))
+            })
+            .map(|node| node.id)
+            .collect()
+    }
+
+    /// Moves to the next (or previous) match; `inclusive` accepts the
+    /// selected node itself.
+    fn find(&mut self, forward: bool, inclusive: bool) {
+        let matches = self.matches();
+        if matches.is_empty() {
+            if self.search.is_some() {
+                self.message = Some("No match.".to_owned());
+            }
+            return;
+        }
+        let order: Vec<NodeId> = self
+            .plan
+            .walk()
+            .into_iter()
+            .map(|(_, node)| node.id)
+            .collect();
+        let position = |id: NodeId| order.iter().position(|&other| other == id).unwrap_or(0);
+        let current = position(self.selected_node());
+        let next = if forward {
+            matches
+                .iter()
+                .copied()
+                .find(|&id| position(id) > current || (inclusive && position(id) == current))
+                .unwrap_or(matches[0])
+        } else {
+            matches
+                .iter()
+                .rev()
+                .copied()
+                .find(|&id| position(id) < current)
+                .unwrap_or(*matches.last().expect("not empty"))
+        };
+        self.reveal(next);
+        let index = matches.iter().position(|&id| id == next).unwrap_or(0);
+        self.message = Some(format!("Match {} of {}", index + 1, matches.len()));
+    }
+}
+
+/// The rows to show: the tree in plan order, without the descendants of
+/// collapsed nodes, with runs of similar siblings folded into one row
+/// unless they were opened.
+pub fn visible_rows(
+    plan: &Plan,
+    collapsed: &HashSet<NodeId>,
+    expanded: &HashSet<NodeId>,
+) -> Vec<Row> {
+    let mut rows = Vec::new();
+    // (node or group, own prefix, prefix for children)
+    let mut stack: Vec<(Vec<NodeId>, String, String)> =
+        vec![(vec![NodeId(0)], String::new(), String::new())];
+    while let Some((nodes, own, below)) = stack.pop() {
+        let node = plan.node(nodes[0]);
+        let has_children = !node.children.is_empty();
+        let is_collapsed = collapsed.contains(&node.id);
+        let group = (nodes.len() > 1).then(|| nodes.clone());
+        rows.push(Row {
+            node: node.id,
+            prefix: own,
+            group: group.clone(),
+            has_children: has_children && group.is_none(),
+            collapsed: is_collapsed && group.is_none(),
+        });
+        if group.is_some() || is_collapsed {
+            continue;
+        }
+        let items = sibling_runs(plan, &node.children, expanded);
+        for (index, item) in items.iter().enumerate().rev() {
+            let last = index + 1 == items.len();
+            stack.push((
+                item.clone(),
+                format!("{below}{}", if last { "└─ " } else { "├─ " }),
+                format!("{below}{}", if last { "   " } else { "│  " }),
+            ));
+        }
+    }
+    rows
+}
+
+/// Children split into single nodes and runs of similar leaves.
+fn sibling_runs(plan: &Plan, children: &[NodeId], expanded: &HashSet<NodeId>) -> Vec<Vec<NodeId>> {
+    let mut items: Vec<Vec<NodeId>> = Vec::new();
+    let mut index = 0;
+    while index < children.len() {
+        let key = shape(plan, children[index]);
+        let mut end = index + 1;
+        while key.is_some() && end < children.len() && shape(plan, children[end]) == key {
+            end += 1;
+        }
+        let run = &children[index..end];
+        if run.len() >= MIN_GROUP && !expanded.contains(&run[0]) {
+            items.push(run.to_vec());
+        } else {
+            items.extend(run.iter().map(|&id| vec![id]));
+        }
+        index = end;
+    }
+    items
+}
+
+/// What makes leaves similar: their type, relation and conditions with
+/// numbers blanked out (`orders_2025_01`, `events_1`). `None` for nodes with
+/// children, which are never grouped.
+fn shape(plan: &Plan, id: NodeId) -> Option<String> {
+    let node = plan.node(id);
+    if !node.children.is_empty() {
+        return None;
+    }
+    let mut key = format!(
+        "{}|{}",
+        node.node_type,
+        node.relation_name.as_deref().unwrap_or("")
+    );
+    for predicate in &node.predicates {
+        key.push('|');
+        key.push_str(&predicate.text);
+    }
+    Some(blank_numbers(&key))
+}
+
+fn blank_numbers(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut in_number = false;
+    for c in text.chars() {
+        if c.is_ascii_digit() {
+            if !in_number {
+                out.push('#');
+            }
+            in_number = true;
+        } else {
+            in_number = false;
+            out.push(c);
+        }
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn app(text: &str) -> App {
+        let plan = explainsql_core::parse(text).unwrap();
+        let analysis = explainsql_core::analyze(&plan);
+        App::new(plan, analysis)
+    }
+
+    const JOIN: &str = "\
+Hash Join  (cost=1.00..10.00 rows=10 width=8) (actual time=0.100..5.000 rows=10 loops=1)
+  Hash Cond: (a.id = b.id)
+  ->  Seq Scan on a  (cost=0.00..5.00 rows=100 width=4) (actual time=0.010..2.500 rows=100 loops=1)
+        Filter: (x = 1)
+  ->  Hash  (cost=1.00..1.00 rows=10 width=4) (actual time=1.000..1.000 rows=10 loops=1)
+        ->  Seq Scan on b  (cost=0.00..1.00 rows=10 width=4) (actual time=0.010..0.500 rows=10 loops=1)
+Execution Time: 5.500 ms";
+
+    fn partitions(count: usize) -> String {
+        let mut text = String::from(
+            "Append  (cost=0.00..10.00 rows=10 width=4) (actual time=0.010..9.000 rows=10 loops=1)\n",
+        );
+        for n in 1..=count {
+            text.push_str(&format!(
+                "  ->  Seq Scan on events_2025_{n:02} events_{n}  (cost=0.00..1.00 rows=1 width=4) (actual time=0.001..0.500 rows=1 loops=1)\n        Filter: (events_{n}.payload @> '{{}}'::jsonb)\n"
+            ));
+        }
+        text
+    }
+
+    fn labels(app: &App) -> Vec<String> {
+        app.rows()
+            .iter()
+            .map(|row| format!("{}{}", row.prefix, format::node(app.plan.node(row.node))))
+            .collect()
+    }
+
+    #[test]
+    fn moves_folds_and_unfolds() {
+        let mut app = app(JOIN);
+        assert_eq!(
+            labels(&app),
+            [
+                "Hash Join",
+                "├─ Seq Scan on a",
+                "└─ Hash",
+                "   └─ Seq Scan on b"
+            ]
+        );
+        app.handle(Key::Char('G'), 10);
+        assert_eq!(app.selected, 3);
+        // On a leaf, h goes to the parent; on an open node, it closes it.
+        app.handle(Key::Char('h'), 10);
+        assert_eq!(app.selected_node(), NodeId(2));
+        app.handle(Key::Char('h'), 10);
+        assert_eq!(app.rows().len(), 3);
+        assert!(app.selected_row().collapsed);
+        app.handle(Key::Char('l'), 10);
+        assert_eq!(app.rows().len(), 4);
+        assert_eq!(app.handle(Key::Char('q'), 10), Outcome::Quit);
+    }
+
+    #[test]
+    fn groups_similar_siblings() {
+        let mut app = app(&partitions(12));
+        assert_eq!(app.rows().len(), 2);
+        assert_eq!(app.rows()[1].group.as_ref().map(Vec::len), Some(12));
+        app.handle(Key::Char('j'), 10);
+        app.handle(Key::Enter, 10);
+        assert_eq!(app.rows().len(), 13);
+        // h on a member of an opened group folds it back.
+        app.handle(Key::Char('j'), 10);
+        app.handle(Key::Char('h'), 10);
+        assert_eq!(app.rows().len(), 2);
+        // A few siblings are not grouped.
+        assert_eq!(
+            super::App::new(
+                explainsql_core::parse(&partitions(3)).unwrap(),
+                explainsql_core::analyze(&explainsql_core::parse(&partitions(3)).unwrap()),
+            )
+            .rows()
+            .len(),
+            4
+        );
+    }
+
+    #[test]
+    fn searches_and_jumps() {
+        let mut app = app(JOIN);
+        app.handle(Key::Char('h'), 10); // collapse the root? root stays selected
+        for key in [
+            Key::Char('/'),
+            Key::Char('o'),
+            Key::Char('n'),
+            Key::Char(' '),
+            Key::Char('b'),
+            Key::Enter,
+        ] {
+            app.handle(key, 10);
+        }
+        // "on b" is hidden under the collapsed root and gets revealed.
+        assert_eq!(app.selected_node(), NodeId(3));
+        assert_eq!(app.message.as_deref(), Some("Match 1 of 1"));
+
+        // Hotspots: the scan of a takes the most time.
+        app.handle(Key::Char('1'), 10);
+        assert_eq!(app.selected_node(), NodeId(1));
+        app.handle(Key::Char('7'), 10);
+        assert_eq!(app.message.as_deref(), Some("There is no hotspot 7."));
+    }
+
+    #[test]
+    fn goes_from_a_finding_to_its_node() {
+        let plan = explainsql_core::parse(
+            "\
+Limit  (cost=0.00..1.00 rows=1 width=4) (actual time=0.010..12.000 rows=1 loops=1)
+  ->  Sort  (cost=0.00..1.00 rows=1 width=4) (actual time=0.010..12.000 rows=1 loops=1)
+        Sort Key: a
+        ->  Seq Scan on orders  (cost=0.00..4917.00 rows=10 width=64) (actual time=1.053..11.865 rows=10 loops=1)
+              Filter: (customer_id = 4242)
+              Rows Removed by Filter: 199990
+              Buffers: shared hit=2031 read=386
+Execution Time: 12.100 ms",
+        )
+        .unwrap();
+        let analysis = explainsql_core::analyze(&plan);
+        let mut app = App::new(plan, analysis);
+        app.handle(Key::Char('h'), 10);
+        app.handle(Key::Tab, 10);
+        assert_eq!(app.focus, Focus::Findings);
+        app.handle(Key::Enter, 10);
+        assert_eq!(app.focus, Focus::Tree);
+        assert_eq!(app.selected_node(), NodeId(2));
+    }
+
+    #[test]
+    fn keeps_the_selection_on_screen() {
+        let mut app = app(&partitions(3));
+        app.handle(Key::Char('G'), 2);
+        app.scroll_into_view(2);
+        assert_eq!(app.offset, 2);
+        app.handle(Key::Char('g'), 2);
+        app.scroll_into_view(2);
+        assert_eq!(app.offset, 0);
+    }
+}

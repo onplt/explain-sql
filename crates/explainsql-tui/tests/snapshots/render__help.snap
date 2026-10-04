@@ -1,0 +1,34 @@
+---
+source: crates/explainsql-tui/tests/render.rs
+expression: "frame(&mut app, 100, 30)"
+---
+369.3 ms. 51% of it in Seq Scan on order_items oi, which reads 3,000,000 rows over 10 loops, and the
+join filter above keeps 14 of them.
+Planning 0.526 ms · Execution 369.3 ms · Buffers 21,527 pages, 18% from cache
+ Plan · time in each node ──────────────────────────────────────────────────────────────────────────
+    Share     Time            Node                                             Rows Estimate Buffers
+!     45% 167.8 ms┌ Keys ────────────────────────────────────────────────────────┐4       15       0
+     3.3%  12.1 ms│ j k ↓ ↑     Move                                             │0       10   2,417
+!     51% 189.3 ms│ PgDn PgUp   Move a page                                      │0  300,000  19,110
+ Details ─────────│ g G         First, last node                                 │──────────────────
+Nested Loop       │ h l ← →     Fold, unfold (h on a leaf: go to its parent)     │
+Time in node: 167.│ Enter Space Fold or unfold                                   │
+With children: 369│ /           Search node names and conditions                 │
+Rows: 14 per loop │ n N         Next, previous match                             │
+Estimate: 15 rows;│ 1 … 9       Go to the slowest nodes                          │
+Removed by join fi│ Tab f       Switch between the plan and the findings         │
+Buffers: shared hi│ Enter       On a finding: go to its node                     │
+Read by the node i│ x           Time in the node, or including its children      │
+                  │ w           Wall-clock or CPU time (parallel plans)          │
+Join Filter: (o.id│ b           Time or buffers                                  │
+Output: o.id, oi.p│ J K         Scroll the details                               │
+                  │ ?           This help                                        │
+HIGH   ES005 Expen│ q Esc       Quit                                             │
+On Nested Loop    │             Any key closes this help.                        │
+Nested Loop repeat└──────────────────────────────────────────────────────────────┘p's time.
+Inner loops: 10
+Inner side per loop: 18.9 ms
+ Findings (2) · Tab to browse ──────────────────────────────────────────────────────────────────────
+HIGH   ES001 Selective sequential scan: Seq Scan on order_items oi reads 3,000,000 rows over 10 loo…
+HIGH   ES005 Expensive nested-loop inner side: Nested Loop repeats Seq Scan on order_items oi 10 ti…
+j/k move  h/l fold  / search  1-9 hotspots  Tab findings  ? help  q quit

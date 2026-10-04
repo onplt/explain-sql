@@ -213,7 +213,7 @@ pub fn json(plan: &Plan, analysis: &Analysis) -> String {
 
 /// Statement-level figures: planning and execution time, triggers, JIT,
 /// buffers.
-fn facts(plan: &Plan, analysis: &Analysis) -> Vec<String> {
+pub fn facts(plan: &Plan, analysis: &Analysis) -> Vec<String> {
     let statement = &analysis.metrics.statement;
     let mut facts = Vec::new();
     if let Some(time) = statement.planning_time {
@@ -369,8 +369,9 @@ fn tree_prefixes(plan: &Plan) -> Vec<(NodeId, String)> {
     rows
 }
 
-/// A bar of eighths of a character for a fraction.
-fn bar(fraction: f64) -> String {
+/// A bar of eighths of a character for a fraction, at most `BAR_WIDTH`
+/// characters wide.
+pub fn bar(fraction: f64) -> String {
     const EIGHTHS: [char; 8] = [' ', '▏', '▎', '▍', '▌', '▋', '▊', '▉'];
     // Bounded by BAR_WIDTH × 8, so the conversion is exact.
     #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]

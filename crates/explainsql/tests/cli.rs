@@ -114,3 +114,26 @@ fn stops_quietly_when_the_reader_does() {
         String::from_utf8_lossy(&output.stderr)
     );
 }
+
+#[test]
+fn shows_a_demo_plan() {
+    let output = run(&["--demo", "--print"], None);
+    assert!(output.status.success());
+    let text = stdout(&output);
+    assert!(
+        text.contains("ES005 Expensive nested-loop inner side"),
+        "{text}"
+    );
+}
+
+/// As psql's pager with its output going elsewhere than a terminal, it
+/// passes everything through, plan or not.
+#[test]
+fn pager_passes_output_through_when_not_in_a_terminal() {
+    let table = " id | name\n----+------\n  1 | x\n(1 row)\n";
+    let output = run(&["--pager"], Some(table));
+    assert!(output.status.success());
+    assert_eq!(stdout(&output), table);
+    let plan = std::fs::read_to_string(fixture("inputs/psql-aligned.txt")).unwrap();
+    assert_eq!(stdout(&run(&["--pager"], Some(&plan))), plan);
+}

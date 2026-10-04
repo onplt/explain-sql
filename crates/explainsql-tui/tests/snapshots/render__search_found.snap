@@ -1,0 +1,34 @@
+---
+source: crates/explainsql-tui/tests/render.rs
+expression: "frame(&mut app, 100, 30)"
+---
+369.3 ms. 51% of it in Seq Scan on order_items oi, which reads 3,000,000 rows over 10 loops, and the
+join filter above keeps 14 of them.
+Planning 0.526 ms · Execution 369.3 ms · Buffers 21,527 pages, 18% from cache
+ Plan · time in each node ──────────────────────────────────────────────────────────────────────────
+    Share     Time            Node                                             Rows Estimate Buffers
+!     45% 167.8 ms ████▌      Nested Loop                                        14       15       0
+     3.3%  12.1 ms ▍          ├─ Seq Scan on orders o                            10       10   2,417
+!     51% 189.3 ms █████▏     └─ Seq Scan on order_items oi             300,000 ×10  300,000  19,110
+ Details ───────────────────────────────────────────────────────────────────────────────────────────
+Seq Scan on order_items oi
+Role: Inner
+Time in node: 189.3 ms (51% of the runtime)
+With children: 189.3 ms
+Rows: 300,000 per loop × 10 loops = 3,000,000
+Estimate: 300,000 rows; cost 0.00..4911.00, width 8
+Buffers: shared hit 1,600, read 17,510
+Read by the node itself: 19,110 pages
+Output: oi.id, oi.order_id, oi.product_id, oi.quantity, oi.unit_price
+
+HIGH   ES001 Selective sequential scan
+On Seq Scan on order_items oi
+Seq Scan on order_items oi reads 3,000,000 rows over 10 loops, and the join filter above keeps 14 of
+them.
+Rows kept: 14 of 3,000,000 (<0.001%)
+Join filter: (o.id = oi.order_id)
+Table size: 1,911 pages (14.9 MB)
+ Findings (2) · Tab to browse ──────────────────────────────────────────────────────────────────────
+HIGH   ES001 Selective sequential scan: Seq Scan on order_items oi reads 3,000,000 rows over 10 loo…
+HIGH   ES005 Expensive nested-loop inner side: Nested Loop repeats Seq Scan on order_items oi 10 ti…
+Match 1 of 1

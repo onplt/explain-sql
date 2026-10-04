@@ -1,0 +1,44 @@
+---
+source: crates/explainsql-tui/tests/render.rs
+expression: "frame(&mut app, 120, 40)"
+---
+369.3 ms. 51% of it in Seq Scan on order_items oi, which reads 3,000,000 rows over 10 loops, and the join filter above
+keeps 14 of them.
+Planning 0.526 ms · Execution 369.3 ms · Buffers 21,527 pages, 18% from cache
+ Plan · time in each node ────────────────────────────────────────────────────┌ Details ────────────────────────────────
+    Share     Time Node                                          Rows Estimate│Nested Loop
+!     45% 167.8 ms Nested Loop                                     14       15│Time in node: 167.8 ms (45% of the
+     3.3%  12.1 ms ├─ Seq Scan on orders o                         10       10│runtime)
+!     51% 189.3 ms └─ Seq Scan on order_items oi          300,000 ×10  300,000│With children: 369.2 ms
+                                                                              │Rows: 14 per loop
+                                                                              │Estimate: 15 rows; cost 0.00..91527.00,
+                                                                              │width 8
+                                                                              │Removed by join filter: 2,999,986 per
+                                                                              │loop
+                                                                              │Buffers: shared hit 3,872, read 17,655
+                                                                              │Read by the node itself: 0 pages
+                                                                              │
+                                                                              │Join Filter: (o.id = oi.order_id)
+                                                                              │Output: o.id, oi.product_id
+                                                                              │
+                                                                              │HIGH   ES005 Expensive nested-loop inner
+                                                                              │side
+                                                                              │On Nested Loop
+                                                                              │Nested Loop repeats Seq Scan on
+                                                                              │order_items oi 10 times; that takes 97%
+                                                                              │of the loop's time.
+                                                                              │Inner loops: 10
+                                                                              │Inner side per loop: 18.9 ms
+                                                                              │Repeated work: 357.1 ms of the loop's
+                                                                              │369.2 ms, 189.3 ms of it in the inner
+                                                                              │scans
+                                                                              │Rows removed by the join filter:
+                                                                              │2,999,986
+                                                                              │→ An index on order_items (order_id)
+                                                                              │would turn each of the 10 inner scans
+                                                                              │into an index lookup.
+                                                                              │
+ Findings (2) · Tab to browse ──────────────────────────────────────────────────────────────────────────────────────────
+HIGH   ES001 Selective sequential scan: Seq Scan on order_items oi reads 3,000,000 rows over 10 loops, and the join fil…
+HIGH   ES005 Expensive nested-loop inner side: Nested Loop repeats Seq Scan on order_items oi 10 times; that takes 97% …
+j/k move  h/l fold  / search  1-9 hotspots  Tab findings  ? help  q quit

@@ -1,0 +1,34 @@
+---
+source: crates/explainsql-tui/tests/render.rs
+expression: "frame(&mut app, 100, 30)"
+---
+369.3 ms. 51% of it in Seq Scan on order_items oi, which reads 3,000,000 rows over 10 loops, and the
+join filter above keeps 14 of them.
+Planning 0.526 ms · Execution 369.3 ms · Buffers 21,527 pages, 18% from cache
+ Plan · time in each node ──────────────────────────────────────────────────────────────────────────
+    Share     Time            Node                                             Rows Estimate Buffers
+!     45% 167.8 ms ████▌      Nested Loop                                        14       15       0
+     3.3%  12.1 ms ▍          ├─ Seq Scan on orders o                            10       10   2,417
+!     51% 189.3 ms █████▏     └─ Seq Scan on order_items oi             300,000 ×10  300,000  19,110
+ Finding ───────────────────────────────────────────────────────────────────────────────────────────
+HIGH   ES001 Selective sequential scan
+On Seq Scan on order_items oi
+Seq Scan on order_items oi reads 3,000,000 rows over 10 loops, and the join filter above keeps 14 of
+them.
+Rows kept: 14 of 3,000,000 (<0.001%)
+Join filter: (o.id = oi.order_id)
+Table size: 1,911 pages (14.9 MB)
+Loops: 10
+Time in the node: 189.3 ms (51% of the runtime)
+→ An index on order_items (order_id) would turn each loop's scan into an index lookup.
+
+
+
+
+
+
+
+ Findings (2) · Enter: go to the node ──────────────────────────────────────────────────────────────
+HIGH   ES001 Selective sequential scan: Seq Scan on order_items oi reads 3,000,000 rows over 10 loo…
+HIGH   ES005 Expensive nested-loop inner side: Nested Loop repeats Seq Scan on order_items oi 10 ti…
+j/k move  h/l fold  / search  1-9 hotspots  Tab findings  ? help  q quit

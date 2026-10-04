@@ -1,0 +1,28 @@
+---
+source: crates/explainsql-tui/tests/render.rs
+expression: "frame(&mut app, 80, 24)"
+---
+369.3 ms. 51% of it in Seq Scan on order_items oi, which reads 3,000,000 rows
+over 10 loops, and the join filter above keeps 14 of them.
+Planning 0.526 ms · Execution 369.3 ms · Buffers 21,527 pages, 18% from cache
+ Plan · time in each node ──────────────────────────────────────────────────────
+    Share     Time Node                                            Rows Estimate
+!     45% 167.8 ms Nested Loop                                       14       15
+     3.3%  12.1 ms ├─ Seq Scan on orders o                           10       10
+!     51% 189.3 ms └─ Seq Scan on order_items oi            300,000 ×10  300,000
+ Details ───────────────────────────────────────────────────────────────────────
+Nested Loop
+Time in node: 167.8 ms (45% of the runtime)
+With children: 369.2 ms
+Rows: 14 per loop
+Estimate: 15 rows; cost 0.00..91527.00, width 8
+Removed by join filter: 2,999,986 per loop
+Buffers: shared hit 3,872, read 17,655
+Read by the node itself: 0 pages
+
+Join Filter: (o.id = oi.order_id)
+Output: o.id, oi.product_id
+ Findings (2) · Tab to browse ──────────────────────────────────────────────────
+HIGH   ES001 Selective sequential scan: Seq Scan on order_items oi reads 3,000,…
+HIGH   ES005 Expensive nested-loop inner side: Nested Loop repeats Seq Scan on …
+j/k move  h/l fold  / search  1-9 hotspots  Tab findings  ? help  q quit

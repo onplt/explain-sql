@@ -55,7 +55,9 @@ Screen principles:
 
 Phase 0 is complete: the workspace skeleton, CI, and 65 scenarios captured on PostgreSQL 12–18 (see [fixtures/README.md](../fixtures/README.md)). Phase 1 is complete: the plan IR and the JSON and text parsers meet all four exit criteria (see [Testing the parsers](ARCHITECTURE.md#testing-the-parsers)).
 
-Phase 2 is code-complete. The metrics engine, the twelve rules and the static report are in place. Exclusive times agree with pev2 and explain.depesz.com within 5% on every node of 24 reference plans, except one deliberate difference in rounding (see [tools/cross-check](../tools/cross-check/README.md)). The report snapshots are stable. The remaining exit criterion is a quiet alpha with a few DBAs. Phase 3 is next.
+Phase 2 is code-complete. The metrics engine, the twelve rules and the static report are in place. Exclusive times agree with pev2 and explain.depesz.com within 5% on every node of 24 reference plans, except one deliberate difference in rounding (see [tools/cross-check](../tools/cross-check/README.md)). The report snapshots are stable. The remaining exit criterion is a quiet alpha with a few DBAs.
+
+Phase 3 is code-complete. The viewer has the layout, the virtualized tree, details, findings, search, folding (including similar siblings), view modes, colors, pager mode and `--demo`. A frame of a 5,000-node plan takes about 0.3 ms. `TestBackend` snapshots cover 120×40 and 80×24. The keys for the advisor and the connected mode (`i`, `t`, `c`, `e`, `r`) come with Phase 4. Phase 4 is next.
 
 | Phase | Estimate | Scope | Exit criteria |
 |---|---|---|---|

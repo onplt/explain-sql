@@ -1,0 +1,44 @@
+---
+source: crates/explainsql-tui/tests/render.rs
+expression: "frame(&mut app, 120, 40)"
+---
+43.9 ms. 70% of it in [CTE per_status] HashAggregate.
+Planning 0.412 ms · Execution 43.9 ms · Buffers 2,417 pages, 93% from cache
+ Plan · time in each node ────────────────────────────────────────────────────┌ Details ────────────────────────────────
+    Share     Time            Node                               Rows Estimate│Nested Loop
+   0.023% 0.010 ms            Nested Loop                          10        8│Time in node: 0.010 ms (0.023% of the
+      70%  30.7 ms ███████    ├─ [CTE per_status] HashAggreg…       5        5│runtime)
+      30%  13.1 ms ███        │  └─ Seq Scan on orders        200,000  200,000│With children: 43.8 ms
+   0.032% 0.014 ms            ├─ CTE Scan on per_status a           5        5│Rows: 10 per loop
+  <0.001% 0.000 ms            └─ CTE Scan on per_status b        5 ×5        5│Estimate: 8 rows; cost 5417.05..5417.76,
+                                                                              │width 64
+                                                                              │Removed by join filter: 15 per loop
+                                                                              │Buffers: shared hit 2,243, read 174
+                                                                              │Read by the node itself: 0 pages
+                                                                              │
+                                                                              │Join Filter: (a.n < b.n)
+                                                                              │Output: a.status, b.status
+                                                                              │
+                                                                              │
+                                                                              │
+                                                                              │
+                                                                              │
+                                                                              │
+                                                                              │
+                                                                              │
+                                                                              │
+                                                                              │
+                                                                              │
+                                                                              │
+                                                                              │
+                                                                              │
+                                                                              │
+                                                                              │
+                                                                              │
+                                                                              │
+                                                                              │
+                                                                              │
+                                                                              │
+                                                                              │
+                                                                              │
+j/k move  h/l fold  / search  1-9 hotspots  Tab findings  ? help  q quit

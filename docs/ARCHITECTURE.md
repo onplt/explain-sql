@@ -48,7 +48,7 @@ explain-sql/
 └─ .github/workflows/            # ci, fixtures, release
 ```
 
-Not there yet: the `advisor` and `expr` modules of `core`, the contents of `explainsql-db` and `explainsql-tui` (empty placeholders for now), `docs/rules/` and the release workflow. Until the interactive viewer arrives, the binary prints a report (`--format text|md|json`); `--debug-parse` shows what the parsers made of an input.
+Not there yet: the `advisor` and `expr` modules of `core`, the contents of `explainsql-db` (an empty placeholder for now), `docs/rules/` and the release workflow. In a terminal the binary opens the viewer; elsewhere, or with `--print`, it prints a report (`--format text|md|json`). `--debug-parse` shows what the parsers made of an input.
 
 We use four crates and no more. Keeping `core` free of I/O is required for WebAssembly and for fast, deterministic tests; finer splits would slow down early development.
 
@@ -165,6 +165,21 @@ The results agree with pev2 and explain.depesz.com, compared node by node on 24 
 - **Rules against the scenarios** (`tests/rules.rs`): each scenario's header lists the rules its plan triggers, and no other rule may fire, in either format on any version. A rule marked `?` may fire on some versions only, where the planner's estimates differ. Scenarios without rules, such as most of the traps for naive advisors, expect silence. A second test checks that the actions name the right columns and remedies.
 - **Snapshots** (`tests/report.rs`, with `insta`): the text report of 24 reference plans and a Markdown report. A change in the metrics, the rules or the layout shows up as a reviewable diff.
 - **The binary** (`crates/explainsql/tests/cli.rs`): formats, standard input, exit codes, and a reader that closes the pipe early.
+
+## The viewer
+
+`explainsql-tui` shows a plan and its analysis. It depends only on `core` and Ratatui (0.29, the last release that builds with Rust 1.85), with Crossterm as the backend.
+
+- **State apart from drawing.** `app.rs` holds the state: the visible rows, the selection, folds, search, focus and view modes. It turns keys into changes, with no terminal involved, so navigation is unit-tested directly. `ui.rs` draws a frame from that state, and `lib.rs` runs the loop: draw, wait for a key or a resize, handle it. Nothing is redrawn while nothing happens.
+- **Layout.** The verdict and statement figures sit on top. Below them are the plan tree (share, time, bar, node, rows, estimate with ▲▼ marks, buffers), the details of the selected node, the findings and a status line. From 110 columns the details sit beside the tree; below that they go under it, and the tree takes only the rows it needs. Columns are dropped (buffers, then the bar, then the estimate) before the node names get shorter than 30 characters, so 80×24 stays usable.
+- **Virtualized tree.** Only the rows on screen are built and drawn. Node names and column widths are computed once, when the viewer opens. A frame of a 5,000-node plan takes about 0.3 ms in a release build.
+- **Folding.** Any node can be folded. Runs of four or more similar leaves are folded into one row from the start, such as the scans of a thousand partitions. Leaves are similar when they have the same type, and the same relation and conditions once numbers are blanked out. The folded row adds up their time, rows and buffers.
+- **Views.** `x` shows time including children, `w` shows CPU time summed over parallel processes, and `b` shares by buffers instead of time. Including children, CPU time is summed over the subtree, because a `Gather`'s own figures cover only the leader.
+- **Findings.** A marker in the tree shows which nodes have findings. The findings list is browsable, and Enter jumps to the node, opening whatever folds hide it. Number keys jump to the hotspots.
+- **Colors.** True color, then 256 colors, then 16, depending on `COLORTERM` and `TERM`. With `NO_COLOR` it falls back to bold, dim and reverse video. `--theme light` adapts the palette to light backgrounds. Severities and misestimates always carry a word or a symbol as well as a color.
+- **Input.** Keys come from the terminal even when the plan arrived on standard input: Crossterm opens `/dev/tty` on Unix and the console input on Windows.
+- **Pager mode.** `--pager` reads what psql sends to its pager. A plan opens in the viewer. Anything else goes to `$EXPLAINSQL_PAGER`, `$PAGER` or `less -S`, never back to `explainsql`, and is printed directly when none of them runs. When the output is not a terminal, everything passes through unchanged.
+- **Tests.** `tests/render.rs` draws frames with Ratatui's `TestBackend` and compares them with snapshots: five reference plans at 120×40 and 80×24, help, search, the findings and the view modes. A 5,000-node plan that cannot be folded must draw a frame in under 16 ms in release builds (200 ms in debug builds).
 
 ## Predicate parsing
 

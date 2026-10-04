@@ -9,6 +9,10 @@ repository.workspace = true
 
 [dependencies]
 explainsql-core.workspace = true
+ratatui.workspace = true
+
+[dev-dependencies]
+insta.workspace = true
 
 [lints]
 workspace = true

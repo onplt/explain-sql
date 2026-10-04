@@ -1,0 +1,28 @@
+---
+source: crates/explainsql-tui/tests/render.rs
+expression: "frame(&mut app, 80, 24)"
+---
+36.7 ms. 49% of it in HashAggregate.
+Planning 1.15 ms · Execution 36.7 ms · Buffers 1,421 pages, 100% from cache
+ Plan · time in each node ──────────────────────────────────────────────────────
+    Share     Time            Node                                 Rows Estimate
+      49%  18.1 ms ████▉      HashAggregate                           4        4
+      19%  7.03 ms █▉         └─ Append                         120,000  120,000
+      31%  11.4 ms ███▏          └─ ▸ Seq Scan on…  +11 similar 120,000  120,000
+ Details ───────────────────────────────────────────────────────────────────────
+HashAggregate
+Time in node: 18.1 ms (49% of the runtime)
+With children: 36.5 ms
+Rows: 4 per loop
+Estimate: 4 rows; cost 3821.00..3821.04, width 14
+Buffers: shared hit 1,421
+Read by the node itself: 0 pages
+Group Key: events.kind
+Output: events.kind, count(*)
+
+HashAgg Batches: 1
+Peak Memory Usage: 24
+
+
+
+j/k move  h/l fold  / search  1-9 hotspots  Tab findings  ? help  q quit

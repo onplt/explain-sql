@@ -1,0 +1,44 @@
+---
+source: crates/explainsql-tui/tests/render.rs
+expression: "frame(&mut app, 120, 40)"
+---
+11.9 ms. 100% of it in Seq Scan on orders, which reads 200,000 rows to keep 10.
+Planning 0.411 ms · Execution 11.9 ms · Buffers 2,417 pages, 84% from cache
+ Plan · time in each node ────────────────────────────────────────────────────┌ Details ────────────────────────────────
+    Share     Time            Node                               Rows Estimate│Seq Scan on orders
+!    100%  11.9 ms ██████████ Seq Scan on orders                   10       10│Time in node: 11.9 ms (100% of the
+                                                                              │runtime)
+                                                                              │With children: 11.9 ms
+                                                                              │Rows: 10 per loop
+                                                                              │Estimate: 10 rows; cost 0.00..4917.00,
+                                                                              │width 64
+                                                                              │Removed by filter: 199,990 per loop
+                                                                              │Buffers: shared hit 2,031, read 386
+                                                                              │Read by the node itself: 2,417 pages
+                                                                              │
+                                                                              │Filter: (orders.customer_id = 4242)
+                                                                              │Output: id, customer_id, status,
+                                                                              │created_at, amount, note
+                                                                              │
+                                                                              │HIGH   ES001 Selective sequential scan
+                                                                              │On Seq Scan on orders
+                                                                              │Seq Scan on orders reads 200,000 rows to
+                                                                              │keep 10.
+                                                                              │Rows kept: 10 of 200,000 (0.005%)
+                                                                              │Filter: (orders.customer_id = 4242)
+                                                                              │Table size: 2,417 pages (18.9 MB)
+                                                                              │Time in the node: 11.9 ms (100% of the
+                                                                              │runtime)
+                                                                              │→ An index on orders (customer_id) would
+                                                                              │let PostgreSQL read only the matching
+                                                                              │rows.
+                                                                              │
+                                                                              │
+                                                                              │
+                                                                              │
+                                                                              │
+                                                                              │
+                                                                              │
+ Findings (1) · Tab to browse ──────────────────────────────────────────────────────────────────────────────────────────
+HIGH   ES001 Selective sequential scan: Seq Scan on orders reads 200,000 rows to keep 10
+j/k move  h/l fold  / search  1-9 hotspots  Tab findings  ? help  q quit

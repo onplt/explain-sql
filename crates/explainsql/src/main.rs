@@ -1,7 +1,7 @@
 //! The `explainsql` command-line tool.
 
 use std::io::{IsTerminal, Read, Write};
-use std::process::ExitCode;
+use std::process::{Command, ExitCode, Stdio};
 use std::{env, fs, io};
 
 use clap::{Parser, ValueEnum};
@@ -15,6 +15,9 @@ use explainsql_core::report;
 /// a GUI client or a Markdown code fence. Prints where the time went and what
 /// to do about it.
 ///
+/// In a terminal, the plan opens in an interactive viewer; press ? there for
+/// the keys. Elsewhere, or with --print, a report is printed.
+///
 /// For the most useful report, capture the plan with
 /// EXPLAIN (ANALYZE, BUFFERS, VERBOSE, SETTINGS).
 #[derive(Parser)]
@@ -27,10 +30,24 @@ struct Cli {
     #[arg(long, value_enum, default_value_t = Format::Text)]
     format: Format,
 
-    /// Print a report instead of opening the interactive viewer. The viewer
-    /// is not built yet, so this is currently always the case.
+    /// Print a report instead of opening the interactive viewer, which is
+    /// what happens anyway when the output is not a terminal.
     #[arg(long)]
     print: bool,
+
+    /// Show a sample plan instead of reading one.
+    #[arg(long, conflicts_with = "file")]
+    demo: bool,
+
+    /// Act as psql's pager (PSQL_PAGER='explainsql --pager'): open plans in
+    /// the viewer and pass any other output on to $EXPLAINSQL_PAGER, $PAGER
+    /// or `less -S`.
+    #[arg(long, conflicts_with_all = ["file", "demo"])]
+    pager: bool,
+
+    /// The terminal's background, for the viewer's colors.
+    #[arg(long, value_enum, default_value_t = Theme::Dark)]
+    theme: Theme,
 
     /// When to color the text report.
     #[arg(long, value_enum, default_value_t = Color::Auto)]
@@ -53,6 +70,12 @@ enum Format {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum Theme {
+    Dark,
+    Light,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, ValueEnum)]
 enum Color {
     /// When the output is a terminal and NO_COLOR is not set.
     Auto,
@@ -68,22 +91,35 @@ macro_rules! push_line {
     }};
 }
 
+/// The plan `--demo` shows: a nested loop that rescans a table, with two
+/// findings.
+const DEMO: &str = include_str!("../demo/plan.txt");
+
 fn main() -> ExitCode {
     let cli = Cli::parse();
-    let input = match read_input(cli.file.as_deref()) {
-        Ok(input) => input,
-        Err(error) => {
-            eprintln!("error: {error}");
-            return ExitCode::FAILURE;
+    let input = if cli.demo {
+        DEMO.to_owned()
+    } else {
+        match read_input(cli.file.as_deref(), cli.pager) {
+            Ok(input) => input,
+            Err(error) => {
+                eprintln!("error: {error}");
+                return ExitCode::FAILURE;
+            }
         }
     };
     let plan = match explainsql_core::parse(&input) {
         Ok(plan) => plan,
+        Err(_) if cli.pager => return page(&input),
         Err(error) => {
             eprintln!("error: {error}");
             return ExitCode::FAILURE;
         }
     };
+    // A pager whose output is not a terminal passes everything through.
+    if cli.pager && !io::stdout().is_terminal() {
+        return emit(&input);
+    }
     if cli.debug_parse {
         return match cli.format {
             Format::Json => emit(&format!(
@@ -94,6 +130,22 @@ fn main() -> ExitCode {
         };
     }
     let analysis = explainsql_core::analyze(&plan);
+    if cli.format == Format::Text && !cli.print && interactive() {
+        let options = explainsql_tui::Options {
+            background: match cli.theme {
+                Theme::Dark => explainsql_tui::Background::Dark,
+                Theme::Light => explainsql_tui::Background::Light,
+            },
+            depth: None,
+        };
+        match explainsql_tui::run(plan.clone(), analysis.clone(), options) {
+            Ok(()) => return ExitCode::SUCCESS,
+            // Without a usable terminal, the report is the next best thing.
+            Err(error) => {
+                eprintln!("explainsql: cannot open the viewer ({error}); printing a report")
+            }
+        }
+    }
     let output = match cli.format {
         Format::Text => {
             let color = match cli.color {
@@ -113,6 +165,54 @@ fn main() -> ExitCode {
     emit(&output)
 }
 
+/// Whether the viewer can run: the output is a terminal that can show it.
+fn interactive() -> bool {
+    io::stdout().is_terminal() && env::var("TERM").map_or(true, |term| term != "dumb")
+}
+
+/// Shows text that is not a plan the way a pager would: through
+/// $EXPLAINSQL_PAGER, $PAGER or `less -S`, or straight to standard output
+/// when none of them runs.
+fn page(text: &str) -> ExitCode {
+    if !io::stdout().is_terminal() {
+        return emit(text);
+    }
+    let commands = [env::var("EXPLAINSQL_PAGER").ok(), env::var("PAGER").ok()]
+        .into_iter()
+        .flatten()
+        .map(|command| command.trim().to_owned())
+        // Never ourselves, which would loop.
+        .filter(|command| !command.is_empty() && !command.contains("explainsql"))
+        .chain(std::iter::once("less -S".to_owned()));
+    for command in commands {
+        let shell = if cfg!(windows) {
+            Command::new("cmd")
+                .args(["/C", &command])
+                .stdin(Stdio::piped())
+                .spawn()
+        } else {
+            Command::new("sh")
+                .args(["-c", &command])
+                .stdin(Stdio::piped())
+                .spawn()
+        };
+        let Ok(mut child) = shell else {
+            continue;
+        };
+        if let Some(mut stdin) = child.stdin.take() {
+            // The pager may quit before reading everything.
+            let _ = stdin.write_all(text.as_bytes());
+        }
+        return match child.wait() {
+            Ok(status) if status.success() => ExitCode::SUCCESS,
+            // The shell could not find the command: try the next one.
+            Ok(status) if status.code() == Some(127) => continue,
+            _ => ExitCode::FAILURE,
+        };
+    }
+    emit(text)
+}
+
 /// Writes to standard output. A reader that stops early, such as `head`,
 /// is not an error.
 fn emit(text: &str) -> ExitCode {
@@ -125,10 +225,10 @@ fn emit(text: &str) -> ExitCode {
     }
 }
 
-fn read_input(file: Option<&str>) -> io::Result<String> {
+fn read_input(file: Option<&str>, pager: bool) -> io::Result<String> {
     let bytes = match file {
         Some("-") | None => {
-            if io::stdin().is_terminal() {
+            if io::stdin().is_terminal() && !pager {
                 eprintln!("Reading a plan from standard input; end with Ctrl-D.");
             }
             let mut bytes = Vec::new();

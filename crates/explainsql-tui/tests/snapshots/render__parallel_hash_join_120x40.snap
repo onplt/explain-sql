@@ -1,0 +1,44 @@
+---
+source: crates/explainsql-tui/tests/render.rs
+expression: "frame(&mut app, 120, 40)"
+---
+82.4 ms. 34% of it in Parallel Hash Join.
+Planning 0.668 ms · Execution 82.4 ms · Buffers 4,372 pages, 64% from cache
+ Plan · time in each node ────────────────────────────────────────────────────┌ Details ────────────────────────────────
+    Share     Time Node                                          Rows Estimate│Finalize GroupAggregate
+   0.010% 0.008 ms Finalize GroupAggregate                          5        5│Time in node: 0.008 ms (0.010% of the
+     6.4%  5.25 ms └─ Gather Merge                                 15       10│runtime)
+   0.041% 0.034 ms    └─ Sort                                    5 ×3        5│With children: 82.3 ms
+      18%  14.4 ms       └─ Partial HashAggregate                5 ×3        5│Rows: 5 per loop
+      34%  28.2 ms          └─ Parallel Hash Join          100,000 ×3  125,000│Estimate: 5 rows; cost 8406.26..8406.48,
+     9.1%  7.49 ms             ├─ Parallel Seq Scan on or… 100,000 ×3  125,000│width 17
+      23%  19.1 ms             └─ Parallel Hash             66,667 ×3   83,333│Buffers: shared hit 2,781, read 1,591
+     9.3%  7.71 ms                └─ Parallel Seq Scan on…  66,667 ×3   83,333│Read by the node itself: 0 pages
+                                                                              │Group Key: o.status
+                                                                              │Output: o.status, count(*)
+                                                                              │
+                                                                              │
+                                                                              │
+                                                                              │
+                                                                              │
+                                                                              │
+                                                                              │
+                                                                              │
+                                                                              │
+                                                                              │
+                                                                              │
+                                                                              │
+                                                                              │
+                                                                              │
+                                                                              │
+                                                                              │
+                                                                              │
+                                                                              │
+                                                                              │
+                                                                              │
+                                                                              │
+                                                                              │
+                                                                              │
+                                                                              │
+                                                                              │
+j/k move  h/l fold  / search  1-9 hotspots  Tab findings  ? help  q quit
