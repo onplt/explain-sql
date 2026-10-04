@@ -1,3 +1,6 @@
 /target
 # Job logs written by cargo fuzz run -jobs=N
 /fuzz-*.log
+# Cross-check dependencies (tools/cross-check/README.md)
+/tools/cross-check/node_modules
+/tools/cross-check/package-lock.json
