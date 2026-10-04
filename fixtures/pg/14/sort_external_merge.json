@@ -1,0 +1,88 @@
+[
+  {
+    "Plan": {
+      "Node Type": "Sort",
+      "Parallel Aware": false,
+      "Async Capable": false,
+      "Startup Cost": 38438.14,
+      "Total Cost": 38938.14,
+      "Plan Rows": 200000,
+      "Plan Width": 37,
+      "Actual Startup Time": 418.435,
+      "Actual Total Time": 500.572,
+      "Actual Rows": 200000,
+      "Actual Loops": 1,
+      "Output": ["id", "note"],
+      "Sort Key": ["orders.note"],
+      "Sort Method": "external merge",
+      "Sort Space Used": 9232,
+      "Sort Space Type": "Disk",
+      "Shared Hit Blocks": 2164,
+      "Shared Read Blocks": 256,
+      "Shared Dirtied Blocks": 0,
+      "Shared Written Blocks": 0,
+      "Local Hit Blocks": 0,
+      "Local Read Blocks": 0,
+      "Local Dirtied Blocks": 0,
+      "Local Written Blocks": 0,
+      "Temp Read Blocks": 4858,
+      "Temp Written Blocks": 5246,
+      "I/O Read Time": 0.664,
+      "I/O Write Time": 0.000,
+      "Plans": [
+        {
+          "Node Type": "Seq Scan",
+          "Parent Relationship": "Outer",
+          "Parallel Aware": false,
+          "Async Capable": false,
+          "Relation Name": "orders",
+          "Schema": "public",
+          "Alias": "orders",
+          "Startup Cost": 0.00,
+          "Total Cost": 4417.00,
+          "Plan Rows": 200000,
+          "Plan Width": 37,
+          "Actual Startup Time": 0.019,
+          "Actual Total Time": 29.859,
+          "Actual Rows": 200000,
+          "Actual Loops": 1,
+          "Output": ["id", "note"],
+          "Shared Hit Blocks": 2161,
+          "Shared Read Blocks": 256,
+          "Shared Dirtied Blocks": 0,
+          "Shared Written Blocks": 0,
+          "Local Hit Blocks": 0,
+          "Local Read Blocks": 0,
+          "Local Dirtied Blocks": 0,
+          "Local Written Blocks": 0,
+          "Temp Read Blocks": 0,
+          "Temp Written Blocks": 0,
+          "I/O Read Time": 0.664,
+          "I/O Write Time": 0.000
+        }
+      ]
+    },
+    "Settings": {
+      "max_parallel_workers_per_gather": "0",
+      "work_mem": "64kB"
+    },
+    "Planning": {
+      "Shared Hit Blocks": 128,
+      "Shared Read Blocks": 0,
+      "Shared Dirtied Blocks": 0,
+      "Shared Written Blocks": 0,
+      "Local Hit Blocks": 0,
+      "Local Read Blocks": 0,
+      "Local Dirtied Blocks": 0,
+      "Local Written Blocks": 0,
+      "Temp Read Blocks": 0,
+      "Temp Written Blocks": 0,
+      "I/O Read Time": 0.000,
+      "I/O Write Time": 0.000
+    },
+    "Planning Time": 0.357,
+    "Triggers": [
+    ],
+    "Execution Time": 508.927
+  }
+]

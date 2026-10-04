@@ -1,0 +1,14 @@
+Aggregate  (cost=374.77..374.78 rows=1 width=8) (actual time=2.373..2.374 rows=1 loops=1)
+  Output: count(*)
+  Buffers: shared hit=120
+  ->  Append  (cost=0.29..349.32 rows=10179 width=0) (actual time=0.009..1.938 rows=10168 loops=1)
+        Buffers: shared hit=120
+        Subplans Removed: 11
+        ->  Seq Scan on public.events_2025_12 events_1  (cost=0.00..247.10 rows=10168 width=0) (actual time=0.008..1.299 rows=10168 loops=1)
+              Filter: (events_1.created_at >= '2025-12-01'::date)
+              Buffers: shared hit=120
+Settings: max_parallel_workers_per_gather = '0'
+Planning:
+  Buffers: shared hit=480
+Planning Time: 1.426 ms
+Execution Time: 2.425 ms

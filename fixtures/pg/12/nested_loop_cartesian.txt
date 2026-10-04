@@ -1,0 +1,19 @@
+Nested Loop  (cost=0.29..1355.79 rows=100000 width=8) (actual time=0.020..11.703 rows=100000 loops=1)
+  Output: c.id, p.id
+  Buffers: shared hit=40
+  ->  Seq Scan on public.products p  (cost=0.00..99.50 rows=1000 width=4) (actual time=0.006..0.521 rows=1000 loops=1)
+        Output: p.id, p.name, p.category, p.price
+        Filter: (p.category = 'books'::text)
+        Rows Removed by Filter: 4000
+        Buffers: shared hit=37
+  ->  Materialize  (cost=0.29..6.54 rows=100 width=4) (actual time=0.000..0.003 rows=100 loops=1000)
+        Output: c.id
+        Buffers: shared hit=3
+        ->  Index Only Scan using customers_pkey on public.customers c  (cost=0.29..6.04 rows=100 width=4) (actual time=0.009..0.015 rows=100 loops=1)
+              Output: c.id
+              Index Cond: (c.id <= 100)
+              Heap Fetches: 0
+              Buffers: shared hit=3
+Settings: max_parallel_workers_per_gather = '0'
+Planning Time: 0.382 ms
+Execution Time: 14.759 ms

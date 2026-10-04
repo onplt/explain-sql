@@ -1,0 +1,11 @@
+Seq Scan on public.orders  (cost=0.00..4917.00 rows=140173 width=10) (actual time=0.017..23.813 rows=140000 loops=1)
+  Output: id, amount
+  Filter: (orders.status = 'delivered'::text)
+  Rows Removed by Filter: 60000
+  Buffers: shared hit=1905 read=512
+  I/O Timings: read=0.922
+Settings: max_parallel_workers_per_gather = '0'
+Planning:
+  Buffers: shared hit=84
+Planning Time: 0.314 ms
+Execution Time: 28.391 ms

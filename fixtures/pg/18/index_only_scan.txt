@@ -1,0 +1,10 @@
+Index Only Scan using orders_created_at_idx on public.orders  (cost=0.42..9.90 rows=274 width=8) (actual time=0.046..0.078 rows=274.00 loops=1)
+  Output: created_at
+  Index Cond: ((orders.created_at >= '2024-03-01 00:00:00+00'::timestamp with time zone) AND (orders.created_at < '2024-03-02 00:00:00+00'::timestamp with time zone))
+  Heap Fetches: 0
+  Index Searches: 1
+  Buffers: shared hit=5
+Planning:
+  Buffers: shared hit=81
+Planning Time: 0.575 ms
+Execution Time: 0.139 ms

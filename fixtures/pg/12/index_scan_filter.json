@@ -1,0 +1,74 @@
+[
+  {
+    "Plan": {
+      "Node Type": "Bitmap Heap Scan",
+      "Parallel Aware": false,
+      "Relation Name": "orders",
+      "Schema": "public",
+      "Alias": "orders",
+      "Startup Cost": 81.88,
+      "Total Cost": 2672.87,
+      "Plan Rows": 36,
+      "Plan Width": 64,
+      "Actual Startup Time": 0.269,
+      "Actual Total Time": 1.612,
+      "Actual Rows": 27,
+      "Actual Loops": 1,
+      "Output": ["id", "customer_id", "status", "created_at", "amount", "note"],
+      "Recheck Cond": "((orders.created_at >= '2024-06-01 00:00:00+00'::timestamp with time zone) AND (orders.created_at < '2024-06-15 00:00:00+00'::timestamp with time zone))",
+      "Rows Removed by Index Recheck": 0,
+      "Filter": "(orders.status = 'refunded'::text)",
+      "Rows Removed by Filter": 3809,
+      "Exact Heap Blocks": 319,
+      "Lossy Heap Blocks": 0,
+      "Shared Hit Blocks": 333,
+      "Shared Read Blocks": 0,
+      "Shared Dirtied Blocks": 0,
+      "Shared Written Blocks": 0,
+      "Local Hit Blocks": 0,
+      "Local Read Blocks": 0,
+      "Local Dirtied Blocks": 0,
+      "Local Written Blocks": 0,
+      "Temp Read Blocks": 0,
+      "Temp Written Blocks": 0,
+      "I/O Read Time": 0.000,
+      "I/O Write Time": 0.000,
+      "Plans": [
+        {
+          "Node Type": "Bitmap Index Scan",
+          "Parent Relationship": "Outer",
+          "Parallel Aware": false,
+          "Index Name": "orders_created_at_idx",
+          "Startup Cost": 0.00,
+          "Total Cost": 81.87,
+          "Plan Rows": 3745,
+          "Plan Width": 0,
+          "Actual Startup Time": 0.179,
+          "Actual Total Time": 0.180,
+          "Actual Rows": 3836,
+          "Actual Loops": 1,
+          "Index Cond": "((orders.created_at >= '2024-06-01 00:00:00+00'::timestamp with time zone) AND (orders.created_at < '2024-06-15 00:00:00+00'::timestamp with time zone))",
+          "Shared Hit Blocks": 14,
+          "Shared Read Blocks": 0,
+          "Shared Dirtied Blocks": 0,
+          "Shared Written Blocks": 0,
+          "Local Hit Blocks": 0,
+          "Local Read Blocks": 0,
+          "Local Dirtied Blocks": 0,
+          "Local Written Blocks": 0,
+          "Temp Read Blocks": 0,
+          "Temp Written Blocks": 0,
+          "I/O Read Time": 0.000,
+          "I/O Write Time": 0.000
+        }
+      ]
+    },
+    "Settings": {
+      "max_parallel_workers_per_gather": "0"
+    },
+    "Planning Time": 0.411,
+    "Triggers": [
+    ],
+    "Execution Time": 1.659
+  }
+]

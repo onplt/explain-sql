@@ -1,0 +1,13 @@
+HashAggregate  (cost=53167.00..61231.19 rows=20135 width=44) (actual time=63.187..201.618 rows=20000 loops=1)
+  Output: customer_id, count(*), sum(amount)
+  Group Key: orders.customer_id
+  Planned Partitions: 4  Batches: 341  Memory Usage: 96kB  Disk Usage: 7456kB
+  Buffers: shared hit=2417, temp read=2981 written=3716
+  ->  Seq Scan on public.orders  (cost=0.00..4417.00 rows=200000 width=10) (actual time=0.009..12.037 rows=200000 loops=1)
+        Output: id, customer_id, status, created_at, amount, note
+        Buffers: shared hit=2417
+Settings: enable_sort = 'off', max_parallel_workers_per_gather = '0', work_mem = '64kB'
+Planning:
+  Buffers: shared hit=101
+Planning Time: 0.292 ms
+Execution Time: 203.080 ms

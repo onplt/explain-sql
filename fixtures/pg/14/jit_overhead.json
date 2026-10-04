@@ -1,0 +1,108 @@
+[
+  {
+    "Plan": {
+      "Node Type": "Aggregate",
+      "Strategy": "Plain",
+      "Partial Mode": "Simple",
+      "Parallel Aware": false,
+      "Async Capable": false,
+      "Startup Cost": 11.70,
+      "Total Cost": 11.71,
+      "Plan Rows": 1,
+      "Plan Width": 40,
+      "Actual Startup Time": 137.878,
+      "Actual Total Time": 137.885,
+      "Actual Rows": 1,
+      "Actual Loops": 1,
+      "Output": ["count(*)", "sum(amount)"],
+      "Shared Hit Blocks": 5,
+      "Shared Read Blocks": 0,
+      "Shared Dirtied Blocks": 0,
+      "Shared Written Blocks": 0,
+      "Local Hit Blocks": 0,
+      "Local Read Blocks": 0,
+      "Local Dirtied Blocks": 0,
+      "Local Written Blocks": 0,
+      "Temp Read Blocks": 0,
+      "Temp Written Blocks": 0,
+      "I/O Read Time": 0.000,
+      "I/O Write Time": 0.000,
+      "Plans": [
+        {
+          "Node Type": "Index Scan",
+          "Parent Relationship": "Outer",
+          "Parallel Aware": false,
+          "Async Capable": false,
+          "Scan Direction": "Forward",
+          "Index Name": "orders_pkey",
+          "Relation Name": "orders",
+          "Schema": "public",
+          "Alias": "orders",
+          "Startup Cost": 0.42,
+          "Total Cost": 11.19,
+          "Plan Rows": 101,
+          "Plan Width": 6,
+          "Actual Startup Time": 0.033,
+          "Actual Total Time": 0.062,
+          "Actual Rows": 100,
+          "Actual Loops": 1,
+          "Output": ["id", "customer_id", "status", "created_at", "amount", "note"],
+          "Index Cond": "(orders.id <= 100)",
+          "Rows Removed by Index Recheck": 0,
+          "Shared Hit Blocks": 5,
+          "Shared Read Blocks": 0,
+          "Shared Dirtied Blocks": 0,
+          "Shared Written Blocks": 0,
+          "Local Hit Blocks": 0,
+          "Local Read Blocks": 0,
+          "Local Dirtied Blocks": 0,
+          "Local Written Blocks": 0,
+          "Temp Read Blocks": 0,
+          "Temp Written Blocks": 0,
+          "I/O Read Time": 0.000,
+          "I/O Write Time": 0.000
+        }
+      ]
+    },
+    "Settings": {
+      "jit_above_cost": "0",
+      "jit_inline_above_cost": "0",
+      "jit_optimize_above_cost": "0",
+      "max_parallel_workers_per_gather": "0"
+    },
+    "Planning": {
+      "Shared Hit Blocks": 103,
+      "Shared Read Blocks": 0,
+      "Shared Dirtied Blocks": 0,
+      "Shared Written Blocks": 0,
+      "Local Hit Blocks": 0,
+      "Local Read Blocks": 0,
+      "Local Dirtied Blocks": 0,
+      "Local Written Blocks": 0,
+      "Temp Read Blocks": 0,
+      "Temp Written Blocks": 0,
+      "I/O Read Time": 0.000,
+      "I/O Write Time": 0.000
+    },
+    "Planning Time": 0.434,
+    "Triggers": [
+    ],
+    "JIT": {
+      "Functions": 5,
+      "Options": {
+        "Inlining": true,
+        "Optimization": true,
+        "Expressions": true,
+        "Deforming": true
+      },
+      "Timing": {
+        "Generation": 0.261,
+        "Inlining": 101.716,
+        "Optimization": 18.603,
+        "Emission": 17.459,
+        "Total": 138.038
+      }
+    },
+    "Execution Time": 155.171
+  }
+]

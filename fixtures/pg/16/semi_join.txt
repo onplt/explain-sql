@@ -1,0 +1,30 @@
+Hash Join  (cost=5962.75..6081.33 rows=4995 width=16) (actual time=27.980..28.435 rows=1000 loops=1)
+  Output: p.id, p.name
+  Inner Unique: true
+  Hash Cond: (oi.product_id = p.id)
+  Buffers: shared hit=517 read=1431
+  I/O Timings: shared read=2.009
+  ->  HashAggregate  (cost=5813.25..5863.20 rows=4995 width=4) (actual time=26.740..26.855 rows=1000 loops=1)
+        Output: oi.product_id
+        Group Key: oi.product_id
+        Batches: 1  Memory Usage: 273kB
+        Buffers: shared hit=480 read=1431
+        I/O Timings: shared read=2.009
+        ->  Seq Scan on public.order_items oi  (cost=0.00..5661.00 rows=60900 width=4) (actual time=0.037..20.219 rows=60000 loops=1)
+              Output: oi.id, oi.order_id, oi.product_id, oi.quantity, oi.unit_price
+              Filter: (oi.quantity = 5)
+              Rows Removed by Filter: 240000
+              Buffers: shared hit=480 read=1431
+              I/O Timings: shared read=2.009
+  ->  Hash  (cost=87.00..87.00 rows=5000 width=16) (actual time=1.195..1.198 rows=5000 loops=1)
+        Output: p.id, p.name
+        Buckets: 8192  Batches: 1  Memory Usage: 303kB
+        Buffers: shared hit=37
+        ->  Seq Scan on public.products p  (cost=0.00..87.00 rows=5000 width=16) (actual time=0.005..0.549 rows=5000 loops=1)
+              Output: p.id, p.name
+              Buffers: shared hit=37
+Settings: max_parallel_workers_per_gather = '0'
+Planning:
+  Buffers: shared hit=207
+Planning Time: 1.520 ms
+Execution Time: 28.687 ms

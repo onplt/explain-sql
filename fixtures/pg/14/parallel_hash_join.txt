@@ -1,0 +1,81 @@
+Finalize GroupAggregate  (cost=8406.26..8406.48 rows=5 width=17) (actual time=100.042..104.423 rows=5 loops=1)
+  Output: o.status, count(*)
+  Group Key: o.status
+  Buffers: shared hit=2781 read=1591
+  I/O Timings: read=4.031
+  ->  Gather Merge  (cost=8406.26..8406.38 rows=10 width=17) (actual time=100.034..104.411 rows=15 loops=1)
+        Output: o.status, (PARTIAL count(*))
+        Workers Planned: 2
+        Workers Launched: 2
+        Buffers: shared hit=2781 read=1591
+        I/O Timings: read=4.031
+        ->  Sort  (cost=8406.24..8406.25 rows=5 width=17) (actual time=97.078..97.082 rows=5 loops=3)
+              Output: o.status, (PARTIAL count(*))
+              Sort Key: o.status
+              Sort Method: quicksort  Memory: 25kB
+              Buffers: shared hit=2781 read=1591
+              I/O Timings: read=4.031
+              Worker 0:  actual time=96.002..96.006 rows=5 loops=1
+                Sort Method: quicksort  Memory: 25kB
+                Buffers: shared hit=1030 read=628
+                I/O Timings: read=1.391
+              Worker 1:  actual time=95.513..95.517 rows=5 loops=1
+                Sort Method: quicksort  Memory: 25kB
+                Buffers: shared hit=702 read=352
+                I/O Timings: read=1.143
+              ->  Partial HashAggregate  (cost=8406.13..8406.18 rows=5 width=17) (actual time=97.039..97.043 rows=5 loops=3)
+                    Output: o.status, PARTIAL count(*)
+                    Group Key: o.status
+                    Batches: 1  Memory Usage: 24kB
+                    Buffers: shared hit=2765 read=1591
+                    I/O Timings: read=4.031
+                    Worker 0:  actual time=95.962..95.967 rows=5 loops=1
+                      Batches: 1  Memory Usage: 24kB
+                      Buffers: shared hit=1022 read=628
+                      I/O Timings: read=1.391
+                    Worker 1:  actual time=95.461..95.466 rows=5 loops=1
+                      Batches: 1  Memory Usage: 24kB
+                      Buffers: shared hit=694 read=352
+                      I/O Timings: read=1.143
+                    ->  Parallel Hash Join  (cost=4292.00..7781.13 rows=125000 width=9) (actual time=34.862..78.918 rows=100000 loops=3)
+                          Output: o.status
+                          Inner Unique: true
+                          Hash Cond: (oi.order_id = o.id)
+                          Buffers: shared hit=2765 read=1591
+                          I/O Timings: read=4.031
+                          Worker 0:  actual time=33.833..78.858 rows=118221 loops=1
+                            Buffers: shared hit=1022 read=628
+                            I/O Timings: read=1.391
+                          Worker 1:  actual time=33.380..75.378 rows=66254 loops=1
+                            Buffers: shared hit=694 read=352
+                            I/O Timings: read=1.143
+                          ->  Parallel Seq Scan on public.order_items oi  (cost=0.00..3161.00 rows=125000 width=4) (actual time=0.008..9.425 rows=100000 loops=3)
+                                Output: oi.id, oi.order_id, oi.product_id, oi.quantity, oi.unit_price
+                                Buffers: shared hit=320 read=1591
+                                I/O Timings: read=4.031
+                                Worker 0:  actual time=0.005..8.845 rows=118221 loops=1
+                                  Buffers: shared hit=125 read=628
+                                  I/O Timings: read=1.391
+                                Worker 1:  actual time=0.015..10.321 rows=66254 loops=1
+                                  Buffers: shared hit=70 read=352
+                                  I/O Timings: read=1.143
+                          ->  Parallel Hash  (cost=3250.33..3250.33 rows=83333 width=13) (actual time=34.284..34.285 rows=66667 loops=3)
+                                Output: o.status, o.id
+                                Buckets: 262144  Batches: 1  Memory Usage: 11520kB
+                                Buffers: shared hit=2417
+                                Worker 0:  actual time=33.755..33.756 rows=73063 loops=1
+                                  Buffers: shared hit=883
+                                Worker 1:  actual time=33.183..33.183 rows=50491 loops=1
+                                  Buffers: shared hit=610
+                                ->  Parallel Seq Scan on public.orders o  (cost=0.00..3250.33 rows=83333 width=13) (actual time=0.011..10.563 rows=66667 loops=3)
+                                      Output: o.status, o.id
+                                      Buffers: shared hit=2417
+                                      Worker 0:  actual time=0.006..9.376 rows=73063 loops=1
+                                        Buffers: shared hit=883
+                                      Worker 1:  actual time=0.008..11.261 rows=50491 loops=1
+                                        Buffers: shared hit=610
+Settings: min_parallel_table_scan_size = '0', parallel_setup_cost = '0', parallel_tuple_cost = '0'
+Planning:
+  Buffers: shared hit=245
+Planning Time: 0.654 ms
+Execution Time: 104.574 ms

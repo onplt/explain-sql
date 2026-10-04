@@ -1,0 +1,9 @@
+Seq Scan on public.settings_kv  (cost=0.00..1.62 rows=7 width=12) (actual time=0.005..0.013 rows=7 loops=1)
+  Output: key, value
+  Filter: (settings_kv.value = 'value3'::text)
+  Rows Removed by Filter: 43
+  Buffers: shared hit=1
+Planning:
+  Buffers: shared hit=63
+Planning Time: 0.252 ms
+Execution Time: 0.029 ms

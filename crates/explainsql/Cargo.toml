@@ -1,0 +1,16 @@
+[package]
+name = "explainsql"
+description = "Find out why a PostgreSQL query is slow, get a fix, and prove it works, without leaving the terminal."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+repository.workspace = true
+
+[dependencies]
+explainsql-core.workspace = true
+explainsql-db.workspace = true
+explainsql-tui.workspace = true
+
+[lints]
+workspace = true

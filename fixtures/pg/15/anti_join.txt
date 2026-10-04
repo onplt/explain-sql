@@ -1,0 +1,26 @@
+Merge Anti Join  (cost=5020.33..5626.72 rows=18107 width=4) (actual time=17.243..21.876 rows=19800 loops=1)
+  Output: c.id
+  Merge Cond: (c.id = o.customer_id)
+  Buffers: shared hit=121 read=2353
+  I/O Timings: shared read=3.573
+  ->  Index Only Scan using customers_pkey on public.customers c  (cost=0.29..528.29 rows=20000 width=4) (actual time=0.017..2.198 rows=20000 loops=1)
+        Output: c.id
+        Heap Fetches: 0
+        Buffers: shared hit=57
+  ->  Sort  (cost=5020.04..5024.77 rows=1893 width=4) (actual time=17.220..17.315 rows=2000 loops=1)
+        Output: o.customer_id
+        Sort Key: o.customer_id
+        Sort Method: quicksort  Memory: 49kB
+        Buffers: shared hit=64 read=2353
+        I/O Timings: shared read=3.573
+        ->  Seq Scan on public.orders o  (cost=0.00..4917.00 rows=1893 width=4) (actual time=0.041..16.843 rows=2000 loops=1)
+              Output: o.customer_id
+              Filter: (o.status = 'refunded'::text)
+              Rows Removed by Filter: 198000
+              Buffers: shared hit=64 read=2353
+              I/O Timings: shared read=3.573
+Settings: max_parallel_workers_per_gather = '0'
+Planning:
+  Buffers: shared hit=239
+Planning Time: 0.673 ms
+Execution Time: 22.866 ms

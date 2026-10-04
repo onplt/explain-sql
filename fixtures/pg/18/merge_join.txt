@@ -1,0 +1,27 @@
+Merge Join  (cost=3249.03..4166.17 rows=8677 width=18) (actual time=6.191..16.936 rows=8493.00 loops=1)
+  Output: o.id, c.name
+  Merge Cond: (c.id = o.customer_id)
+  Buffers: shared hit=658
+  ->  Index Scan using customers_pkey on public.customers c  (cost=0.29..737.29 rows=20000 width=18) (actual time=0.018..4.679 rows=19995.00 loops=1)
+        Output: c.id, c.name, c.email, c.country, c.created_at
+        Index Searches: 1
+        Buffers: shared hit=262
+  ->  Sort  (cost=3248.73..3270.43 rows=8677 width=8) (actual time=6.156..7.597 rows=8493.00 loops=1)
+        Output: o.id, o.customer_id
+        Sort Key: o.customer_id
+        Sort Method: quicksort  Memory: 584kB
+        Buffers: shared hit=396
+        ->  Bitmap Heap Scan on public.orders o  (cost=155.67..2681.13 rows=8677 width=8) (actual time=0.477..3.375 rows=8493.00 loops=1)
+              Output: o.id, o.customer_id
+              Recheck Cond: (o.created_at < '2024-02-01 00:00:00+00'::timestamp with time zone)
+              Heap Blocks: exact=373
+              Buffers: shared hit=396
+              ->  Bitmap Index Scan on orders_created_at_idx  (cost=0.00..153.50 rows=8677 width=0) (actual time=0.413..0.414 rows=8493.00 loops=1)
+                    Index Cond: (o.created_at < '2024-02-01 00:00:00+00'::timestamp with time zone)
+                    Index Searches: 1
+                    Buffers: shared hit=23
+Settings: enable_hashjoin = 'off', enable_nestloop = 'off', max_parallel_workers_per_gather = '0'
+Planning:
+  Buffers: shared hit=227
+Planning Time: 1.194 ms
+Execution Time: 17.611 ms

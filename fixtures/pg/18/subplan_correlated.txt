@@ -1,0 +1,22 @@
+Seq Scan on public.orders o  (cost=0.00..61527.15 rows=10 width=12) (actual time=41.286..352.646 rows=10.00 loops=1)
+  Output: o.id, (SubPlan 1)
+  Filter: (o.customer_id = 4242)
+  Rows Removed by Filter: 199990
+  Buffers: shared hit=2832 read=18695
+  I/O Timings: shared read=93.074
+  SubPlan 1
+    ->  Aggregate  (cost=5661.01..5661.02 rows=1 width=8) (actual time=33.244..33.244 rows=1.00 loops=10)
+          Output: count(*)
+          Buffers: shared hit=640 read=18470
+          I/O Timings: shared read=90.897
+          ->  Seq Scan on public.order_items oi  (cost=0.00..5661.00 rows=2 width=0) (actual time=13.149..33.227 rows=1.40 loops=10)
+                Output: oi.id, oi.order_id, oi.product_id, oi.quantity, oi.unit_price
+                Filter: (oi.order_id = o.id)
+                Rows Removed by Filter: 299999
+                Buffers: shared hit=640 read=18470
+                I/O Timings: shared read=90.897
+Settings: max_parallel_workers_per_gather = '0'
+Planning:
+  Buffers: shared hit=102
+Planning Time: 0.743 ms
+Execution Time: 352.764 ms

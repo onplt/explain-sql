@@ -1,0 +1,15 @@
+Sort  (cost=38438.14..38938.14 rows=200000 width=37) (actual time=409.406..447.489 rows=200000 loops=1)
+  Output: id, note
+  Sort Key: orders.note
+  Sort Method: external merge  Disk: 9264kB
+  Buffers: shared hit=2181 read=239, temp read=4609 written=4999
+  I/O Timings: shared read=0.805, temp read=8.847 write=11.791
+  ->  Seq Scan on public.orders  (cost=0.00..4417.00 rows=200000 width=37) (actual time=0.058..25.977 rows=200000 loops=1)
+        Output: id, note
+        Buffers: shared hit=2178 read=239
+        I/O Timings: shared read=0.805
+Settings: max_parallel_workers_per_gather = '0', work_mem = '64kB'
+Planning:
+  Buffers: shared hit=128
+Planning Time: 0.574 ms
+Execution Time: 455.798 ms

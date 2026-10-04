@@ -1,0 +1,27 @@
+Finalize Aggregate  (cost=3667.03..3667.04 rows=1 width=40) (actual time=17.409..20.401 rows=1 loops=1)
+  Output: count(*), avg(amount)
+  Buffers: shared hit=2417
+  ->  Gather  (cost=3667.00..3667.01 rows=2 width=40) (actual time=17.294..20.387 rows=3 loops=1)
+        Output: (PARTIAL count(*)), (PARTIAL avg(amount))
+        Workers Planned: 2
+        Workers Launched: 2
+        Buffers: shared hit=2417
+        ->  Partial Aggregate  (cost=3667.00..3667.01 rows=1 width=40) (actual time=14.652..14.654 rows=1 loops=3)
+              Output: PARTIAL count(*), PARTIAL avg(amount)
+              Buffers: shared hit=2417
+              Worker 0:  actual time=13.456..13.458 rows=1 loops=1
+                Buffers: shared hit=831
+              Worker 1:  actual time=13.619..13.621 rows=1 loops=1
+                Buffers: shared hit=724
+              ->  Parallel Seq Scan on public.orders  (cost=0.00..3250.33 rows=83333 width=6) (actual time=0.009..5.213 rows=66667 loops=3)
+                    Output: id, customer_id, status, created_at, amount, note
+                    Buffers: shared hit=2417
+                    Worker 0:  actual time=0.005..4.813 rows=68782 loops=1
+                      Buffers: shared hit=831
+                    Worker 1:  actual time=0.009..4.928 rows=59931 loops=1
+                      Buffers: shared hit=724
+Settings: min_parallel_table_scan_size = '0', parallel_setup_cost = '0', parallel_tuple_cost = '0'
+Planning:
+  Buffers: shared hit=95
+Planning Time: 0.432 ms
+Execution Time: 20.505 ms

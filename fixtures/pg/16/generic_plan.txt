@@ -1,0 +1,6 @@
+Gather  (cost=1000.00..5181.91 rows=2 width=64)
+  Output: id, customer_id, status, created_at, amount, note
+  Workers Planned: 1
+  ->  Parallel Seq Scan on public.orders  (cost=0.00..4181.71 rows=1 width=64)
+        Output: id, customer_id, status, created_at, amount, note
+        Filter: ((orders.customer_id = $1) AND (orders.status = $2))

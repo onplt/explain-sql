@@ -1,0 +1,24 @@
+[workspace]
+resolver = "3"
+members = ["crates/*", "xtask"]
+
+[workspace.package]
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.85"
+publish = false
+repository = "https://github.com/onplt/explain-sql"
+
+[workspace.dependencies]
+explainsql-core = { path = "crates/explainsql-core" }
+explainsql-db = { path = "crates/explainsql-db" }
+explainsql-tui = { path = "crates/explainsql-tui" }
+serde_json = "1"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true

@@ -1,0 +1,48 @@
+HashAggregate  (cost=3821.00..3821.04 rows=4 width=14) (actual time=35.316..35.323 rows=4.00 loops=1)
+  Output: events.kind, count(*)
+  Group Key: events.kind
+  Batches: 1  Memory Usage: 32kB
+  Buffers: shared hit=1421
+  ->  Append  (cost=0.00..3221.00 rows=120000 width=6) (actual time=0.013..17.859 rows=120000.00 loops=1)
+        Buffers: shared hit=1421
+        ->  Seq Scan on public.events_2025_01 events_1  (cost=0.00..222.98 rows=10198 width=6) (actual time=0.012..1.057 rows=10198.00 loops=1)
+              Output: events_1.kind
+              Buffers: shared hit=121
+        ->  Seq Scan on public.events_2025_02 events_2  (cost=0.00..201.12 rows=9212 width=6) (actual time=0.022..1.007 rows=9212.00 loops=1)
+              Output: events_2.kind
+              Buffers: shared hit=109
+        ->  Seq Scan on public.events_2025_03 events_3  (cost=0.00..222.99 rows=10199 width=6) (actual time=0.021..1.140 rows=10199.00 loops=1)
+              Output: events_3.kind
+              Buffers: shared hit=121
+        ->  Seq Scan on public.events_2025_04 events_4  (cost=0.00..215.70 rows=9870 width=6) (actual time=0.021..0.909 rows=9870.00 loops=1)
+              Output: events_4.kind
+              Buffers: shared hit=117
+        ->  Seq Scan on public.events_2025_05 events_5  (cost=0.00..222.99 rows=10199 width=6) (actual time=0.017..0.952 rows=10199.00 loops=1)
+              Output: events_5.kind
+              Buffers: shared hit=121
+        ->  Seq Scan on public.events_2025_06 events_6  (cost=0.00..215.70 rows=9870 width=6) (actual time=0.022..0.781 rows=9870.00 loops=1)
+              Output: events_6.kind
+              Buffers: shared hit=117
+        ->  Seq Scan on public.events_2025_07 events_7  (cost=0.00..222.99 rows=10199 width=6) (actual time=0.011..0.793 rows=10199.00 loops=1)
+              Output: events_7.kind
+              Buffers: shared hit=121
+        ->  Seq Scan on public.events_2025_08 events_8  (cost=0.00..222.99 rows=10199 width=6) (actual time=0.019..0.779 rows=10199.00 loops=1)
+              Output: events_8.kind
+              Buffers: shared hit=121
+        ->  Seq Scan on public.events_2025_09 events_9  (cost=0.00..215.70 rows=9870 width=6) (actual time=0.017..0.755 rows=9870.00 loops=1)
+              Output: events_9.kind
+              Buffers: shared hit=117
+        ->  Seq Scan on public.events_2025_10 events_10  (cost=0.00..221.76 rows=10176 width=6) (actual time=0.019..0.856 rows=10176.00 loops=1)
+              Output: events_10.kind
+              Buffers: shared hit=120
+        ->  Seq Scan on public.events_2025_11 events_11  (cost=0.00..214.40 rows=9840 width=6) (actual time=0.026..0.751 rows=9840.00 loops=1)
+              Output: events_11.kind
+              Buffers: shared hit=116
+        ->  Seq Scan on public.events_2025_12 events_12  (cost=0.00..221.68 rows=10168 width=6) (actual time=0.025..0.826 rows=10168.00 loops=1)
+              Output: events_12.kind
+              Buffers: shared hit=120
+Settings: max_parallel_workers_per_gather = '0'
+Planning:
+  Buffers: shared hit=486
+Planning Time: 1.192 ms
+Execution Time: 35.503 ms

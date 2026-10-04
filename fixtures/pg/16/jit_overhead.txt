@@ -1,0 +1,16 @@
+Aggregate  (cost=11.54..11.55 rows=1 width=40) (actual time=99.751..99.753 rows=1 loops=1)
+  Output: count(*), sum(amount)
+  Buffers: shared hit=5
+  ->  Index Scan using orders_pkey on public.orders  (cost=0.42..11.06 rows=94 width=6) (actual time=0.035..0.068 rows=100 loops=1)
+        Output: id, customer_id, status, created_at, amount, note
+        Index Cond: (orders.id <= 100)
+        Buffers: shared hit=5
+Settings: jit_above_cost = '0', jit_inline_above_cost = '0', jit_optimize_above_cost = '0', max_parallel_workers_per_gather = '0'
+Planning:
+  Buffers: shared hit=103
+Planning Time: 0.533 ms
+JIT:
+  Functions: 5
+  Options: Inlining true, Optimization true, Expressions true, Deforming true
+  Timing: Generation 0.334 ms, Inlining 65.541 ms, Optimization 19.775 ms, Emission 14.332 ms, Total 99.982 ms
+Execution Time: 117.904 ms

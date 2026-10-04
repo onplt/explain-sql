@@ -1,0 +1,11 @@
+Seq Scan on public.customers  (cost=0.00..456.00 rows=2000 width=50) (actual time=0.010..1.872 rows=2000.00 loops=1)
+  Output: id, name, email, country, created_at
+  Filter: (customers.country = 'TR'::text)
+  Rows Removed by Filter: 18000
+  Buffers: shared hit=206
+Planning:
+  Buffers: shared hit=72
+  Memory: used=10kB  allocated=16kB
+Planning Time: 0.372 ms
+Serialization: time=1.115 ms  output=165kB  format=text
+Execution Time: 3.191 ms

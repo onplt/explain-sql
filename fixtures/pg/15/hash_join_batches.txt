@@ -1,0 +1,26 @@
+Aggregate  (cost=17273.52..17273.53 rows=1 width=8) (actual time=257.395..257.399 rows=1 loops=1)
+  Output: count(*)
+  Buffers: shared hit=2481 read=1847, temp read=1554 written=1554
+  I/O Timings: shared read=3.622, temp read=2.634 write=11.608
+  ->  Hash Join  (cost=7699.00..16523.52 rows=300000 width=0) (actual time=94.775..242.408 rows=300000 loops=1)
+        Inner Unique: true
+        Hash Cond: (oi.order_id = o.id)
+        Buffers: shared hit=2481 read=1847, temp read=1554 written=1554
+        I/O Timings: shared read=3.622, temp read=2.634 write=11.608
+        ->  Seq Scan on public.order_items oi  (cost=0.00..4911.00 rows=300000 width=4) (actual time=0.042..40.270 rows=300000 loops=1)
+              Output: oi.order_id
+              Buffers: shared hit=64 read=1847
+              I/O Timings: shared read=3.622
+        ->  Hash  (cost=4417.00..4417.00 rows=200000 width=4) (actual time=85.565..85.566 rows=200000 loops=1)
+              Output: o.id
+              Buckets: 4096  Batches: 128  Memory Usage: 89kB
+              Buffers: shared hit=2417, temp written=508
+              I/O Timings: temp write=3.751
+              ->  Seq Scan on public.orders o  (cost=0.00..4417.00 rows=200000 width=4) (actual time=0.011..31.103 rows=200000 loops=1)
+                    Output: o.id
+                    Buffers: shared hit=2417
+Settings: enable_mergejoin = 'off', max_parallel_workers_per_gather = '0', work_mem = '64kB'
+Planning:
+  Buffers: shared hit=209
+Planning Time: 0.941 ms
+Execution Time: 257.495 ms

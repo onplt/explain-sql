@@ -1,0 +1,23 @@
+Nested Loop  (cost=0.71..2700.50 rows=19489 width=16) (actual time=0.058..17.775 rows=20000 loops=1)
+  Output: oi.id, p.name
+  Inner Unique: true
+  Buffers: shared hit=15185
+  ->  Index Scan using order_items_pkey on public.order_items oi  (cost=0.42..685.48 rows=19489 width=8) (actual time=0.021..3.018 rows=20000 loops=1)
+        Output: oi.id, oi.order_id, oi.product_id, oi.quantity, oi.unit_price
+        Index Cond: (oi.id <= 20000)
+        Buffers: shared hit=185
+  ->  Memoize  (cost=0.29..0.32 rows=1 width=16) (actual time=0.001..0.001 rows=1 loops=20000)
+        Output: p.name, p.id
+        Cache Key: oi.product_id
+        Cache Mode: logical
+        Hits: 15000  Misses: 5000  Evictions: 0  Overflows: 0  Memory Usage: 583kB
+        Buffers: shared hit=15000
+        ->  Index Scan using products_pkey on public.products p  (cost=0.28..0.31 rows=1 width=16) (actual time=0.001..0.001 rows=1 loops=5000)
+              Output: p.name, p.id
+              Index Cond: (p.id = oi.product_id)
+              Buffers: shared hit=15000
+Settings: enable_hashjoin = 'off', enable_mergejoin = 'off', max_parallel_workers_per_gather = '0'
+Planning:
+  Buffers: shared hit=192
+Planning Time: 0.562 ms
+Execution Time: 18.778 ms

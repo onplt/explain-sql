@@ -1,0 +1,36 @@
+Hash Join  (cost=6197.64..6745.08 rows=6644 width=46) (actual time=94.076..96.613 rows=999.00 loops=1)
+  Output: c.name, t.total
+  Hash Cond: (c.id = t.customer_id)
+  Buffers: shared hit=2353 read=270
+  I/O Timings: shared read=7.515
+  CTE totals
+    ->  HashAggregate  (cost=5417.00..5666.14 rows=19931 width=36) (actual time=79.192..88.681 rows=20000.00 loops=1)
+          Output: orders.customer_id, sum(orders.amount)
+          Group Key: orders.customer_id
+          Batches: 1  Memory Usage: 7697kB
+          Buffers: shared hit=2147 read=270
+          I/O Timings: shared read=7.515
+          ->  Seq Scan on public.orders  (cost=0.00..4417.00 rows=200000 width=10) (actual time=0.014..21.106 rows=200000.00 loops=1)
+                Output: orders.id, orders.customer_id, orders.status, orders.created_at, orders.amount, orders.note
+                Buffers: shared hit=2147 read=270
+                I/O Timings: shared read=7.515
+  ->  Seq Scan on public.customers c  (cost=0.00..406.00 rows=20000 width=18) (actual time=0.005..1.163 rows=20000.00 loops=1)
+        Output: c.id, c.name, c.email, c.country, c.created_at
+        Buffers: shared hit=206
+  ->  Hash  (cost=448.45..448.45 rows=6644 width=36) (actual time=94.028..94.028 rows=999.00 loops=1)
+        Output: t.total, t.customer_id
+        Buckets: 8192  Batches: 1  Memory Usage: 107kB
+        Buffers: shared hit=2147 read=270
+        I/O Timings: shared read=7.515
+        ->  CTE Scan on totals t  (cost=0.00..448.45 rows=6644 width=36) (actual time=79.254..93.741 rows=999.00 loops=1)
+              Output: t.total, t.customer_id
+              Filter: (t.total > '5900'::numeric)
+              Rows Removed by Filter: 19001
+              Storage: Memory  Maximum Storage: 1038kB
+              Buffers: shared hit=2147 read=270
+              I/O Timings: shared read=7.515
+Settings: max_parallel_workers_per_gather = '0'
+Planning:
+  Buffers: shared hit=138
+Planning Time: 0.610 ms
+Execution Time: 97.485 ms

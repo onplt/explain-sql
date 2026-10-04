@@ -1,0 +1,65 @@
+Append  (cost=0.00..2921.59 rows=119 width=16) (actual time=0.011..30.248 rows=120 loops=1)
+  Buffers: shared hit=1421
+  ->  Seq Scan on public.events_2025_01  (cost=0.00..248.48 rows=10 width=16) (actual time=0.010..2.545 rows=10 loops=1)
+        Output: events_2025_01.id, events_2025_01.created_at
+        Filter: (events_2025_01.payload @> '{"n": 7}'::jsonb)
+        Rows Removed by Filter: 10188
+        Buffers: shared hit=121
+  ->  Seq Scan on public.events_2025_02  (cost=0.00..224.15 rows=9 width=16) (actual time=0.251..2.427 rows=10 loops=1)
+        Output: events_2025_02.id, events_2025_02.created_at
+        Filter: (events_2025_02.payload @> '{"n": 7}'::jsonb)
+        Rows Removed by Filter: 9202
+        Buffers: shared hit=109
+  ->  Seq Scan on public.events_2025_03  (cost=0.00..248.49 rows=10 width=16) (actual time=0.077..2.787 rows=10 loops=1)
+        Output: events_2025_03.id, events_2025_03.created_at
+        Filter: (events_2025_03.payload @> '{"n": 7}'::jsonb)
+        Rows Removed by Filter: 10189
+        Buffers: shared hit=121
+  ->  Seq Scan on public.events_2025_04  (cost=0.00..240.38 rows=10 width=16) (actual time=0.516..2.595 rows=9 loops=1)
+        Output: events_2025_04.id, events_2025_04.created_at
+        Filter: (events_2025_04.payload @> '{"n": 7}'::jsonb)
+        Rows Removed by Filter: 9861
+        Buffers: shared hit=117
+  ->  Seq Scan on public.events_2025_05  (cost=0.00..248.49 rows=10 width=16) (actual time=0.286..2.508 rows=10 loops=1)
+        Output: events_2025_05.id, events_2025_05.created_at
+        Filter: (events_2025_05.payload @> '{"n": 7}'::jsonb)
+        Rows Removed by Filter: 10189
+        Buffers: shared hit=121
+  ->  Seq Scan on public.events_2025_06  (cost=0.00..240.38 rows=10 width=16) (actual time=0.117..2.246 rows=10 loops=1)
+        Output: events_2025_06.id, events_2025_06.created_at
+        Filter: (events_2025_06.payload @> '{"n": 7}'::jsonb)
+        Rows Removed by Filter: 9860
+        Buffers: shared hit=117
+  ->  Seq Scan on public.events_2025_07  (cost=0.00..248.49 rows=10 width=16) (actual time=0.047..2.426 rows=10 loops=1)
+        Output: events_2025_07.id, events_2025_07.created_at
+        Filter: (events_2025_07.payload @> '{"n": 7}'::jsonb)
+        Rows Removed by Filter: 10189
+        Buffers: shared hit=121
+  ->  Seq Scan on public.events_2025_08  (cost=0.00..248.49 rows=10 width=16) (actual time=0.285..2.472 rows=11 loops=1)
+        Output: events_2025_08.id, events_2025_08.created_at
+        Filter: (events_2025_08.payload @> '{"n": 7}'::jsonb)
+        Rows Removed by Filter: 10188
+        Buffers: shared hit=121
+  ->  Seq Scan on public.events_2025_09  (cost=0.00..240.38 rows=10 width=16) (actual time=0.140..2.399 rows=10 loops=1)
+        Output: events_2025_09.id, events_2025_09.created_at
+        Filter: (events_2025_09.payload @> '{"n": 7}'::jsonb)
+        Rows Removed by Filter: 9860
+        Buffers: shared hit=117
+  ->  Seq Scan on public.events_2025_10  (cost=0.00..247.20 rows=10 width=16) (actual time=0.021..2.552 rows=10 loops=1)
+        Output: events_2025_10.id, events_2025_10.created_at
+        Filter: (events_2025_10.payload @> '{"n": 7}'::jsonb)
+        Rows Removed by Filter: 10166
+        Buffers: shared hit=120
+  ->  Seq Scan on public.events_2025_11  (cost=0.00..239.00 rows=10 width=16) (actual time=0.260..2.636 rows=10 loops=1)
+        Output: events_2025_11.id, events_2025_11.created_at
+        Filter: (events_2025_11.payload @> '{"n": 7}'::jsonb)
+        Rows Removed by Filter: 9830
+        Buffers: shared hit=116
+  ->  Seq Scan on public.events_2025_12  (cost=0.00..247.10 rows=10 width=16) (actual time=0.095..2.618 rows=10 loops=1)
+        Output: events_2025_12.id, events_2025_12.created_at
+        Filter: (events_2025_12.payload @> '{"n": 7}'::jsonb)
+        Rows Removed by Filter: 10158
+        Buffers: shared hit=120
+Settings: max_parallel_workers_per_gather = '0'
+Planning Time: 0.866 ms
+Execution Time: 30.377 ms

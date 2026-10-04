@@ -1,0 +1,15 @@
+HashAggregate  (cost=5917.00..5917.06 rows=5 width=49) (actual time=62.117..62.120 rows=5 loops=1)
+  Output: status, count(*), sum(amount)
+  Group Key: orders.status
+  Batches: 1  Memory Usage: 24kB
+  Buffers: shared hit=2339 read=78
+  I/O Timings: shared read=0.285
+  ->  Seq Scan on public.orders  (cost=0.00..4417.00 rows=200000 width=15) (actual time=0.013..14.173 rows=200000 loops=1)
+        Output: id, customer_id, status, created_at, amount, note
+        Buffers: shared hit=2339 read=78
+        I/O Timings: shared read=0.285
+Settings: max_parallel_workers_per_gather = '0'
+Planning:
+  Buffers: shared hit=115
+Planning Time: 0.319 ms
+Execution Time: 62.252 ms

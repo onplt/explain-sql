@@ -1,0 +1,10 @@
+Update on public.orders  (cost=0.42..11.81 rows=0 width=0) (actual time=1.091..1.092 rows=0 loops=1)
+  Buffers: shared hit=1491 dirtied=1 written=1
+  ->  Index Scan using orders_pkey on public.orders  (cost=0.42..11.81 rows=106 width=38) (actual time=0.085..0.194 rows=101 loops=1)
+        Output: upper(note), ctid
+        Index Cond: ((orders.id >= 1000) AND (orders.id <= 1100))
+        Buffers: shared hit=258
+Planning:
+  Buffers: shared hit=126
+Planning Time: 0.513 ms
+Execution Time: 1.158 ms

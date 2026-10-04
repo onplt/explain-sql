@@ -1,0 +1,60 @@
+[
+  {
+    "Plan": {
+      "Node Type": "Seq Scan",
+      "Parallel Aware": false,
+      "Async Capable": false,
+      "Relation Name": "orders",
+      "Schema": "public",
+      "Alias": "orders",
+      "Startup Cost": 0.00,
+      "Total Cost": 4917.00,
+      "Plan Rows": 10,
+      "Plan Width": 64,
+      "Actual Startup Time": 1.150,
+      "Actual Total Time": 14.175,
+      "Actual Rows": 10,
+      "Actual Loops": 1,
+      "Output": ["id", "customer_id", "status", "created_at", "amount", "note"],
+      "Filter": "(orders.customer_id = 4242)",
+      "Rows Removed by Filter": 199990,
+      "Shared Hit Blocks": 1999,
+      "Shared Read Blocks": 418,
+      "Shared Dirtied Blocks": 0,
+      "Shared Written Blocks": 0,
+      "Local Hit Blocks": 0,
+      "Local Read Blocks": 0,
+      "Local Dirtied Blocks": 0,
+      "Local Written Blocks": 0,
+      "Temp Read Blocks": 0,
+      "Temp Written Blocks": 0,
+      "I/O Read Time": 0.768,
+      "I/O Write Time": 0.000,
+      "Temp I/O Read Time": 0.000,
+      "Temp I/O Write Time": 0.000
+    },
+    "Settings": {
+      "max_parallel_workers_per_gather": "0"
+    },
+    "Planning": {
+      "Shared Hit Blocks": 118,
+      "Shared Read Blocks": 0,
+      "Shared Dirtied Blocks": 0,
+      "Shared Written Blocks": 0,
+      "Local Hit Blocks": 0,
+      "Local Read Blocks": 0,
+      "Local Dirtied Blocks": 0,
+      "Local Written Blocks": 0,
+      "Temp Read Blocks": 0,
+      "Temp Written Blocks": 0,
+      "I/O Read Time": 0.000,
+      "I/O Write Time": 0.000,
+      "Temp I/O Read Time": 0.000,
+      "Temp I/O Write Time": 0.000
+    },
+    "Planning Time": 0.449,
+    "Triggers": [
+    ],
+    "Execution Time": 14.213
+  }
+]

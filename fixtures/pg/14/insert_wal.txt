@@ -1,0 +1,8 @@
+Insert on public.audit_log  (cost=0.00..62.50 rows=0 width=0) (actual time=4.093..4.105 rows=0 loops=1)
+  Buffers: shared hit=5065 dirtied=32 written=32
+  WAL: records=5000 bytes=395000
+  ->  Function Scan on pg_catalog.generate_series i  (cost=0.00..62.50 rows=5000 width=44) (actual time=0.358..0.786 rows=5000 loops=1)
+        Output: (100000 + i.i), 'import'::text, '2025-06-01 00:00:00+00'::timestamp with time zone
+        Function Call: generate_series(1, 5000)
+Planning Time: 0.072 ms
+Execution Time: 4.218 ms

@@ -1,0 +1,18 @@
+Seq Scan on public.customers  (cost=4921.95..5377.95 rows=10000 width=4) (actual time=13.592..15.948 rows=19800 loops=1)
+  Output: customers.id
+  Filter: (NOT (ANY (customers.id = (hashed SubPlan 1).col1)))
+  Rows Removed by Filter: 200
+  Buffers: shared hit=2599 read=24
+  I/O Timings: shared read=0.103
+  SubPlan 1
+    ->  Seq Scan on public.orders  (cost=0.00..4917.00 rows=1980 width=4) (actual time=0.021..13.160 rows=2000 loops=1)
+          Output: orders.customer_id
+          Filter: (orders.status = 'refunded'::text)
+          Rows Removed by Filter: 198000
+          Buffers: shared hit=2393 read=24
+          I/O Timings: shared read=0.103
+Settings: max_parallel_workers_per_gather = '0'
+Planning:
+  Buffers: shared hit=104
+Planning Time: 0.496 ms
+Execution Time: 16.648 ms

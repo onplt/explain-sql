@@ -1,0 +1,35 @@
+Hash Join  (cost=6322.46..6788.96 rows=6652 width=46) (actual time=107.520..127.807 rows=999 loops=1)
+  Output: c.name, t.total
+  Inner Unique: true
+  Hash Cond: (t.customer_id = c.id)
+  Buffers: shared hit=2353 read=270, temp read=92 written=162
+  I/O Timings: shared read=1.083, temp read=0.160 write=0.980
+  CTE totals
+    ->  HashAggregate  (cost=5417.00..5666.46 rows=19957 width=36) (actual time=101.866..116.477 rows=20000 loops=1)
+          Output: orders.customer_id, sum(orders.amount)
+          Group Key: orders.customer_id
+          Batches: 5  Memory Usage: 8241kB  Disk Usage: 752kB
+          Buffers: shared hit=2147 read=270, temp read=92 written=162
+          I/O Timings: shared read=1.083, temp read=0.160 write=0.980
+          ->  Seq Scan on public.orders  (cost=0.00..4417.00 rows=200000 width=10) (actual time=0.021..19.059 rows=200000 loops=1)
+                Output: orders.id, orders.customer_id, orders.status, orders.created_at, orders.amount, orders.note
+                Buffers: shared hit=2147 read=270
+                I/O Timings: shared read=1.083
+  ->  CTE Scan on totals t  (cost=0.00..449.03 rows=6652 width=36) (actual time=101.922..121.743 rows=999 loops=1)
+        Output: t.customer_id, t.total
+        Filter: (t.total > '5900'::numeric)
+        Rows Removed by Filter: 19001
+        Buffers: shared hit=2147 read=270, temp read=92 written=162
+        I/O Timings: shared read=1.083, temp read=0.160 write=0.980
+  ->  Hash  (cost=406.00..406.00 rows=20000 width=18) (actual time=5.394..5.394 rows=20000 loops=1)
+        Output: c.name, c.id
+        Buckets: 32768  Batches: 1  Memory Usage: 1272kB
+        Buffers: shared hit=206
+        ->  Seq Scan on public.customers c  (cost=0.00..406.00 rows=20000 width=18) (actual time=0.014..1.758 rows=20000 loops=1)
+              Output: c.name, c.id
+              Buffers: shared hit=206
+Settings: max_parallel_workers_per_gather = '0'
+Planning:
+  Buffers: shared hit=150
+Planning Time: 0.633 ms
+Execution Time: 128.970 ms

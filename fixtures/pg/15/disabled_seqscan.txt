@@ -1,0 +1,14 @@
+Seq Scan on public.audit_log  (cost=10000000000.00..10000000094.50 rows=1250 width=18) (actual time=73.988..74.235 rows=1250 loops=1)
+  Output: id, action, at
+  Filter: (audit_log.action = 'login'::text)
+  Rows Removed by Filter: 3750
+  Buffers: shared hit=32
+Settings: enable_seqscan = 'off'
+Planning:
+  Buffers: shared hit=35
+Planning Time: 0.218 ms
+JIT:
+  Functions: 2
+  Options: Inlining true, Optimization true, Expressions true, Deforming true
+  Timing: Generation 0.128 ms, Inlining 63.846 ms, Optimization 5.317 ms, Emission 4.786 ms, Total 74.077 ms
+Execution Time: 92.634 ms

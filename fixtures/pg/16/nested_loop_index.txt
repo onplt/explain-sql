@@ -1,0 +1,20 @@
+Nested Loop  (cost=4.82..137.83 rows=11 width=18) (actual time=0.041..0.121 rows=11 loops=1)
+  Output: o.id, c.name
+  Inner Unique: true
+  Buffers: shared hit=47
+  ->  Bitmap Heap Scan on public.orders o  (cost=4.53..46.47 rows=11 width=8) (actual time=0.025..0.054 rows=11 loops=1)
+        Output: o.id, o.customer_id, o.status, o.created_at, o.amount, o.note
+        Recheck Cond: ((o.created_at >= '2024-03-01 10:00:00+00'::timestamp with time zone) AND (o.created_at < '2024-03-01 11:00:00+00'::timestamp with time zone))
+        Heap Blocks: exact=11
+        Buffers: shared hit=14
+        ->  Bitmap Index Scan on orders_created_at_idx  (cost=0.00..4.53 rows=11 width=0) (actual time=0.017..0.017 rows=11 loops=1)
+              Index Cond: ((o.created_at >= '2024-03-01 10:00:00+00'::timestamp with time zone) AND (o.created_at < '2024-03-01 11:00:00+00'::timestamp with time zone))
+              Buffers: shared hit=3
+  ->  Index Scan using customers_pkey on public.customers c  (cost=0.29..8.30 rows=1 width=18) (actual time=0.005..0.005 rows=1 loops=11)
+        Output: c.id, c.name, c.email, c.country, c.created_at
+        Index Cond: (c.id = o.customer_id)
+        Buffers: shared hit=33
+Planning:
+  Buffers: shared hit=248
+Planning Time: 0.718 ms
+Execution Time: 0.166 ms

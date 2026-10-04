@@ -1,0 +1,71 @@
+[
+  {
+    "Plan": {
+      "Node Type": "Seq Scan",
+      "Parallel Aware": false,
+      "Relation Name": "audit_log",
+      "Schema": "public",
+      "Alias": "audit_log",
+      "Startup Cost": 10000000000.00,
+      "Total Cost": 10000000094.50,
+      "Plan Rows": 1250,
+      "Plan Width": 18,
+      "Actual Startup Time": 70.254,
+      "Actual Total Time": 70.522,
+      "Actual Rows": 1250,
+      "Actual Loops": 1,
+      "Output": ["id", "action", "at"],
+      "Filter": "(audit_log.action = 'login'::text)",
+      "Rows Removed by Filter": 3750,
+      "Shared Hit Blocks": 32,
+      "Shared Read Blocks": 0,
+      "Shared Dirtied Blocks": 0,
+      "Shared Written Blocks": 0,
+      "Local Hit Blocks": 0,
+      "Local Read Blocks": 0,
+      "Local Dirtied Blocks": 0,
+      "Local Written Blocks": 0,
+      "Temp Read Blocks": 0,
+      "Temp Written Blocks": 0,
+      "I/O Read Time": 0.000,
+      "I/O Write Time": 0.000
+    },
+    "Settings": {
+      "enable_seqscan": "off"
+    },
+    "Planning": {
+      "Shared Hit Blocks": 35,
+      "Shared Read Blocks": 0,
+      "Shared Dirtied Blocks": 0,
+      "Shared Written Blocks": 0,
+      "Local Hit Blocks": 0,
+      "Local Read Blocks": 0,
+      "Local Dirtied Blocks": 0,
+      "Local Written Blocks": 0,
+      "Temp Read Blocks": 0,
+      "Temp Written Blocks": 0,
+      "I/O Read Time": 0.000,
+      "I/O Write Time": 0.000
+    },
+    "Planning Time": 0.191,
+    "Triggers": [
+    ],
+    "JIT": {
+      "Functions": 2,
+      "Options": {
+        "Inlining": true,
+        "Optimization": true,
+        "Expressions": true,
+        "Deforming": true
+      },
+      "Timing": {
+        "Generation": 0.136,
+        "Inlining": 59.959,
+        "Optimization": 5.211,
+        "Emission": 5.046,
+        "Total": 70.352
+      }
+    },
+    "Execution Time": 87.923
+  }
+]

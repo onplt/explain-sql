@@ -1,0 +1,11 @@
+Hash Join  (cost=656.00..5577.76 rows=1813 width=18)
+  Output: o.id, c.name
+  Inner Unique: true
+  Hash Cond: (o.customer_id = c.id)
+  ->  Seq Scan on public.orders o  (cost=0.00..4917.00 rows=1813 width=8)
+        Output: o.id, o.customer_id, o.status, o.created_at, o.amount, o.note
+        Filter: (o.status = 'refunded'::text)
+  ->  Hash  (cost=406.00..406.00 rows=20000 width=18)
+        Output: c.name, c.id
+        ->  Seq Scan on public.customers c  (cost=0.00..406.00 rows=20000 width=18)
+              Output: c.name, c.id

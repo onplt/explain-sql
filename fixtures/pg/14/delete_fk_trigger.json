@@ -1,0 +1,96 @@
+[
+  {
+    "Plan": {
+      "Node Type": "ModifyTable",
+      "Operation": "Delete",
+      "Parallel Aware": false,
+      "Async Capable": false,
+      "Relation Name": "orders",
+      "Schema": "public",
+      "Alias": "orders",
+      "Startup Cost": 0.42,
+      "Total Cost": 8.77,
+      "Plan Rows": 0,
+      "Plan Width": 0,
+      "Actual Startup Time": 0.157,
+      "Actual Total Time": 0.164,
+      "Actual Rows": 0,
+      "Actual Loops": 1,
+      "Shared Hit Blocks": 47,
+      "Shared Read Blocks": 0,
+      "Shared Dirtied Blocks": 0,
+      "Shared Written Blocks": 0,
+      "Local Hit Blocks": 0,
+      "Local Read Blocks": 0,
+      "Local Dirtied Blocks": 0,
+      "Local Written Blocks": 0,
+      "Temp Read Blocks": 0,
+      "Temp Written Blocks": 0,
+      "I/O Read Time": 0.000,
+      "I/O Write Time": 0.000,
+      "Plans": [
+        {
+          "Node Type": "Index Scan",
+          "Parent Relationship": "Outer",
+          "Parallel Aware": false,
+          "Async Capable": false,
+          "Scan Direction": "Forward",
+          "Index Name": "orders_pkey",
+          "Relation Name": "orders",
+          "Schema": "public",
+          "Alias": "orders",
+          "Startup Cost": 0.42,
+          "Total Cost": 8.77,
+          "Plan Rows": 20,
+          "Plan Width": 6,
+          "Actual Startup Time": 0.019,
+          "Actual Total Time": 0.026,
+          "Actual Rows": 20,
+          "Actual Loops": 1,
+          "Output": ["ctid"],
+          "Index Cond": "(orders.id > 199980)",
+          "Rows Removed by Index Recheck": 0,
+          "Shared Hit Blocks": 4,
+          "Shared Read Blocks": 0,
+          "Shared Dirtied Blocks": 0,
+          "Shared Written Blocks": 0,
+          "Local Hit Blocks": 0,
+          "Local Read Blocks": 0,
+          "Local Dirtied Blocks": 0,
+          "Local Written Blocks": 0,
+          "Temp Read Blocks": 0,
+          "Temp Written Blocks": 0,
+          "I/O Read Time": 0.000,
+          "I/O Write Time": 0.000
+        }
+      ]
+    },
+    "Settings": {
+    },
+    "Planning": {
+      "Shared Hit Blocks": 92,
+      "Shared Read Blocks": 0,
+      "Shared Dirtied Blocks": 0,
+      "Shared Written Blocks": 0,
+      "Local Hit Blocks": 0,
+      "Local Read Blocks": 0,
+      "Local Dirtied Blocks": 0,
+      "Local Written Blocks": 0,
+      "Temp Read Blocks": 0,
+      "Temp Written Blocks": 0,
+      "I/O Read Time": 0.000,
+      "I/O Write Time": 0.000
+    },
+    "Planning Time": 0.612,
+    "Triggers": [
+      {
+        "Trigger Name": "RI_ConstraintTrigger_a_16417",
+        "Constraint Name": "order_items_order_id_fkey",
+        "Relation": "orders",
+        "Time": 361.223,
+        "Calls": 20
+      }
+    ],
+    "Execution Time": 361.456
+  }
+]

@@ -1,0 +1,25 @@
+Nested Loop  (cost=5417.05..5417.76 rows=8 width=64) (actual time=77.328..77.336 rows=10 loops=1)
+  Output: a.status, b.status
+  Join Filter: (a.n < b.n)
+  Rows Removed by Join Filter: 15
+  Buffers: shared hit=2243 read=174
+  I/O Timings: read=0.685
+  CTE per_status
+    ->  HashAggregate  (cost=5417.00..5417.05 rows=5 width=17) (actual time=77.315..77.317 rows=5 loops=1)
+          Output: orders.status, count(*)
+          Group Key: orders.status
+          Buffers: shared hit=2243 read=174
+          I/O Timings: read=0.685
+          ->  Seq Scan on public.orders  (cost=0.00..4417.00 rows=200000 width=9) (actual time=0.017..21.651 rows=200000 loops=1)
+                Output: orders.id, orders.customer_id, orders.status, orders.created_at, orders.amount, orders.note
+                Buffers: shared hit=2243 read=174
+                I/O Timings: read=0.685
+  ->  CTE Scan on per_status a  (cost=0.00..0.10 rows=5 width=40) (actual time=77.321..77.322 rows=5 loops=1)
+        Output: a.status, a.n
+        Buffers: shared hit=2243 read=174
+        I/O Timings: read=0.685
+  ->  CTE Scan on per_status b  (cost=0.00..0.10 rows=5 width=40) (actual time=0.000..0.001 rows=5 loops=5)
+        Output: b.status, b.n
+Settings: max_parallel_workers_per_gather = '0'
+Planning Time: 0.424 ms
+Execution Time: 77.587 ms

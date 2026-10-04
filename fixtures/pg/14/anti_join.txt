@@ -1,0 +1,24 @@
+Hash Anti Join  (cost=4941.25..5604.36 rows=18060 width=4) (actual time=18.181..22.205 rows=19800 loops=1)
+  Output: c.id
+  Hash Cond: (c.id = o.customer_id)
+  Buffers: shared hit=270 read=2353
+  I/O Timings: read=3.725
+  ->  Seq Scan on public.customers c  (cost=0.00..406.00 rows=20000 width=4) (actual time=0.004..1.421 rows=20000 loops=1)
+        Output: c.id, c.name, c.email, c.country, c.created_at
+        Buffers: shared hit=206
+  ->  Hash  (cost=4917.00..4917.00 rows=1940 width=4) (actual time=18.153..18.155 rows=2000 loops=1)
+        Output: o.customer_id
+        Buckets: 2048  Batches: 1  Memory Usage: 87kB
+        Buffers: shared hit=64 read=2353
+        I/O Timings: read=3.725
+        ->  Seq Scan on public.orders o  (cost=0.00..4917.00 rows=1940 width=4) (actual time=0.047..17.583 rows=2000 loops=1)
+              Output: o.customer_id
+              Filter: (o.status = 'refunded'::text)
+              Rows Removed by Filter: 198000
+              Buffers: shared hit=64 read=2353
+              I/O Timings: read=3.725
+Settings: max_parallel_workers_per_gather = '0'
+Planning:
+  Buffers: shared hit=239
+Planning Time: 0.924 ms
+Execution Time: 22.859 ms

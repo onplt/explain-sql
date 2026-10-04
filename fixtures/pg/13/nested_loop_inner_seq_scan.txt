@@ -1,0 +1,21 @@
+Nested Loop  (cost=0.00..91527.00 rows=15 width=8) (actual time=3.280..404.465 rows=14 loops=1)
+  Output: o.id, oi.product_id
+  Join Filter: (o.id = oi.order_id)
+  Rows Removed by Join Filter: 2999986
+  Buffers: shared hit=3907 read=17620
+  I/O Timings: read=26.643
+  ->  Seq Scan on public.orders o  (cost=0.00..4917.00 rows=10 width=4) (actual time=1.138..15.278 rows=10 loops=1)
+        Output: o.id, o.customer_id, o.status, o.created_at, o.amount, o.note
+        Filter: (o.customer_id = 4242)
+        Rows Removed by Filter: 199990
+        Buffers: shared hit=2307 read=110
+        I/O Timings: read=0.306
+  ->  Seq Scan on public.order_items oi  (cost=0.00..4911.00 rows=300000 width=8) (actual time=0.014..19.897 rows=300000 loops=10)
+        Output: oi.id, oi.order_id, oi.product_id, oi.quantity, oi.unit_price
+        Buffers: shared hit=1600 read=17510
+        I/O Timings: read=26.338
+Settings: enable_hashjoin = 'off', enable_material = 'off', enable_mergejoin = 'off', max_parallel_workers_per_gather = '0'
+Planning:
+  Buffers: shared hit=144
+Planning Time: 0.375 ms
+Execution Time: 404.542 ms

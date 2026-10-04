@@ -1,0 +1,80 @@
+[
+  {
+    "Plan": {
+      "Node Type": "ModifyTable",
+      "Operation": "Delete",
+      "Parallel Aware": false,
+      "Relation Name": "orders",
+      "Schema": "public",
+      "Alias": "orders",
+      "Startup Cost": 0.42,
+      "Total Cost": 8.75,
+      "Plan Rows": 19,
+      "Plan Width": 6,
+      "Actual Startup Time": 0.085,
+      "Actual Total Time": 0.086,
+      "Actual Rows": 0,
+      "Actual Loops": 1,
+      "Shared Hit Blocks": 47,
+      "Shared Read Blocks": 0,
+      "Shared Dirtied Blocks": 0,
+      "Shared Written Blocks": 0,
+      "Local Hit Blocks": 0,
+      "Local Read Blocks": 0,
+      "Local Dirtied Blocks": 0,
+      "Local Written Blocks": 0,
+      "Temp Read Blocks": 0,
+      "Temp Written Blocks": 0,
+      "I/O Read Time": 0.000,
+      "I/O Write Time": 0.000,
+      "Plans": [
+        {
+          "Node Type": "Index Scan",
+          "Parent Relationship": "Member",
+          "Parallel Aware": false,
+          "Scan Direction": "Forward",
+          "Index Name": "orders_pkey",
+          "Relation Name": "orders",
+          "Schema": "public",
+          "Alias": "orders",
+          "Startup Cost": 0.42,
+          "Total Cost": 8.75,
+          "Plan Rows": 19,
+          "Plan Width": 6,
+          "Actual Startup Time": 0.007,
+          "Actual Total Time": 0.011,
+          "Actual Rows": 20,
+          "Actual Loops": 1,
+          "Output": ["ctid"],
+          "Index Cond": "(orders.id > 199980)",
+          "Rows Removed by Index Recheck": 0,
+          "Shared Hit Blocks": 4,
+          "Shared Read Blocks": 0,
+          "Shared Dirtied Blocks": 0,
+          "Shared Written Blocks": 0,
+          "Local Hit Blocks": 0,
+          "Local Read Blocks": 0,
+          "Local Dirtied Blocks": 0,
+          "Local Written Blocks": 0,
+          "Temp Read Blocks": 0,
+          "Temp Written Blocks": 0,
+          "I/O Read Time": 0.000,
+          "I/O Write Time": 0.000
+        }
+      ]
+    },
+    "Settings": {
+    },
+    "Planning Time": 0.310,
+    "Triggers": [
+      {
+        "Trigger Name": "RI_ConstraintTrigger_a_16420",
+        "Constraint Name": "order_items_order_id_fkey",
+        "Relation": "orders",
+        "Time": 322.013,
+        "Calls": 20
+      }
+    ],
+    "Execution Time": 322.158
+  }
+]

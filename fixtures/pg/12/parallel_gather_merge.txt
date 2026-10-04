@@ -1,0 +1,28 @@
+Gather Merge  (cost=4016.35..4215.76 rows=17080 width=10) (actual time=13.715..21.077 rows=19998 loops=1)
+  Output: id, amount
+  Workers Planned: 2
+  Workers Launched: 2
+  Buffers: shared hit=2511
+  ->  Sort  (cost=4016.33..4037.68 rows=8540 width=10) (actual time=11.132..11.838 rows=6666 loops=3)
+        Output: id, amount
+        Sort Key: orders.amount
+        Sort Method: quicksort  Memory: 777kB
+        Worker 0:  Sort Method: quicksort  Memory: 451kB
+        Worker 1:  Sort Method: quicksort  Memory: 479kB
+        Buffers: shared hit=2511
+        Worker 0: actual time=9.952..10.581 rows=5525 loops=1
+          Buffers: shared hit=715
+        Worker 1: actual time=9.995..10.682 rows=6105 loops=1
+          Buffers: shared hit=783
+        ->  Parallel Seq Scan on public.orders  (cost=0.00..3458.67 rows=8540 width=10) (actual time=0.013..8.801 rows=6666 loops=3)
+              Output: id, amount
+              Filter: (orders.amount > '900'::numeric)
+              Rows Removed by Filter: 60001
+              Buffers: shared hit=2417
+              Worker 0: actual time=0.007..7.807 rows=5525 loops=1
+                Buffers: shared hit=668
+              Worker 1: actual time=0.014..7.919 rows=6105 loops=1
+                Buffers: shared hit=736
+Settings: min_parallel_table_scan_size = '0', parallel_setup_cost = '0', parallel_tuple_cost = '0'
+Planning Time: 0.316 ms
+Execution Time: 21.867 ms

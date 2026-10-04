@@ -1,0 +1,11 @@
+Seq Scan on public.addresses  (cost=0.00..4274.00 rows=10 width=22) (actual time=0.037..11.876 rows=200 loops=1)
+  Output: id, city, country, street
+  Filter: ((addresses.city = 42) AND (addresses.country = 0))
+  Rows Removed by Filter: 199800
+  Buffers: shared hit=64 read=1210
+  I/O Timings: shared read=1.852
+Settings: max_parallel_workers_per_gather = '0'
+Planning:
+  Buffers: shared hit=69
+Planning Time: 0.363 ms
+Execution Time: 11.936 ms

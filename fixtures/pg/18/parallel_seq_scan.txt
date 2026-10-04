@@ -1,0 +1,19 @@
+Gather  (cost=0.00..3458.67 rows=20 width=37) (actual time=0.556..13.081 rows=766.00 loops=1)
+  Output: id, note
+  Workers Planned: 2
+  Workers Launched: 2
+  Buffers: shared hit=2417
+  ->  Parallel Seq Scan on public.orders  (cost=0.00..3458.67 rows=8 width=37) (actual time=0.069..7.384 rows=255.33 loops=3)
+        Output: id, note
+        Filter: (orders.note ~~ 'ab%'::text)
+        Rows Removed by Filter: 66411
+        Buffers: shared hit=2417
+        Worker 0:  actual time=0.048..6.289 rows=280.00 loops=1
+          Buffers: shared hit=901
+        Worker 1:  actual time=0.057..6.436 rows=264.00 loops=1
+          Buffers: shared hit=848
+Settings: parallel_setup_cost = '0', parallel_tuple_cost = '0', min_parallel_table_scan_size = '0'
+Planning:
+  Buffers: shared hit=97
+Planning Time: 0.722 ms
+Execution Time: 13.223 ms

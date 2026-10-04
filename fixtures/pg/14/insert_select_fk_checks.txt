@@ -1,0 +1,9 @@
+Insert on public.order_items  (cost=0.00..20.00 rows=0 width=0) (actual time=2.587..2.593 rows=0 loops=1)
+  Buffers: shared hit=4135 dirtied=6 written=6
+  ->  Function Scan on pg_catalog.generate_series i  (cost=0.00..20.00 rows=1000 width=32) (actual time=0.075..0.191 rows=1000 loops=1)
+        Output: (1000000 + i.i), (1 + i.i), (1 + (i.i % 5000)), 1, 9.99::numeric(10,2)
+        Function Call: generate_series(1, 1000)
+Planning Time: 0.094 ms
+Trigger RI_ConstraintTrigger_c_16419 for constraint order_items_order_id_fkey: time=6.508 calls=1000
+Trigger RI_ConstraintTrigger_c_16424 for constraint order_items_product_id_fkey: time=5.755 calls=1000
+Execution Time: 15.037 ms

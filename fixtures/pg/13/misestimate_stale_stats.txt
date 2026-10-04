@@ -1,0 +1,13 @@
+Aggregate  (cost=1743.00..1743.01 rows=1 width=8) (actual time=9.477..9.479 rows=1 loops=1)
+  Output: count(*)
+  Buffers: shared hit=589
+  ->  Seq Scan on public.shipments  (cost=0.00..1743.00 rows=1 width=0) (actual time=2.540..7.298 rows=50000 loops=1)
+        Output: id, state, weight
+        Filter: (shipments.state = 'active'::text)
+        Rows Removed by Filter: 50000
+        Buffers: shared hit=589
+Settings: max_parallel_workers_per_gather = '0'
+Planning:
+  Buffers: shared hit=63
+Planning Time: 0.241 ms
+Execution Time: 9.524 ms

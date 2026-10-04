@@ -1,0 +1,41 @@
+[
+  {
+    "Plan": {
+      "Node Type": "Seq Scan",
+      "Parallel Aware": false,
+      "Relation Name": "orders",
+      "Schema": "public",
+      "Alias": "orders",
+      "Startup Cost": 0.00,
+      "Total Cost": 4917.00,
+      "Plan Rows": 20,
+      "Plan Width": 37,
+      "Actual Startup Time": 1.275,
+      "Actual Total Time": 23.210,
+      "Actual Rows": 42,
+      "Actual Loops": 1,
+      "Output": ["id", "note"],
+      "Filter": "(orders.note ~~ 'abc%'::text)",
+      "Rows Removed by Filter": 199958,
+      "Shared Hit Blocks": 1613,
+      "Shared Read Blocks": 804,
+      "Shared Dirtied Blocks": 0,
+      "Shared Written Blocks": 0,
+      "Local Hit Blocks": 0,
+      "Local Read Blocks": 0,
+      "Local Dirtied Blocks": 0,
+      "Local Written Blocks": 0,
+      "Temp Read Blocks": 0,
+      "Temp Written Blocks": 0,
+      "I/O Read Time": 1.534,
+      "I/O Write Time": 0.000
+    },
+    "Settings": {
+      "max_parallel_workers_per_gather": "0"
+    },
+    "Planning Time": 0.578,
+    "Triggers": [
+    ],
+    "Execution Time": 23.273
+  }
+]

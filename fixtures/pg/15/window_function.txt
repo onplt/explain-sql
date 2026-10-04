@@ -1,0 +1,16 @@
+WindowAgg  (cost=1834.77..2234.77 rows=20000 width=23) (actual time=15.776..25.595 rows=20000 loops=1)
+  Output: id, country, row_number() OVER (?), created_at
+  Buffers: shared hit=212
+  ->  Sort  (cost=1834.77..1884.77 rows=20000 width=15) (actual time=15.736..17.687 rows=20000 loops=1)
+        Output: country, created_at, id
+        Sort Key: customers.country, customers.created_at
+        Sort Method: quicksort  Memory: 2019kB
+        Buffers: shared hit=212
+        ->  Seq Scan on public.customers  (cost=0.00..406.00 rows=20000 width=15) (actual time=0.009..2.477 rows=20000 loops=1)
+              Output: country, created_at, id
+              Buffers: shared hit=206
+Settings: max_parallel_workers_per_gather = '0'
+Planning:
+  Buffers: shared hit=90
+Planning Time: 0.335 ms
+Execution Time: 26.793 ms

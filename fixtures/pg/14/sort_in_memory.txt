@@ -1,0 +1,14 @@
+Sort  (cost=565.66..570.66 rows=2000 width=50) (actual time=6.432..6.550 rows=2000 loops=1)
+  Output: id, name, email, country, created_at
+  Sort Key: customers.name
+  Sort Method: quicksort  Memory: 324kB
+  Buffers: shared hit=209
+  ->  Seq Scan on public.customers  (cost=0.00..456.00 rows=2000 width=50) (actual time=0.009..1.628 rows=2000 loops=1)
+        Output: id, name, email, country, created_at
+        Filter: (customers.country = 'TR'::text)
+        Rows Removed by Filter: 18000
+        Buffers: shared hit=206
+Planning:
+  Buffers: shared hit=85
+Planning Time: 0.256 ms
+Execution Time: 6.681 ms

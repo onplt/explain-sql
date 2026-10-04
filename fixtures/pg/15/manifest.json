@@ -1,0 +1,440 @@
+{
+  "postgres": {
+    "image": "postgres:15",
+    "image_digest": "postgres@sha256:724292da1f2e50bdccfc3302ce75bbba7f4a6076701b588cc795fcac65683550",
+    "jit_available": true,
+    "major": 15,
+    "server_version": "15.19 (Debian 15.19-1.pgdg13+2)",
+    "server_version_num": 150019
+  },
+  "scenarios": {
+    "anti_join": {
+      "advice": null,
+      "description": "NOT EXISTS subquery, planned as an anti join.",
+      "rules": [],
+      "status": "generated"
+    },
+    "bitmap_heap_scan": {
+      "advice": null,
+      "description": "Bitmap heap scan over a week of orders.",
+      "rules": [],
+      "status": "generated"
+    },
+    "bitmap_lossy": {
+      "advice": null,
+      "description": "Bitmap heap scan over most of the table with a tiny work_mem, so the bitmap becomes lossy and rows are rechecked.",
+      "rules": [
+        "ES008"
+      ],
+      "status": "generated"
+    },
+    "bitmap_or": {
+      "advice": null,
+      "description": "BitmapOr that combines two ranges on the same index.",
+      "rules": [],
+      "status": "generated"
+    },
+    "cte_materialized": {
+      "advice": null,
+      "description": "MATERIALIZED CTE scanned once: a CTE Scan plus the CTE subplan.",
+      "rules": [],
+      "status": "generated"
+    },
+    "cte_multiple_scans": {
+      "advice": null,
+      "description": "CTE referenced twice, so it is materialized once and read by two CTE Scan nodes.",
+      "rules": [],
+      "status": "generated"
+    },
+    "cte_recursive": {
+      "advice": null,
+      "description": "Recursive CTE: a Recursive Union over a WorkTable Scan.",
+      "rules": [],
+      "status": "generated"
+    },
+    "delete_fk_trigger": {
+      "advice": "index",
+      "description": "DELETE on a referenced table; the foreign-key trigger scans the unindexed order_items.order_id for every deleted row.",
+      "rules": [
+        "ES009"
+      ],
+      "status": "generated"
+    },
+    "disabled_seqscan": {
+      "advice": null,
+      "description": "enable_seqscan = off on a table without indexes; PostgreSQL 18 marks the node as disabled, older versions add disable_cost to its estimate.",
+      "rules": [],
+      "status": "generated"
+    },
+    "estimate_only": {
+      "advice": null,
+      "description": "Plain EXPLAIN without ANALYZE: estimates only.",
+      "rules": [],
+      "status": "generated"
+    },
+    "generic_plan": {
+      "advice": null,
+      "description": "EXPLAIN (GENERIC_PLAN) of a parameterized query as it appears in application logs (PostgreSQL 16 and later).",
+      "reason": "requires PostgreSQL 16 or later",
+      "rules": [],
+      "status": "skipped"
+    },
+    "group_aggregate": {
+      "advice": null,
+      "description": "Sorted GROUP BY (group aggregate) with hash aggregation disabled.",
+      "rules": [],
+      "status": "generated"
+    },
+    "hash_aggregate": {
+      "advice": null,
+      "description": "GROUP BY on a low-cardinality column (hash aggregate).",
+      "rules": [],
+      "status": "generated"
+    },
+    "hash_aggregate_spill": {
+      "advice": null,
+      "description": "Hash aggregate that spills to disk because work_mem is tiny (PostgreSQL 13 and later).",
+      "rules": [
+        "ES004"
+      ],
+      "status": "generated"
+    },
+    "hash_join": {
+      "advice": "none",
+      "description": "Hash join of every order with its customer; whole tables are needed, so no index helps.",
+      "rules": [],
+      "status": "generated"
+    },
+    "hash_join_batches": {
+      "advice": null,
+      "description": "Hash join whose hash table does not fit in work_mem and is split into batches on disk.",
+      "rules": [
+        "ES004"
+      ],
+      "status": "generated"
+    },
+    "index_only_scan": {
+      "advice": null,
+      "description": "Index-only scan on a freshly vacuumed table, with no heap fetches.",
+      "rules": [],
+      "status": "generated"
+    },
+    "index_only_scan_heap_fetches": {
+      "advice": null,
+      "description": "Index-only scan on a table whose visibility map is out of date, so most rows need a heap fetch.",
+      "rules": [
+        "ES007"
+      ],
+      "status": "generated"
+    },
+    "index_scan_backward": {
+      "advice": null,
+      "description": "ORDER BY ... DESC LIMIT served by scanning an index backwards.",
+      "rules": [],
+      "status": "generated"
+    },
+    "index_scan_filter": {
+      "advice": "index",
+      "description": "Index range scan on created_at that discards most rows with a filter on status.",
+      "rules": [
+        "ES006"
+      ],
+      "status": "generated"
+    },
+    "index_scan_pk": {
+      "advice": null,
+      "description": "Primary key lookup.",
+      "rules": [],
+      "status": "generated"
+    },
+    "initplan": {
+      "advice": null,
+      "description": "Uncorrelated scalar subquery evaluated once as an InitPlan.",
+      "rules": [],
+      "status": "generated"
+    },
+    "insert_select_fk_checks": {
+      "advice": null,
+      "description": "INSERT ... SELECT that fires a foreign-key check for every inserted row.",
+      "rules": [],
+      "status": "generated"
+    },
+    "insert_wal": {
+      "advice": null,
+      "description": "INSERT with the WAL option: WAL records, full-page images and bytes (PostgreSQL 13 and later).",
+      "rules": [],
+      "status": "generated"
+    },
+    "jit_overhead": {
+      "advice": null,
+      "description": "JIT compilation forced on a tiny query, so compiling takes far longer than executing.",
+      "rules": [
+        "ES012"
+      ],
+      "status": "generated"
+    },
+    "lateral_join_top_n": {
+      "advice": "index",
+      "description": "LATERAL top-3 per customer; without an index on customer_id, every loop walks the created_at index backwards and discards most of the rows it reads.",
+      "rules": [
+        "ES005",
+        "ES006"
+      ],
+      "status": "generated"
+    },
+    "merge_join": {
+      "advice": null,
+      "description": "Merge join, forced by disabling hash and nested-loop joins.",
+      "rules": [],
+      "status": "generated"
+    },
+    "misestimate_correlated_columns": {
+      "advice": null,
+      "description": "city determines country, but the planner multiplies their selectivities and underestimates the row count 20x.",
+      "rules": [
+        "ES002"
+      ],
+      "status": "generated"
+    },
+    "misestimate_stale_stats": {
+      "advice": "none",
+      "description": "Statistics predate 50,000 inserted 'active' rows, so the estimate is off by orders of magnitude.",
+      "rules": [
+        "ES002"
+      ],
+      "status": "generated"
+    },
+    "nested_loop_cartesian": {
+      "advice": null,
+      "description": "Missing join condition: every selected customer is paired with every book.",
+      "rules": [
+        "ES010"
+      ],
+      "status": "generated"
+    },
+    "nested_loop_index": {
+      "advice": null,
+      "description": "Nested loop with a primary key lookup on the inner side (the good case).",
+      "rules": [],
+      "status": "generated"
+    },
+    "nested_loop_inner_seq_scan": {
+      "advice": "index",
+      "description": "Nested loop that scans all of order_items for every outer row because order_id has no index.",
+      "rules": [
+        "ES001",
+        "ES005"
+      ],
+      "status": "generated"
+    },
+    "nested_loop_memoize": {
+      "advice": null,
+      "description": "Nested loop with a Memoize cache in front of the inner index scan (PostgreSQL 14 and later).",
+      "rules": [],
+      "status": "generated"
+    },
+    "never_executed": {
+      "advice": null,
+      "description": "The outer side returns no rows, so the inner side of the nested loop is never executed.",
+      "rules": [],
+      "status": "generated"
+    },
+    "parallel_aggregate": {
+      "advice": null,
+      "description": "Partial aggregates in parallel workers, combined by a Finalize Aggregate.",
+      "rules": [],
+      "status": "generated"
+    },
+    "parallel_gather_merge": {
+      "advice": null,
+      "description": "Workers sort in parallel and a Gather Merge combines the sorted streams.",
+      "rules": [],
+      "status": "generated"
+    },
+    "parallel_hash_join": {
+      "advice": null,
+      "description": "Parallel hash join between orders and order_items.",
+      "rules": [],
+      "status": "generated"
+    },
+    "parallel_seq_scan": {
+      "advice": null,
+      "description": "Parallel sequential scan under a Gather node.",
+      "rules": [],
+      "status": "generated"
+    },
+    "parallel_workers_not_launched": {
+      "advice": null,
+      "description": "The plan asks for two workers but none can start because max_parallel_workers is 0.",
+      "rules": [
+        "ES011"
+      ],
+      "status": "generated"
+    },
+    "partition_append_all": {
+      "advice": null,
+      "description": "No partition key in the predicate, so an Append scans all twelve partitions.",
+      "rules": [],
+      "status": "generated"
+    },
+    "partition_prune_plan_time": {
+      "advice": null,
+      "description": "Only one partition is scanned because the constant range is pruned at plan time.",
+      "rules": [],
+      "status": "generated"
+    },
+    "partition_prune_runtime": {
+      "advice": null,
+      "description": "The partition key is compared with an InitPlan result, so pruning happens during execution and pruned partitions are never executed.",
+      "rules": [],
+      "status": "generated"
+    },
+    "partition_prune_startup": {
+      "advice": null,
+      "description": "Comparing with a date makes the predicate stable rather than immutable, so partitions are removed at executor startup.",
+      "rules": [],
+      "status": "generated"
+    },
+    "semi_join": {
+      "advice": null,
+      "description": "EXISTS subquery turned into a join: either a semi join or a join over de-duplicated subquery rows.",
+      "rules": [],
+      "status": "generated"
+    },
+    "seq_scan_cast_on_column": {
+      "advice": "rewrite",
+      "description": "The column is cast to text, so even an index on customer_id could not be used.",
+      "rules": [],
+      "status": "generated"
+    },
+    "seq_scan_full_aggregate": {
+      "advice": "none",
+      "description": "Aggregate over a whole table; a sequential scan is the right plan.",
+      "rules": [],
+      "status": "generated"
+    },
+    "seq_scan_function_on_column": {
+      "advice": "rewrite",
+      "description": "date_trunc() on a timestamptz column is not immutable, so the fix is a range predicate rather than an expression index.",
+      "rules": [],
+      "status": "generated"
+    },
+    "seq_scan_jsonb_containment": {
+      "advice": "index",
+      "description": "jsonb containment filter on every partition of a partitioned table; only a GIN index could help.",
+      "rules": [],
+      "status": "generated"
+    },
+    "seq_scan_like_prefix": {
+      "advice": "index",
+      "description": "LIKE prefix search under a non-C collation; a btree index would need text_pattern_ops.",
+      "rules": [
+        "ES001"
+      ],
+      "status": "generated"
+    },
+    "seq_scan_like_substring": {
+      "advice": "index",
+      "description": "Substring LIKE search; only a pg_trgm GIN index could help.",
+      "rules": [
+        "ES001"
+      ],
+      "status": "generated"
+    },
+    "seq_scan_limit_early_stop": {
+      "advice": "none",
+      "description": "LIMIT stops the sequential scan after a few hundred rows.",
+      "rules": [],
+      "status": "generated"
+    },
+    "seq_scan_low_selectivity": {
+      "advice": "none",
+      "description": "Filter that keeps about 70% of the rows, so a sequential scan is the right plan.",
+      "rules": [],
+      "status": "generated"
+    },
+    "seq_scan_or_across_columns": {
+      "advice": "none",
+      "description": "OR across two unindexed columns; no single index serves the predicate.",
+      "rules": [],
+      "status": "generated"
+    },
+    "seq_scan_selective": {
+      "advice": "index",
+      "description": "Sequential scan whose filter keeps 10 of 200,000 rows because customer_id has no index.",
+      "rules": [
+        "ES001"
+      ],
+      "status": "generated"
+    },
+    "seq_scan_tiny_table": {
+      "advice": "none",
+      "description": "Filter on a 50-row table, where an index would not help.",
+      "rules": [],
+      "status": "generated"
+    },
+    "serialize_memory": {
+      "advice": null,
+      "description": "EXPLAIN with SERIALIZE and MEMORY: output serialization cost and planner memory (PostgreSQL 17 and later).",
+      "reason": "requires PostgreSQL 17 or later",
+      "rules": [],
+      "status": "skipped"
+    },
+    "sort_external_merge": {
+      "advice": null,
+      "description": "Sort that spills to disk because work_mem is tiny.",
+      "rules": [
+        "ES003"
+      ],
+      "status": "generated"
+    },
+    "sort_in_memory": {
+      "advice": null,
+      "description": "Sort that fits in work_mem (quicksort).",
+      "rules": [],
+      "status": "generated"
+    },
+    "sort_incremental": {
+      "advice": null,
+      "description": "Incremental sort on top of an index that provides the leading sort key (PostgreSQL 13 and later).",
+      "rules": [],
+      "status": "generated"
+    },
+    "sort_top_n_heapsort": {
+      "advice": "index",
+      "description": "ORDER BY ... LIMIT on an unindexed column: a top-N heapsort over the whole table.",
+      "rules": [],
+      "status": "generated"
+    },
+    "subplan_correlated": {
+      "advice": "index",
+      "description": "Correlated scalar subquery run once per outer row (SubPlan), each time scanning all of order_items.",
+      "rules": [],
+      "status": "generated"
+    },
+    "subplan_hashed": {
+      "advice": null,
+      "description": "NOT IN over a subquery, evaluated as a hashed SubPlan.",
+      "rules": [],
+      "status": "generated"
+    },
+    "timing_off": {
+      "advice": null,
+      "description": "EXPLAIN ANALYZE with TIMING OFF: actual rows and loops, but no per-node times.",
+      "rules": [],
+      "status": "generated"
+    },
+    "update_by_pk": {
+      "advice": null,
+      "description": "UPDATE of a primary key range (ModifyTable over an index scan).",
+      "rules": [],
+      "status": "generated"
+    },
+    "window_function": {
+      "advice": null,
+      "description": "Window function partitioned by country.",
+      "rules": [],
+      "status": "generated"
+    }
+  }
+}

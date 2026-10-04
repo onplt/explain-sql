@@ -1,0 +1,8 @@
+Limit  (cost=0.42..1.91 rows=20 width=64) (actual time=0.032..0.110 rows=20 loops=1)
+  Output: id, customer_id, status, created_at, amount, note
+  Buffers: shared hit=23
+  ->  Index Scan Backward using orders_created_at_idx on public.orders  (cost=0.42..14876.30 rows=200000 width=64) (actual time=0.030..0.106 rows=20 loops=1)
+        Output: id, customer_id, status, created_at, amount, note
+        Buffers: shared hit=23
+Planning Time: 0.400 ms
+Execution Time: 0.147 ms

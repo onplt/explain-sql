@@ -1,0 +1,14 @@
+Nested Loop  (cost=0.00..7373.00 rows=10 width=4) (actual time=1.683..1.684 rows=0 loops=1)
+  Output: o.id
+  Join Filter: (c.id = o.customer_id)
+  Buffers: shared hit=206
+  ->  Seq Scan on public.customers c  (cost=0.00..456.00 rows=1 width=4) (actual time=1.681..1.682 rows=0 loops=1)
+        Output: c.id, c.name, c.email, c.country, c.created_at
+        Filter: (c.country = 'XX'::text)
+        Rows Removed by Filter: 20000
+        Buffers: shared hit=206
+  ->  Seq Scan on public.orders o  (cost=0.00..4417.00 rows=200000 width=8) (never executed)
+        Output: o.id, o.customer_id, o.status, o.created_at, o.amount, o.note
+Settings: enable_hashjoin = 'off', enable_mergejoin = 'off', max_parallel_workers_per_gather = '0'
+Planning Time: 0.483 ms
+Execution Time: 1.737 ms

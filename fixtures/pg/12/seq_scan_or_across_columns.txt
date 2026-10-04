@@ -1,0 +1,9 @@
+Seq Scan on public.orders  (cost=0.00..5417.00 rows=1957 width=64) (actual time=0.027..17.040 rows=2010 loops=1)
+  Output: id, customer_id, status, created_at, amount, note
+  Filter: ((orders.customer_id = 4242) OR (orders.status = 'refunded'::text))
+  Rows Removed by Filter: 197990
+  Buffers: shared hit=1934 read=483
+  I/O Timings: read=0.866
+Settings: max_parallel_workers_per_gather = '0'
+Planning Time: 0.338 ms
+Execution Time: 17.180 ms

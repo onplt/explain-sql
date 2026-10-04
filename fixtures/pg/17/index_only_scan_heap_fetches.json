@@ -1,0 +1,67 @@
+[
+  {
+    "Plan": {
+      "Node Type": "Index Only Scan",
+      "Parallel Aware": false,
+      "Async Capable": false,
+      "Scan Direction": "Forward",
+      "Index Name": "page_views_page_idx",
+      "Relation Name": "page_views",
+      "Schema": "public",
+      "Alias": "page_views",
+      "Startup Cost": 0.29,
+      "Total Cost": 275.57,
+      "Plan Rows": 2164,
+      "Plan Width": 4,
+      "Actual Startup Time": 0.441,
+      "Actual Total Time": 1.257,
+      "Actual Rows": 2000,
+      "Actual Loops": 1,
+      "Output": ["page"],
+      "Index Cond": "((page_views.page >= 10) AND (page_views.page <= 19))",
+      "Rows Removed by Index Recheck": 0,
+      "Heap Fetches": 2200,
+      "Shared Hit Blocks": 2060,
+      "Shared Read Blocks": 0,
+      "Shared Dirtied Blocks": 0,
+      "Shared Written Blocks": 0,
+      "Local Hit Blocks": 0,
+      "Local Read Blocks": 0,
+      "Local Dirtied Blocks": 0,
+      "Local Written Blocks": 0,
+      "Temp Read Blocks": 0,
+      "Temp Written Blocks": 0,
+      "Shared I/O Read Time": 0.000,
+      "Shared I/O Write Time": 0.000,
+      "Local I/O Read Time": 0.000,
+      "Local I/O Write Time": 0.000,
+      "Temp I/O Read Time": 0.000,
+      "Temp I/O Write Time": 0.000
+    },
+    "Settings": {
+      "enable_bitmapscan": "off"
+    },
+    "Planning": {
+      "Shared Hit Blocks": 81,
+      "Shared Read Blocks": 0,
+      "Shared Dirtied Blocks": 0,
+      "Shared Written Blocks": 0,
+      "Local Hit Blocks": 0,
+      "Local Read Blocks": 0,
+      "Local Dirtied Blocks": 0,
+      "Local Written Blocks": 0,
+      "Temp Read Blocks": 0,
+      "Temp Written Blocks": 0,
+      "Shared I/O Read Time": 0.000,
+      "Shared I/O Write Time": 0.000,
+      "Local I/O Read Time": 0.000,
+      "Local I/O Write Time": 0.000,
+      "Temp I/O Read Time": 0.000,
+      "Temp I/O Write Time": 0.000
+    },
+    "Planning Time": 1.565,
+    "Triggers": [
+    ],
+    "Execution Time": 1.365
+  }
+]

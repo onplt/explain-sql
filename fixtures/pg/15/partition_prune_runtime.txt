@@ -1,0 +1,67 @@
+Aggregate  (cost=1997.19..1997.20 rows=1 width=8) (actual time=13.675..13.684 rows=1 loops=1)
+  Output: count(*)
+  Buffers: shared hit=190
+  InitPlan 2 (returns $1)
+    ->  Result  (cost=0.31..0.33 rows=1 width=8) (actual time=0.052..0.054 rows=1 loops=1)
+          Output: ($0 - '7 days'::interval)
+          Buffers: shared hit=3
+          InitPlan 1 (returns $0)
+            ->  Limit  (cost=0.29..0.31 rows=1 width=8) (actual time=0.046..0.047 rows=1 loops=1)
+                  Output: events_2025_06.created_at
+                  Buffers: shared hit=3
+                  ->  Index Only Scan Backward using events_2025_06_created_at_idx on public.events_2025_06  (cost=0.29..289.01 rows=9870 width=8) (actual time=0.044..0.045 rows=1 loops=1)
+                        Output: events_2025_06.created_at
+                        Index Cond: (events_2025_06.created_at IS NOT NULL)
+                        Heap Fetches: 0
+                        Buffers: shared hit=3
+  ->  Append  (cost=0.29..1896.86 rows=40001 width=0) (actual time=0.077..10.472 rows=62755 loops=1)
+        Buffers: shared hit=190
+        ->  Index Only Scan using events_2025_01_created_at_idx on public.events_2025_01 events_1  (cost=0.29..227.76 rows=3399 width=0) (never executed)
+              Index Cond: (events_1.created_at >= $1)
+              Heap Fetches: 0
+        ->  Bitmap Heap Scan on public.events_2025_02 events_2  (cost=64.09..211.47 rows=3071 width=0) (never executed)
+              Recheck Cond: (events_2.created_at >= $1)
+              ->  Bitmap Index Scan on events_2025_02_created_at_idx  (cost=0.00..63.32 rows=3071 width=0) (never executed)
+                    Index Cond: (events_2.created_at >= $1)
+        ->  Index Only Scan using events_2025_03_created_at_idx on public.events_2025_03 events_3  (cost=0.29..231.78 rows=3400 width=0) (never executed)
+              Index Cond: (events_3.created_at >= $1)
+              Heap Fetches: 0
+        ->  Index Only Scan using events_2025_04_created_at_idx on public.events_2025_04 events_4  (cost=0.29..221.85 rows=3290 width=0) (never executed)
+              Index Cond: (events_4.created_at >= $1)
+              Heap Fetches: 0
+        ->  Index Only Scan using events_2025_05_created_at_idx on public.events_2025_05 events_5  (cost=0.29..103.78 rows=3400 width=0) (never executed)
+              Index Cond: (events_5.created_at >= $1)
+              Heap Fetches: 0
+        ->  Index Only Scan using events_2025_06_created_at_idx on public.events_2025_06 events_6  (cost=0.29..97.86 rows=3290 width=0) (actual time=0.020..0.223 rows=2303 loops=1)
+              Index Cond: (events_6.created_at >= $1)
+              Heap Fetches: 0
+              Buffers: shared hit=9
+        ->  Index Only Scan using events_2025_07_created_at_idx on public.events_2025_07 events_7  (cost=0.29..103.78 rows=3400 width=0) (actual time=0.026..0.961 rows=10199 loops=1)
+              Index Cond: (events_7.created_at >= $1)
+              Heap Fetches: 0
+              Buffers: shared hit=30
+        ->  Index Only Scan using events_2025_08_created_at_idx on public.events_2025_08 events_8  (cost=0.29..103.78 rows=3400 width=0) (actual time=0.043..1.010 rows=10199 loops=1)
+              Index Cond: (events_8.created_at >= $1)
+              Heap Fetches: 0
+              Buffers: shared hit=30
+        ->  Index Only Scan using events_2025_09_created_at_idx on public.events_2025_09 events_9  (cost=0.29..97.86 rows=3290 width=0) (actual time=0.049..0.997 rows=9870 loops=1)
+              Index Cond: (events_9.created_at >= $1)
+              Heap Fetches: 0
+              Buffers: shared hit=29
+        ->  Index Only Scan using events_2025_10_created_at_idx on public.events_2025_10 events_10  (cost=0.29..99.64 rows=3392 width=0) (actual time=0.066..1.042 rows=10176 loops=1)
+              Index Cond: (events_10.created_at >= $1)
+              Heap Fetches: 0
+              Buffers: shared hit=30
+        ->  Index Only Scan using events_2025_11_created_at_idx on public.events_2025_11 events_11  (cost=0.29..97.68 rows=3280 width=0) (actual time=0.044..0.909 rows=9840 loops=1)
+              Index Cond: (events_11.created_at >= $1)
+              Heap Fetches: 0
+              Buffers: shared hit=29
+        ->  Index Only Scan using events_2025_12_created_at_idx on public.events_2025_12 events_12  (cost=0.29..99.59 rows=3389 width=0) (actual time=0.051..1.200 rows=10168 loops=1)
+              Index Cond: (events_12.created_at >= $1)
+              Heap Fetches: 0
+              Buffers: shared hit=30
+Settings: max_parallel_workers_per_gather = '0'
+Planning:
+  Buffers: shared hit=418
+Planning Time: 2.467 ms
+Execution Time: 13.949 ms

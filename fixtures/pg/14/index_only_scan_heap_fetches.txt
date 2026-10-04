@@ -1,0 +1,10 @@
+Index Only Scan using page_views_page_idx on public.page_views  (cost=0.29..274.73 rows=2122 width=4) (actual time=0.608..1.439 rows=2000 loops=1)
+  Output: page
+  Index Cond: ((page_views.page >= 10) AND (page_views.page <= 19))
+  Heap Fetches: 2200
+  Buffers: shared hit=2060
+Settings: enable_bitmapscan = 'off'
+Planning:
+  Buffers: shared hit=81
+Planning Time: 0.386 ms
+Execution Time: 1.557 ms

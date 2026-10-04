@@ -1,0 +1,17 @@
+Seq Scan on public.orders  (cost=4917.01..9834.01 rows=66667 width=10) (actual time=34.762..63.189 rows=1000 loops=1)
+  Output: orders.id, orders.amount
+  Filter: (orders.amount > $0)
+  Rows Removed by Filter: 199000
+  Buffers: shared hit=4834
+  InitPlan 1 (returns $0)
+    ->  Aggregate  (cost=4917.00..4917.01 rows=1 width=32) (actual time=34.726..34.728 rows=1 loops=1)
+          Output: (avg(orders_1.amount) * 1.99)
+          Buffers: shared hit=2417
+          ->  Seq Scan on public.orders orders_1  (cost=0.00..4417.00 rows=200000 width=6) (actual time=0.003..12.899 rows=200000 loops=1)
+                Output: orders_1.id, orders_1.customer_id, orders_1.status, orders_1.created_at, orders_1.amount, orders_1.note
+                Buffers: shared hit=2417
+Settings: max_parallel_workers_per_gather = '0'
+Planning:
+  Buffers: shared hit=81
+Planning Time: 0.312 ms
+Execution Time: 63.285 ms

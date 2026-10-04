@@ -1,0 +1,8 @@
+Seq Scan on public.orders  (cost=0.00..4917.00 rows=10 width=64) (actual rows=10 loops=1)
+  Output: id, customer_id, status, created_at, amount, note
+  Filter: (orders.customer_id = 4242)
+  Rows Removed by Filter: 199990
+  Buffers: shared hit=2417
+Settings: max_parallel_workers_per_gather = '0'
+Planning Time: 0.354 ms
+Execution Time: 13.583 ms

@@ -1,0 +1,11 @@
+Aggregate  (cost=5417.00..5417.01 rows=1 width=40) (actual time=37.337..37.339 rows=1 loops=1)
+  Output: count(*), sum(amount)
+  Buffers: shared hit=1455 read=962
+  I/O Timings: read=1.637
+  ->  Seq Scan on public.orders  (cost=0.00..4417.00 rows=200000 width=6) (actual time=0.024..14.109 rows=200000 loops=1)
+        Output: id, customer_id, status, created_at, amount, note
+        Buffers: shared hit=1455 read=962
+        I/O Timings: read=1.637
+Settings: max_parallel_workers_per_gather = '0'
+Planning Time: 0.298 ms
+Execution Time: 37.406 ms

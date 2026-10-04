@@ -1,0 +1,16 @@
+Bitmap Heap Scan on public.orders  (cost=13.49..1376.71 rows=580 width=64) (actual time=0.128..1.527 rows=546 loops=1)
+  Output: id, customer_id, status, created_at, amount, note
+  Recheck Cond: ((orders.created_at < '2024-01-02 00:00:00+00'::timestamp with time zone) OR (orders.created_at >= '2025-12-30 00:00:00+00'::timestamp with time zone))
+  Heap Blocks: exact=275
+  Buffers: shared hit=282
+  ->  BitmapOr  (cost=13.49..13.49 rows=581 width=0) (actual time=0.077..0.079 rows=0 loops=1)
+        Buffers: shared hit=7
+        ->  Bitmap Index Scan on orders_created_at_idx  (cost=0.00..6.68 rows=301 width=0) (actual time=0.049..0.050 rows=273 loops=1)
+              Index Cond: (orders.created_at < '2024-01-02 00:00:00+00'::timestamp with time zone)
+              Buffers: shared hit=3
+        ->  Bitmap Index Scan on orders_created_at_idx  (cost=0.00..6.52 rows=280 width=0) (actual time=0.026..0.027 rows=273 loops=1)
+              Index Cond: (orders.created_at >= '2025-12-30 00:00:00+00'::timestamp with time zone)
+              Buffers: shared hit=4
+Settings: max_parallel_workers_per_gather = '0'
+Planning Time: 0.621 ms
+Execution Time: 1.673 ms

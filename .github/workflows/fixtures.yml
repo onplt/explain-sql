@@ -1,0 +1,37 @@
+name: Fixtures
+
+# Regenerates the EXPLAIN fixture corpus on a GitHub runner and uploads it as
+# an artifact. Timings differ on every run, so the result is reviewed and
+# committed by hand rather than pushed automatically.
+
+on:
+  workflow_dispatch:
+    inputs:
+      versions:
+        description: PostgreSQL major versions, comma-separated
+        required: false
+        default: "12,13,14,15,16,17,18"
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Generate the corpus
+        env:
+          VERSIONS: ${{ inputs.versions }}
+        run: cargo xtask gen-fixtures --versions "$VERSIONS"
+      - name: Check the corpus
+        run: cargo xtask check-fixtures
+      - uses: actions/upload-artifact@v5
+        with:
+          name: fixtures-pg
+          path: fixtures/pg

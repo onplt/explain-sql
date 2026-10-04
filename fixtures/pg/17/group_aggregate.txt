@@ -1,0 +1,17 @@
+GroupAggregate  (cost=1834.77..1984.87 rows=10 width=11) (actual time=5.641..7.620 rows=10 loops=1)
+  Output: country, count(*)
+  Group Key: customers.country
+  Buffers: shared hit=209
+  ->  Sort  (cost=1834.77..1884.77 rows=20000 width=3) (actual time=5.419..6.141 rows=20000 loops=1)
+        Output: country
+        Sort Key: customers.country
+        Sort Method: quicksort  Memory: 769kB
+        Buffers: shared hit=209
+        ->  Seq Scan on public.customers  (cost=0.00..406.00 rows=20000 width=3) (actual time=0.009..1.559 rows=20000 loops=1)
+              Output: country
+              Buffers: shared hit=206
+Settings: enable_hashagg = 'off', max_parallel_workers_per_gather = '0'
+Planning:
+  Buffers: shared hit=76
+Planning Time: 0.299 ms
+Execution Time: 7.741 ms

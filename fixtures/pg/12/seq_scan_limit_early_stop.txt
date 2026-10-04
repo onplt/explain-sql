@@ -1,0 +1,10 @@
+Limit  (cost=0.00..5.03 rows=10 width=64) (actual time=0.026..0.043 rows=10 loops=1)
+  Output: id, customer_id, status, created_at, amount, note
+  Buffers: shared hit=3
+  ->  Seq Scan on public.orders  (cost=0.00..4917.00 rows=9780 width=64) (actual time=0.024..0.036 rows=10 loops=1)
+        Output: id, customer_id, status, created_at, amount, note
+        Filter: (orders.status = 'pending'::text)
+        Rows Removed by Filter: 184
+        Buffers: shared hit=3
+Planning Time: 0.519 ms
+Execution Time: 0.076 ms

@@ -1,0 +1,123 @@
+[
+  {
+    "Plan": {
+      "Node Type": "Limit",
+      "Parallel Aware": false,
+      "Async Capable": false,
+      "Startup Cost": 0.59,
+      "Total Cost": 11.48,
+      "Plan Rows": 100,
+      "Plan Width": 64,
+      "Actual Startup Time": 0.248,
+      "Actual Total Time": 0.502,
+      "Actual Rows": 100,
+      "Actual Loops": 1,
+      "Output": ["id", "customer_id", "status", "created_at", "amount", "note"],
+      "Shared Hit Blocks": 115,
+      "Shared Read Blocks": 0,
+      "Shared Dirtied Blocks": 0,
+      "Shared Written Blocks": 0,
+      "Local Hit Blocks": 0,
+      "Local Read Blocks": 0,
+      "Local Dirtied Blocks": 0,
+      "Local Written Blocks": 0,
+      "Temp Read Blocks": 0,
+      "Temp Written Blocks": 0,
+      "I/O Read Time": 0.000,
+      "I/O Write Time": 0.000,
+      "Plans": [
+        {
+          "Node Type": "Incremental Sort",
+          "Parent Relationship": "Outer",
+          "Parallel Aware": false,
+          "Async Capable": false,
+          "Startup Cost": 0.59,
+          "Total Cost": 21788.88,
+          "Plan Rows": 200000,
+          "Plan Width": 64,
+          "Actual Startup Time": 0.246,
+          "Actual Total Time": 0.491,
+          "Actual Rows": 100,
+          "Actual Loops": 1,
+          "Output": ["id", "customer_id", "status", "created_at", "amount", "note"],
+          "Sort Key": ["orders.created_at", "orders.id"],
+          "Presorted Key": ["orders.created_at"],
+          "Full-sort Groups": {
+            "Group Count": 4,
+            "Sort Methods Used": ["quicksort"],
+            "Sort Space Memory": {
+              "Average Sort Space Used": 29,
+              "Peak Sort Space Used": 29
+            }
+          },
+          "Shared Hit Blocks": 115,
+          "Shared Read Blocks": 0,
+          "Shared Dirtied Blocks": 0,
+          "Shared Written Blocks": 0,
+          "Local Hit Blocks": 0,
+          "Local Read Blocks": 0,
+          "Local Dirtied Blocks": 0,
+          "Local Written Blocks": 0,
+          "Temp Read Blocks": 0,
+          "Temp Written Blocks": 0,
+          "I/O Read Time": 0.000,
+          "I/O Write Time": 0.000,
+          "Plans": [
+            {
+              "Node Type": "Index Scan",
+              "Parent Relationship": "Outer",
+              "Parallel Aware": false,
+              "Async Capable": false,
+              "Scan Direction": "Forward",
+              "Index Name": "orders_created_at_idx",
+              "Relation Name": "orders",
+              "Schema": "public",
+              "Alias": "orders",
+              "Startup Cost": 0.42,
+              "Total Cost": 14664.30,
+              "Plan Rows": 200000,
+              "Plan Width": 64,
+              "Actual Startup Time": 0.026,
+              "Actual Total Time": 0.437,
+              "Actual Rows": 102,
+              "Actual Loops": 1,
+              "Output": ["id", "customer_id", "status", "created_at", "amount", "note"],
+              "Shared Hit Blocks": 105,
+              "Shared Read Blocks": 0,
+              "Shared Dirtied Blocks": 0,
+              "Shared Written Blocks": 0,
+              "Local Hit Blocks": 0,
+              "Local Read Blocks": 0,
+              "Local Dirtied Blocks": 0,
+              "Local Written Blocks": 0,
+              "Temp Read Blocks": 0,
+              "Temp Written Blocks": 0,
+              "I/O Read Time": 0.000,
+              "I/O Write Time": 0.000
+            }
+          ]
+        }
+      ]
+    },
+    "Settings": {
+    },
+    "Planning": {
+      "Shared Hit Blocks": 130,
+      "Shared Read Blocks": 0,
+      "Shared Dirtied Blocks": 0,
+      "Shared Written Blocks": 0,
+      "Local Hit Blocks": 0,
+      "Local Read Blocks": 0,
+      "Local Dirtied Blocks": 0,
+      "Local Written Blocks": 0,
+      "Temp Read Blocks": 0,
+      "Temp Written Blocks": 0,
+      "I/O Read Time": 0.000,
+      "I/O Write Time": 0.000
+    },
+    "Planning Time": 0.395,
+    "Triggers": [
+    ],
+    "Execution Time": 0.538
+  }
+]

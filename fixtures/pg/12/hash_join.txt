@@ -1,0 +1,22 @@
+HashAggregate  (cost=6598.11..6598.21 rows=10 width=11) (actual time=112.876..112.880 rows=10 loops=1)
+  Output: c.country, count(*)
+  Group Key: c.country
+  Buffers: shared hit=2626
+  ->  Hash Join  (cost=656.00..5598.11 rows=200000 width=3) (actual time=5.224..82.895 rows=200000 loops=1)
+        Output: c.country
+        Inner Unique: true
+        Hash Cond: (o.customer_id = c.id)
+        Buffers: shared hit=2626
+        ->  Seq Scan on public.orders o  (cost=0.00..4417.00 rows=200000 width=4) (actual time=0.013..13.579 rows=200000 loops=1)
+              Output: o.id, o.customer_id, o.status, o.created_at, o.amount, o.note
+              Buffers: shared hit=2417
+        ->  Hash  (cost=406.00..406.00 rows=20000 width=7) (actual time=4.935..4.936 rows=20000 loops=1)
+              Output: c.country, c.id
+              Buckets: 32768  Batches: 1  Memory Usage: 1038kB
+              Buffers: shared hit=206
+              ->  Seq Scan on public.customers c  (cost=0.00..406.00 rows=20000 width=7) (actual time=0.013..1.992 rows=20000 loops=1)
+                    Output: c.country, c.id
+                    Buffers: shared hit=206
+Settings: max_parallel_workers_per_gather = '0'
+Planning Time: 0.563 ms
+Execution Time: 113.077 ms

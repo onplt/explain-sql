@@ -1,0 +1,12 @@
+Delete on public.orders  (cost=0.42..8.77 rows=0 width=0) (actual time=0.122..0.123 rows=0.00 loops=1)
+  Buffers: shared hit=47
+  ->  Index Scan using orders_pkey on public.orders  (cost=0.42..8.77 rows=20 width=6) (actual time=0.005..0.010 rows=20.00 loops=1)
+        Output: ctid
+        Index Cond: (orders.id > 199980)
+        Index Searches: 1
+        Buffers: shared hit=4
+Planning:
+  Buffers: shared hit=91
+Planning Time: 0.594 ms
+Trigger RI_ConstraintTrigger_a_16437 for constraint order_items_order_id_fkey: time=330.865 calls=20
+Execution Time: 331.076 ms

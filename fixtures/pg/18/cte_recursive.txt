@@ -1,0 +1,18 @@
+Aggregate  (cost=3.34..3.35 rows=1 width=8) (actual time=1.026..1.027 rows=1.00 loops=1)
+  Output: count(*)
+  CTE series
+    ->  Recursive Union  (cost=0.00..2.64 rows=31 width=4) (actual time=0.003..0.546 rows=1000.00 loops=1)
+          Storage: Memory  Maximum Storage: 33kB
+          ->  Result  (cost=0.00..0.01 rows=1 width=4) (actual time=0.001..0.002 rows=1.00 loops=1)
+                Output: 1
+          ->  WorkTable Scan on series series_1  (cost=0.00..0.23 rows=3 width=4) (actual time=0.000..0.000 rows=1.00 loops=1000)
+                Output: (series_1.n + 1)
+                Filter: (series_1.n < 1000)
+                Rows Removed by Filter: 0
+  ->  CTE Scan on series  (cost=0.00..0.62 rows=31 width=0) (actual time=0.005..0.946 rows=1000.00 loops=1)
+        Output: series.n
+        Storage: Memory  Maximum Storage: 48kB
+Planning:
+  Buffers: shared hit=3
+Planning Time: 0.339 ms
+Execution Time: 1.157 ms
