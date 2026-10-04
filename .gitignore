@@ -1,1 +1,3 @@
 /target
+# Job logs written by cargo fuzz run -jobs=N
+/fuzz-*.log

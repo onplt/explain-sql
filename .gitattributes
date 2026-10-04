@@ -4,3 +4,5 @@ fixtures/pg/** linguist-generated=true
 fixtures/pg/** text eol=lf
 fixtures/scenarios/*.sql text eol=lf
 fixtures/schema.sql text eol=lf
+# Captured psql output and log files: byte-for-byte as captured.
+fixtures/inputs/** text eol=lf

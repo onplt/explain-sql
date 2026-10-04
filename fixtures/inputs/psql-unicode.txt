@@ -1,0 +1,15 @@
+                                                          QUERY PLAN                                                           
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ GroupAggregate  (cost=0.29..74.28 rows=100 width=12) (actual time=0.180..0.388 rows=10 loops=1)
+   Group Key: grp
+   Buffers: shared hit=4
+   ->  Index Only Scan using t_grp_idx on t  (cost=0.29..63.28 rows=2000 width=4) (actual time=0.151..0.260 rows=2000 loops=1)
+         Index Cond: (grp < 10)
+         Heap Fetches: 0
+         Buffers: shared hit=4
+ Planning:
+   Buffers: shared hit=64
+ Planning Time: 0.378 ms
+ Execution Time: 0.598 ms
+(11 rows)
+

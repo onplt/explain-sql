@@ -6,10 +6,11 @@ Real `EXPLAIN` output captured from PostgreSQL 12–18. The parsers, the metrics
 fixtures/
 ├─ schema.sql               # deterministic dataset, loaded once per server
 ├─ scenarios/<name>.sql     # one statement plus header directives per scenario
-└─ pg/<major>/
-   ├─ <name>.json           # EXPLAIN (…, FORMAT JSON)
-   ├─ <name>.txt            # EXPLAIN (…, FORMAT TEXT)
-   └─ manifest.json         # server version, JIT availability, status of every scenario
+├─ pg/<major>/
+│  ├─ <name>.json           # EXPLAIN (…, FORMAT JSON)
+│  ├─ <name>.txt            # EXPLAIN (…, FORMAT TEXT)
+│  └─ manifest.json         # server version, JIT availability, status of every scenario
+└─ inputs/                  # one plan in the forms it is pasted or logged in (see below)
 ```
 
 ## Regenerating
@@ -35,6 +36,31 @@ The `Fixtures` GitHub workflow (run manually) does the same on a GitHub runner a
 - **Different on every run:** timings, the split between buffer hits and reads, I/O timings, parallel worker distribution.
 - JSON and text come from two separate executions. They agree on plan shape, estimates and row counts, but not on timings.
 - OIDs in trigger names (such as `RI_ConstraintTrigger_a_16417`) can differ between major versions.
+
+## Captured inputs
+
+Plans rarely arrive as clean `EXPLAIN` output: they come from psql in one of its output formats, or from a server log. `inputs/` holds a single plan in each of these forms, all captured from one PostgreSQL 16 server for the same query:
+
+```sql
+SELECT grp, count(*)
+FROM t
+WHERE grp < 10
+GROUP BY grp
+ORDER BY grp
+```
+
+| Files | Captured with |
+|---|---|
+| `reference.txt`, `reference.json` | `psql -X -At -c "EXPLAIN (ANALYZE, BUFFERS) …"`, and the same with `FORMAT JSON` |
+| `psql-aligned.txt`, `psql-aligned-json.txt` | psql's default aligned output |
+| `psql-unicode.txt`, `psql-unicode-json.txt` | `-P linestyle=unicode` |
+| `psql-border2.txt` | `-P border=2` |
+| `psql-wrapped.txt` | `-P format=wrapped -P columns=60` |
+| `psql-expanded.txt`, `psql-expanded-json.txt` | `-x` |
+| `auto_explain-text.log`, `auto_explain-json.log` | `auto_explain` (`log_analyze`, `log_buffers`, `log_min_duration = 0`) in the stderr log, with `log_format` text and json |
+| `jsonlog-text.json`, `jsonlog-json.json` | the same entries in the `jsonlog` log (`log_destination = 'stderr,jsonlog'`) |
+
+`crates/explainsql-core/tests/inputs.rs` requires every file to parse, without warnings, into the same tree as `reference.txt`, and the log entries to keep their query text. Unlike `pg/`, these files are not produced by `xtask`. To cover another form, capture it from a real server, add it here and add it to the test.
 
 ## Scenario files
 

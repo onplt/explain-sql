@@ -11,6 +11,7 @@ repository.workspace = true
 explainsql-core.workspace = true
 explainsql-db.workspace = true
 explainsql-tui.workspace = true
+serde_json.workspace = true
 
 [lints]
 workspace = true

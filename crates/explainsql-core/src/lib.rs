@@ -5,5 +5,17 @@
 //! compiled to WebAssembly and tested deterministically. See
 //! `docs/ARCHITECTURE.md` for the design.
 //!
-//! Nothing is implemented yet. The parsers arrive in Phase 1 of the roadmap and
-//! are developed against the fixture corpus in `fixtures/`.
+//! ```
+//! let plan = explainsql_core::parse(
+//!     "Seq Scan on orders  (cost=0.00..4917.00 rows=10 width=64) (actual time=1.2..12.6 rows=10 loops=1)\n  Filter: (customer_id = 4242)\n  Rows Removed by Filter: 199990",
+//! )
+//! .unwrap();
+//! assert_eq!(plan.root().node_type, "Seq Scan");
+//! assert_eq!(plan.root().relation_name.as_deref(), Some("orders"));
+//! assert_eq!(plan.root().rows_removed_by_filter, 199990.0);
+//! ```
+
+pub mod ir;
+pub mod pg;
+
+pub use pg::{ParseError, parse};
