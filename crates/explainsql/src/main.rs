@@ -12,8 +12,8 @@ Usage: explainsql --debug-parse [--json] [FILE]
 
 Reads a PostgreSQL EXPLAIN plan from FILE or standard input and prints what
 the parser understood: the plan tree, the statement summary and any warnings.
-The plan can be JSON or text, and may still be wrapped in psql output, an
-auto_explain log entry or a Markdown code fence.
+The plan can be JSON or text, and may still be wrapped in psql output, a
+server log entry, cells copied from a GUI client or a Markdown code fence.
 
   --json   print the parsed plan as JSON instead
 ";

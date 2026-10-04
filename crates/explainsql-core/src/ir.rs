@@ -505,8 +505,8 @@ pub enum Wrapper {
     PsqlExpanded,
     /// psql's wrapped output, whose long lines were joined back.
     PsqlWrapped,
-    /// Result cells in double quotes, as GUI clients such as pgAdmin and
-    /// DataGrip, and psql's CSV format, copy them.
+    /// Result cells in double quotes, as GUI clients such as pgAdmin, and
+    /// psql's CSV format, copy them.
     QuotedCells,
 }
 

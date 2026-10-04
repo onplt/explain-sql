@@ -1,6 +1,6 @@
 # Architecture
 
-This document describes the planned design. Nothing here is implemented yet; it will be updated as the code lands.
+This document describes the design. The plan IR and the parsers are implemented (Phase 1); everything from [Metrics](#metrics-inclusive-and-exclusive-time) onwards is still planned, and this document will be updated as that code lands.
 
 ## Technology choice: Rust, Ratatui and Crossterm
 
@@ -26,18 +26,24 @@ explain-sql/
 ├─ Cargo.toml                    # workspace, shared lints and profiles
 ├─ crates/
 │  ├─ explainsql-core/           # no I/O, no async, WASM-compatible
-│  │  └─ src/{ir/, pg/{sniff,normalize,json,text,lower}.rs, metrics/, rules/, advisor/, expr/}
+│  │  ├─ src/ir.rs               # the plan IR
+│  │  ├─ src/pg/                 # PostgreSQL front end: normalize, json, text, raw, lower
+│  │  └─ tests/                  # corpus, captured inputs, text-format cases, robustness
 │  ├─ explainsql-db/             # tokio-postgres + rustls: safe executor, catalog reader, HypoPG/rollback prover
 │  ├─ explainsql-tui/            # Ratatui app: state, views, keymap, theme
 │  └─ explainsql/                # binary: clap CLI, mode dispatch (tui | print | pager | json)
 ├─ fixtures/
 │  ├─ schema.sql                 # deterministic dataset
 │  ├─ scenarios/<name>.sql       # one statement plus expectations (rules, advice) per scenario
-│  └─ pg/{12..18}/               # generated plans: <name>.json, <name>.txt, manifest.json
+│  ├─ pg/{12..18}/               # generated plans: <name>.json, <name>.txt, manifest.json
+│  └─ inputs/                    # one plan in each form it arrives in: psql output, server logs
+├─ fuzz/                         # cargo-fuzz target for the parsers (its own workspace; needs nightly)
 ├─ docs/rules/                   # one page per rule
 ├─ xtask/                        # gen-fixtures and check-fixtures; later an anonymizer and release helpers
 └─ .github/workflows/            # ci, fixtures, release
 ```
+
+Not there yet: the `metrics`, `rules`, `advisor` and `expr` modules of `core`, the contents of `explainsql-db` and `explainsql-tui` (empty placeholders for now), `docs/rules/` and the release workflow. Until then, the binary has a single developer option, `--debug-parse`, which prints what the parsers made of an input.
 
 We use four crates and no more. Keeping `core` free of I/O is required for WebAssembly and for fast, deterministic tests; finer splits would slow down early development.
 
@@ -45,39 +51,55 @@ Process model: `core` is synchronous and pure. The TUI talks to the database lay
 
 ## Plan IR
 
-Plans are stored in an arena: nodes live in a `Vec<Node>` and refer to each other through `NodeId(u32)` indices. This avoids ownership problems with parent pointers, is cache-friendly and serializes trivially.
+Plans are stored in an arena: nodes live in a `Vec<Node>` and refer to each other through `NodeId(u32)` indices. This avoids ownership problems with parent pointers, is cache-friendly and serializes trivially. Code that walks the tree does so iteratively, so a deep plan cannot overflow the stack.
 
 ```rust
+pub struct Plan {
+    pub nodes: Vec<Node>,                   // nodes[0] is the root; a node's id is its index
+    pub summary: Summary,                   // planning and execution time, triggers, JIT, settings, ...
+    pub source: Source,                     // JSON or text, and the wrappers removed (psql table, log entry, ...)
+    pub warnings: Vec<Warning>,             // problems found while parsing; the plan is usable despite them
+}
+
 pub struct Node {
-    pub kind: NodeKind,              // SeqScan, HashJoin, ..., Custom(String)
-    pub rel: Relationship,           // Outer | Inner | Member | InitPlan | SubPlan | Subquery
-    pub subplan_name: Option<String>,
+    pub id: NodeId,
     pub parent: Option<NodeId>,
     pub children: Vec<NodeId>,
-    pub est: Estimates,              // cost, rows, width
-    pub act: Option<Actuals>,        // per-loop time/rows + loops; None = no ANALYZE or never executed
-    pub buffers: Option<Buffers>,    // TOTALS across loops, not per loop
-    pub predicates: Vec<Predicate>,  // Filter, Index Cond, Hash Cond, ... (raw text, parsed lazily)
-    pub extra: BTreeMap<String, serde_json::Value>, // unknown keys are never dropped
-    pub derived: Derived,            // inclusive/exclusive time, share of total, misestimate factor
+    pub node_type: String,                  // PostgreSQL's name: "Seq Scan", "Hash Join", "Aggregate", ...
+    pub relationship: Option<Relationship>, // Outer | Inner | Member | InitPlan | SubPlan | Subquery
+    pub subplan_name: Option<String>,       // "InitPlan 1", "SubPlan 2", "CTE totals"
+    pub join_type: Option<String>,          // likewise strategy, operation, relation, index, alias, ...
+    pub estimates: Option<Estimates>,       // cost, rows, width; None with COSTS OFF
+    pub actuals: Option<Actuals>,           // per-loop time and rows, plus loops; None without ANALYZE
+    pub buffers: Option<Buffers>,           // TOTALS across loops, not per loop (likewise io_timings, wal)
+    pub predicates: Vec<Predicate>,         // Index Cond, Hash Cond, Filter, ... as raw text
+    pub workers: Vec<Worker>,               // per-worker figures of parallel nodes
+    pub extra: BTreeMap<String, serde_json::Value>, // every other property, under its JSON name
+    // ...plus output columns, sort and group keys, rows removed by filters, workers planned and launched
 }
 ```
 
-Every metric carries its provenance (`Measured`, `Estimated`, `Derived` or `Unknown`), so the UI never presents a guess as a measurement.
+- **Typed fields cover what later phases rely on; everything else is kept.** Other properties stay in `extra` under their PostgreSQL JSON names (`Heap Fetches`, `Sort Method`, `Hash Buckets`, ...), and the statement-level sections (planning, triggers, JIT, serialization) keep their unfamiliar keys the same way. Nothing in the input is lost, and properties added by future server versions show up without code changes.
+- **Node types are strings, not an enum.** Extensions and forks add their own (Citus and TimescaleDB custom scans, Greenplum's `Motion`), and code that cares matches on the names it knows.
+- **Absent and zero mean the same.** The text format leaves out zero counters and false flags, so the IR does too, whichever format a plan came from: all-zero buffers become `None`, a zero `Subplans Removed` is dropped, and so on. This is what lets the JSON and text forms of a plan lower to identical IR.
+- **Derived metrics live beside the IR.** Inclusive and exclusive time, shares of the total and misestimate factors will be computed by the metrics engine (Phase 2) and indexed by `NodeId`. Every derived value will carry its provenance (`Measured`, `Estimated`, `Derived` or `Unknown`), so the UI never presents a guess as a measurement.
 
-The IR is engine-agnostic. PostgreSQL-specific details live in the `pg` module and are lowered into the IR; a future MySQL front end would do the same.
+The IR uses PostgreSQL's vocabulary, since PostgreSQL is the only engine for now, but its structure (arena, estimates, actuals, predicates, `extra`) is engine-neutral. A future MySQL front end would lower into the same IR, as the `pg` module does.
 
 ## Parsing pipeline
 
 ```
-input ─▶ sniff() ─▶ normalize() ─▶ parse_json() | parse_text() ─▶ PgPlan ─▶ lower() ─▶ Plan IR ─▶ analyze()
+input ─▶ normalize() ─┬─▶ json::parse() ─┬─▶ raw tree ─▶ lower() ─▶ Plan
+                      └─▶ text::parse() ─┘
 ```
 
-- **JSON is the primary format and the source of truth.** When connected, we always request `EXPLAIN (ANALYZE, BUFFERS, VERBOSE, SETTINGS, FORMAT JSON)`, with the options adjusted to the server version.
+- **JSON is the primary format and the source of truth.** When connected, we will always request `EXPLAIN (ANALYZE, BUFFERS, VERBOSE, SETTINGS, FORMAT JSON)`, with the options adjusted to the server version.
 - **The text format is supported from v0.1.** It is the default in psql and in `auto_explain`, and most plans shared in issues and chats are text. Accepting only JSON would turn away a large share of users on their first try.
-- **No parser generator.** The text parser is hand-written: an indentation stack, a line classifier (node header, property line, or a section such as `Planning:`, `JIT:`, `Triggers:` or `Settings:`) and targeted regular expressions. It must tolerate damaged input.
-- **Normalization** strips the wrappers that real plans arrive in: psql's aligned output (the `QUERY PLAN` header, `+` continuation markers and the `(N rows)` footer), `auto_explain` log lines with a `log_line_prefix`, CSV and JSON logs, copies from GUI clients, Markdown code fences, CRLF line endings and truncated plans.
-- **Never fail hard.** Unknown properties are kept in `extra` and shown generically. If only part of a plan can be parsed, that part is rendered along with a warning.
+- **`normalize()`** removes what surrounds a plan and tells JSON (input starting with `[` or `{`) from text. It handles psql's aligned output (ASCII and Unicode line styles, borders 0–2, `+` and `↵` continuation marks, the `(N rows)` footer) as well as its wrapped, expanded and CSV formats; `auto_explain` entries in stderr logs (whatever the `log_line_prefix`), `jsonlog` and `csvlog`, keeping the logged query text; result cells copied in double quotes, as GUI clients such as pgAdmin copy them; Markdown code fences; prompts and other text before a plan; shared indentation; and byte order marks, CRLF line endings and non-breaking spaces. Wrappers can nest (a fenced log excerpt), and each one removed is recorded in `Plan::source`.
+- **Both parsers build the same raw tree:** nodes holding their properties under PostgreSQL's JSON names. The JSON parser reads it off directly. The text parser translates each line into those names: `Buffers: shared hit=5 read=2` becomes `Shared Hit Blocks` and `Shared Read Blocks`, and `Sort Method: quicksort  Memory: 25kB` becomes `Sort Method`, `Sort Space Type` and `Sort Space Used`. One lowering step then serves both formats, and comparing them is direct.
+- **The text parser is hand-written**, with no regular expressions and no parser generator. An indentation stack follows the layout rules of PostgreSQL's `explain.c`: a node's properties start two columns to the right of its name, a child's `->` arrow sits in its parent's property column, and an `InitPlan`, `SubPlan` or `CTE` label sits in the property column with its node two columns further in. Lines after the tree that start in column 0 belong to the statement (`Planning:`, triggers, `JIT:`, `Settings:`, `Execution Time`, ...). Text plans do not print relationships; they are inferred from the parent's type and the child's position.
+- **`lower()`** builds the typed IR, absorbing version drift (below) and the differences that only reflect how a plan was printed.
+- **Never fail hard.** Unfamiliar properties are kept in `extra`. In text plans they also produce a warning, and a line that cannot be read at all is kept verbatim in `extra["Unparsed Lines"]`. A truncated JSON plan is closed after its last complete value, and a truncated text plan keeps the nodes before the cut. Input holding several plans, such as a before-and-after pair, yields the first one and a warning. Only input with no plan in it is rejected, with one exception: serde_json parses recursively, so JSON nested deeper than 512 levels (255 plan levels) is refused rather than risking the stack. Text plans have no depth limit.
 - **Not supported:** the YAML and XML formats.
 
 ### Version and fork drift (examples)
@@ -89,11 +111,16 @@ input ─▶ sniff() ─▶ normalize() ─▶ parse_json() | parse_text() ─�
 - PostgreSQL 18: `BUFFERS` is on by default with `ANALYZE`; actual row counts are always printed with two decimals (`rows=10.00`, and `"Actual Rows": 10.00` in JSON, so parsers must read them as floats); `Index Searches`; `Disabled: true` on nodes the planner had to use despite an `enable_*` setting. Older versions add a huge `disable_cost` of 1e10 instead, which a naive tool mistakes for the most expensive node.
 - Extensions and forks: `Custom Scan` nodes (Citus, TimescaleDB), `Motion` nodes (Greenplum). Unknown node types are rendered generically, never rejected.
 
+The parsers handle all of the above for PostgreSQL 12–18, and the corpus covers every version. The corpus also surfaced drift that is easy to miss: the source of an `INSERT`, `UPDATE` or `DELETE` is a `Member` of `ModifyTable` up to PostgreSQL 13 and its `Outer` child from 14; JIT generation time becomes an object with a separate `Deform` part in 17; and PostgreSQL 12 labels the leader's JIT figures as worker −1. `lower()` maps each of these, like the renamed I/O timing keys, to a single form.
+
 ### Testing the parsers
 
-- Every fixture is generated from a real PostgreSQL server (Docker, versions 12–18) in both JSON and text form; see [fixtures/README.md](../fixtures/README.md). The two forms come from separate executions, so differential testing requires both parsers to produce the same plan shape, estimates and row counts, while timings and buffer counts may differ.
-- Parsers are fuzzed with `cargo-fuzz`.
-- The IR and the rendered output are snapshot-tested with `insta`.
+- **Fixture corpus** (`tests/corpus.rs`): all 882 generated plans parse without a single warning, and for each of the 441 scenario–version pairs the JSON and text forms lower to the same IR: tree shape, node types and relationships, every typed property, estimates, actual rows and loops, and everything in `extra`. The two forms come from separate executions (see [fixtures/README.md](../fixtures/README.md)), so timings, buffer counts and per-worker figures are not compared, and two kinds of values are excluded on principle: memory figures of nodes below a `Gather`, which depend on how much of the work the leader did, and estimates of data-modifying statements, because rolled-back writes still grow the table and the planner scales its estimates by the table's current size. A guard test checks that the comparison does notice changed values.
+- **Captured inputs** (`tests/inputs.rs`, [`fixtures/inputs/`](../fixtures/inputs)): one query's plan, captured from a real server in every form it arrives in (psql's aligned, Unicode, bordered, wrapped, expanded and CSV output, in text and JSON; `auto_explain` entries in stderr, `jsonlog` and `csvlog` logs), must yield the same tree as the plain text plan. Generated variants add cells copied from GUI clients, Markdown fences, CRLF, prompts, indentation, non-breaking spaces, truncation, several plans in one input, and inputs that must be rejected.
+- **Constructs the corpus does not reach** (`tests/text_format.rs`, `tests/unknown_properties.rs`): other join, aggregate and set-operation variants, quoted identifiers, foreign and custom scans, compound property lines, the statement summary, and unfamiliar properties at every level of both formats.
+- **Robustness** (`tests/robustness.rs`): thousands of truncated and mutated corpus plans, and pathological input (1,500 levels of indentation, a 20,000-child `Append`, JSON nested 100,000 levels deep, malformed fragments of every construct), must never cause a panic.
+- **Fuzzing** (`fuzz/`): `cargo +nightly fuzz run parse`, seeded with the corpus and the captured inputs. The Phase 1 exit criterion is one hour on three workers without a crash.
+- **Snapshots:** the IR and the rendered output will be snapshot-tested with `insta` once there is rendered output to check (Phase 2).
 
 ## Metrics: inclusive and exclusive time
 

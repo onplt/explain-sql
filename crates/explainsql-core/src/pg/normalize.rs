@@ -4,8 +4,8 @@
 //! Handled: Markdown code fences; auto_explain entries in jsonlog, csvlog and
 //! stderr logs; psql's aligned output (ASCII and Unicode line styles,
 //! borders 0 to 2, `+`/`↵` continuation marks, wrapped lines); psql's
-//! expanded output; result cells copied in double quotes (pgAdmin, DataGrip,
-//! psql's CSV format); prompts and other text before a text plan; CRLF line
+//! expanded output; result cells copied in double quotes (pgAdmin, psql's
+//! CSV format); prompts and other text before a text plan; CRLF line
 //! endings, a byte order mark and non-breaking spaces.
 
 use serde_json::Value;
@@ -201,8 +201,8 @@ fn csv_records(text: &str) -> Vec<Vec<String>> {
 
 /// Result cells as GUI clients copy them, each in double quotes with inner
 /// quotes doubled: a text plan as one cell per line (pgAdmin quotes every
-/// line; DataGrip and psql's CSV format only lines that need it), or a JSON
-/// plan as a single cell. A `QUERY PLAN` header is dropped.
+/// line, psql's CSV format only the lines that need it), or a JSON plan as a
+/// single cell. A `QUERY PLAN` header is dropped.
 fn quoted_cells(text: &str) -> Option<String> {
     if text.trim_start().starts_with(['[', '{']) {
         // Already JSON; a lone string on a line of it is not a cell.
