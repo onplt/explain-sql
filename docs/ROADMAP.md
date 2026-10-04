@@ -53,13 +53,15 @@ Screen principles:
 
 ## Development phases
 
+Phase 0 is complete: the workspace skeleton, CI, and 65 scenarios captured on PostgreSQL 12–18 (see [fixtures/README.md](../fixtures/README.md)). Phase 1 is next.
+
 | Phase | Estimate | Scope | Exit criteria |
 |---|---|---|---|
 | 0: Fixture corpus | 1 week | Docker matrix for PostgreSQL 12–18; 40+ scenarios (parallel, CTE, InitPlan, partitions, FK triggers, disk spills, JIT, nested loops, Memoize), each captured as JSON and text; CI skeleton (fmt, `clippy -D warnings`, tests) | `cargo xtask gen-fixtures` regenerates the whole corpus with one command |
-| 1: Parsers | 2–3 weeks | sniff / normalize / JSON / text → `PgPlan` → IR | 100% of the corpus parses; JSON and text produce identical IR; one hour of fuzzing without a crash; no unknown fields lost |
+| 1: Parsers | 2–3 weeks | sniff / normalize / JSON / text → `PgPlan` → IR | 100% of the corpus parses; JSON and text produce the same plan shape, estimates and row counts; one hour of fuzzing without a crash; no unknown fields lost |
 | 2: Metrics engine | 2 weeks | Inclusive/exclusive time and buffers, parallel/CTE/trigger handling, misestimates, hotspots; rules ES001–ES012; `--print` | Within ±5% of pev2 and explain.depesz.com on 20 reference plans; stable snapshots; a quiet alpha with a few DBAs |
 | 3: TUI | 3 weeks | Layout, virtualized tree, details, findings, search, folding, theming, pager mode, `--demo` | Under 16 ms per frame on a 5,000-node plan; `TestBackend` snapshots; usable at 80×24 |
-| 4: Advisor, connected mode, proof loop | 3 weeks | Predicate parser, three patterns, negative rules, safe executor, catalog reads, HypoPG/rollback prover, before/after diff | Zero suggestions on the trap corpus; an integration test proving that data-modifying statements are never committed |
+| 4: Advisor, connected mode, proof loop | 3 weeks | Predicate parser, three patterns, negative rules, safe executor, catalog reads, HypoPG/rollback prover, before/after diff | Zero suggestions on scenarios marked `advice: none`; an integration test proving that data-modifying statements are never committed |
 | 5: Release hardening | 1–2 weeks | Release pipeline, Homebrew tap, README with a demo recording, rule documentation site, Windows smoke tests; optionally a browser playground | From a clean machine, install to a running `explainsql --demo` in under a minute |
 
 ## After v0.1

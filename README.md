@@ -2,7 +2,7 @@
 
 **Find out why your PostgreSQL query is slow, get a fix, and prove it works, without leaving the terminal.**
 
-> 🚧 **Design phase.** There is nothing to install yet. This repository currently holds the design documents. Watch the repository if you want to know when the first release ships.
+> 🚧 **Early development.** There is nothing to install yet. The repository holds the design documents, the Cargo workspace skeleton and a corpus of real `EXPLAIN` plans from PostgreSQL 12–18. Watch the repository if you want to know when the first release ships.
 
 ## What it will do
 
@@ -27,6 +27,15 @@ PostgreSQL comes first. MySQL is on the roadmap but out of scope for the first r
 - [Roadmap](docs/ROADMAP.md): v0.1 scope, user experience, development phases with exit criteria, and what comes after.
 - [Rule catalog](docs/rules.md): the planned red-flag rules (ES001–ES012).
 
+## Development
+
+```sh
+cargo test --workspace     # unit tests and the fixture corpus check
+cargo xtask gen-fixtures   # regenerate the EXPLAIN corpus (requires Docker)
+```
+
+The plan corpus and its scenario format are described in [fixtures/README.md](fixtures/README.md).
+
 ## Status
 
-Pre-alpha, design phase. Feedback on the design is welcome in the issues.
+Pre-alpha. Phase 0 (workspace skeleton, CI and the fixture corpus) is done; Phase 1 (parsers) is next. Feedback on the design is welcome in the issues.

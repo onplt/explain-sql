@@ -30,10 +30,12 @@ explain-sql/
 │  ├─ explainsql-db/             # tokio-postgres + rustls: safe executor, catalog reader, HypoPG/rollback prover
 │  ├─ explainsql-tui/            # Ratatui app: state, views, keymap, theme
 │  └─ explainsql/                # binary: clap CLI, mode dispatch (tui | print | pager | json)
-├─ fixtures/pg/{12..18}/<case>.{json,txt}   # real plans + insta snapshots
-├─ fixtures/traps/               # plans where the advisor must NOT suggest anything
+├─ fixtures/
+│  ├─ schema.sql                 # deterministic dataset
+│  ├─ scenarios/<name>.sql       # one statement plus expectations (rules, advice) per scenario
+│  └─ pg/{12..18}/               # generated plans: <name>.json, <name>.txt, manifest.json
 ├─ docs/rules/                   # one page per rule
-├─ xtask/                        # fixture generation (Docker PostgreSQL matrix), anonymizer, release helpers
+├─ xtask/                        # gen-fixtures and check-fixtures; later an anonymizer and release helpers
 └─ .github/workflows/            # ci, fixtures, release
 ```
 
@@ -84,12 +86,12 @@ input ─▶ sniff() ─▶ normalize() ─▶ parse_json() | parse_text() ─�
 - PostgreSQL 14: the `Memoize` node.
 - PostgreSQL 16: the `GENERIC_PLAN` option.
 - PostgreSQL 17: the `SERIALIZE` and `MEMORY` options; I/O timings split into shared and local; subplan outputs shown as `(InitPlan 1).col1` instead of `$0`.
-- PostgreSQL 18: `BUFFERS` is on by default with `ANALYZE`; row counts are printed with two decimals when `loops > 1`; `Index Searches`; `Disabled: true` on nodes the planner had to use despite an `enable_*` setting. Older versions add a huge `disable_cost` of 1e10 instead, which a naive tool mistakes for the most expensive node.
+- PostgreSQL 18: `BUFFERS` is on by default with `ANALYZE`; actual row counts are always printed with two decimals (`rows=10.00`, and `"Actual Rows": 10.00` in JSON, so parsers must read them as floats); `Index Searches`; `Disabled: true` on nodes the planner had to use despite an `enable_*` setting. Older versions add a huge `disable_cost` of 1e10 instead, which a naive tool mistakes for the most expensive node.
 - Extensions and forks: `Custom Scan` nodes (Citus, TimescaleDB), `Motion` nodes (Greenplum). Unknown node types are rendered generically, never rejected.
 
 ### Testing the parsers
 
-- Every fixture is generated from a real PostgreSQL server (Docker, versions 12–18) in both JSON and text form, and both parsers must produce the same IR (differential testing).
+- Every fixture is generated from a real PostgreSQL server (Docker, versions 12–18) in both JSON and text form; see [fixtures/README.md](../fixtures/README.md). The two forms come from separate executions, so differential testing requires both parsers to produce the same plan shape, estimates and row counts, while timings and buffer counts may differ.
 - Parsers are fuzzed with `cargo-fuzz`.
 - The IR and the rendered output are snapshot-tested with `insta`.
 
@@ -141,7 +143,7 @@ The advisor runs in six stages:
 5. **Apply negative rules.** The advisor makes no suggestion, and shows why, when: the table is small; selectivity is above roughly 10–20%; the node is not on the hot path; a hash join's build side needs the whole table anyway; the scan already stops early under a `Limit`; there is a cast on the column side; or the predicate is an `OR` across columns. In connected mode, candidates are compared with existing indexes using the left-prefix rule. If a suitable index already exists, the advisor explains why it was probably not used (a cast, the collation, stale statistics, selectivity) instead of suggesting a duplicate.
 6. **Report.** Each suggestion includes the DDL, a confidence level (high, medium or low), the evidence ("12 of 5,000,000 rows", "94% of runtime"), caveats ("not connected: existing indexes could not be checked", "write overhead on a hot table") and a verification status (unverified, estimated with HypoPG, or measured with rollback).
 
-Quality gate: `fixtures/traps/` contains plans where a naive advisor would make a bad suggestion. The expected result for each is "no suggestion", and precision is tracked in CI.
+Quality gate: fixture scenarios marked `advice: none` are plans where a naive advisor would make a bad suggestion. The expected result for each is "no suggestion", and precision is tracked in CI.
 
 Related work: Microsoft's AutoAdmin "what-if" indexes (Chaudhuri and Narasayya), Dexter, postgres-mcp (HypoPG with a greedy, "Anytime"-style search) and pganalyze's writing on its indexing engine.
 
