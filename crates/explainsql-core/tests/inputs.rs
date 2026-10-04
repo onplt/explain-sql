@@ -1,6 +1,7 @@
 //! Plans as they arrive in practice: psql output in its various formats,
-//! server log entries and pasted text. Every input in `fixtures/inputs` holds
-//! the same query, so each must yield the same tree as `reference.txt`.
+//! server log entries, copied result cells and pasted text. Every input in
+//! `fixtures/inputs` holds the same query, so each must yield the same tree
+//! as `reference.txt`.
 
 mod common;
 
@@ -23,8 +24,10 @@ fn assert_same_tree(name: &str, plan: &Plan) {
 
 #[test]
 fn every_captured_input_yields_the_reference_tree() {
-    use Wrapper::{AutoExplainLog, JsonLog, PsqlExpanded, PsqlTable, PsqlWrapped};
-    let cases: [(&str, Format, &[Wrapper]); 13] = [
+    use Wrapper::{
+        AutoExplainLog, CsvLog, JsonLog, PsqlExpanded, PsqlTable, PsqlWrapped, QuotedCells,
+    };
+    let cases: [(&str, Format, &[Wrapper]); 17] = [
         ("reference.json", Format::Json, &[]),
         ("psql-aligned.txt", Format::Text, &[PsqlTable]),
         ("psql-aligned-json.txt", Format::Json, &[PsqlTable]),
@@ -34,10 +37,15 @@ fn every_captured_input_yields_the_reference_tree() {
         ("psql-wrapped.txt", Format::Text, &[PsqlTable, PsqlWrapped]),
         ("psql-expanded.txt", Format::Text, &[PsqlExpanded]),
         ("psql-expanded-json.txt", Format::Json, &[PsqlExpanded]),
+        // No line of this plan needs quoting, so it reads like unaligned output.
+        ("psql-csv.txt", Format::Text, &[PsqlTable]),
+        ("psql-csv-json.txt", Format::Json, &[QuotedCells]),
         ("auto_explain-text.log", Format::Text, &[AutoExplainLog]),
         ("auto_explain-json.log", Format::Json, &[AutoExplainLog]),
         ("jsonlog-text.json", Format::Text, &[JsonLog]),
         ("jsonlog-json.json", Format::Json, &[JsonLog]),
+        ("csvlog-text.csv", Format::Text, &[CsvLog]),
+        ("csvlog-json.csv", Format::Json, &[CsvLog]),
     ];
     for (name, format, wrappers) in cases {
         let plan = parse(&input(name)).unwrap_or_else(|e| panic!("{name}: {e}"));
@@ -56,17 +64,45 @@ fn log_entries_keep_the_query_text() {
         "auto_explain-json.log",
         "jsonlog-text.json",
         "jsonlog-json.json",
+        "csvlog-text.csv",
+        "csvlog-json.csv",
     ] {
         let plan = parse(&input(name)).unwrap();
         assert_eq!(plan.summary.query_text.as_deref(), Some(query), "{name}");
     }
 }
 
+/// A result cell as GUI clients copy it: in double quotes, inner quotes
+/// doubled.
+fn cell(text: &str) -> String {
+    format!("\"{}\"", text.replace('"', "\"\""))
+}
+
 #[test]
 fn pasted_variants_yield_the_reference_tree() {
     let text = input("reference.txt");
     let indented: Vec<String> = text.lines().map(|line| format!("    {line}")).collect();
+    let cells: Vec<String> = text.lines().map(cell).collect();
+    let some_cells: Vec<String> = text
+        .lines()
+        .map(|line| {
+            if line.contains("->") {
+                cell(line)
+            } else {
+                line.to_owned()
+            }
+        })
+        .collect();
     let variants = [
+        (
+            "pgAdmin copy with header",
+            format!("{}\n{}", cell("QUERY PLAN"), cells.join("\n")),
+        ),
+        ("cells quoted where needed", some_cells.join("\n")),
+        (
+            "pgAdmin copy of a JSON plan",
+            format!("{}\n{}", cell("QUERY PLAN"), cell(&input("reference.json"))),
+        ),
         (
             "Markdown fence",
             format!("Here is the plan:\n\n```text\n{text}\n```\n\nThanks!"),
@@ -90,6 +126,28 @@ fn pasted_variants_yield_the_reference_tree() {
         assert!(plan.warnings.is_empty(), "{name}: {:?}", plan.warnings);
         assert_same_tree(name, &plan);
     }
+}
+
+#[test]
+fn only_the_first_of_several_plans_is_read() {
+    let before = input("reference.txt");
+    let after = "Seq Scan on t  (cost=0.00..1.00 rows=1 width=4) (actual time=0.010..0.020 rows=1 loops=1)\nPlanning Time: 9.000 ms\nExecution Time: 9.500 ms";
+
+    let plan = parse(&format!("{before}\n\n{after}")).unwrap();
+    assert_same_tree("two text plans", &plan);
+    assert_eq!(
+        plan.summary.execution_time,
+        reference().summary.execution_time
+    );
+    assert_eq!(
+        plan.warnings[0].message,
+        "the input contains more than one plan; showing the first"
+    );
+
+    let json = input("reference.json");
+    let plan = parse(&format!("{json}\n{json}")).unwrap();
+    assert_same_tree("two JSON plans", &plan);
+    assert_eq!(plan.warnings[0].message, "ignored text after the JSON plan");
 }
 
 #[test]

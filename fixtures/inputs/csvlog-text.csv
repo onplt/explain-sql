@@ -1,0 +1,14 @@
+2026-10-04 17:03:46.462 UTC,"postgres","postgres",16292,"[local]",6ac286f2.3fa4,1,"SELECT",2026-10-04 17:03:46 UTC,2/23,0,ERROR,22012,"division by zero",,,,,,"SELECT 1/0",,,"psql","client backend",,0
+2026-10-04 17:03:46.512 UTC,"postgres","postgres",16295,"[local]",6ac286f2.3fa7,1,"SELECT",2026-10-04 17:03:46 UTC,2/25,0,LOG,00000,"duration: 0.343 ms  plan:
+Query Text: SELECT grp, count(*)
+FROM t
+WHERE grp < 10
+GROUP BY grp
+ORDER BY grp
+GroupAggregate  (cost=0.29..74.28 rows=100 width=12) (actual time=0.078..0.332 rows=10 loops=1)
+  Group Key: grp
+  Buffers: shared hit=4
+  ->  Index Only Scan using t_grp_idx on t  (cost=0.29..63.28 rows=2000 width=4) (actual time=0.034..0.164 rows=2000 loops=1)
+        Index Cond: (grp < 10)
+        Heap Fetches: 0
+        Buffers: shared hit=4",,,,,,,,,"psql","client backend",,0

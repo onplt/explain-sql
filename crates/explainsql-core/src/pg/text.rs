@@ -25,6 +25,7 @@ pub(crate) fn parse(text: &str, warnings: &mut Vec<Warning>) -> Option<RawPlan> 
         worker: None,
         section: None,
         in_summary: false,
+        complete: false,
     };
     for (index, line) in text.lines().enumerate() {
         if line.trim().is_empty() {
@@ -34,6 +35,9 @@ pub(crate) fn parse(text: &str, warnings: &mut Vec<Warning>) -> Option<RawPlan> 
         if parser.plan.nodes.is_empty() {
             // The first line must be the root node.
             return None;
+        }
+        if parser.complete {
+            break;
         }
     }
     Some(parser.finish())
@@ -69,6 +73,8 @@ struct Parser<'w> {
     section: Option<&'static str>,
     /// Whether the statement-level lines after the tree have started.
     in_summary: bool,
+    /// Whether another plan has started, which ends this one.
+    complete: bool,
 }
 
 impl Parser<'_> {
@@ -84,6 +90,16 @@ impl Parser<'_> {
         } else if let Some(header) = content.strip_prefix("->") {
             self.child(number, column, header);
         } else if column == 0 {
+            if header_line(content, &mut Map::new()) {
+                // A second plan, such as an "after" plan pasted below the
+                // "before" one. Its summary must not overwrite this one's.
+                self.warn(
+                    number,
+                    "the input contains more than one plan; showing the first",
+                );
+                self.complete = true;
+                return;
+            }
             self.statement_line(number, content);
         } else if self.in_summary {
             match self.section {

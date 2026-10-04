@@ -495,6 +495,8 @@ pub enum Wrapper {
     MarkdownFence,
     /// A PostgreSQL JSON log record (`log_destination = jsonlog`).
     JsonLog,
+    /// A PostgreSQL CSV log record (`log_destination = csvlog`).
+    CsvLog,
     /// An auto_explain entry in a server log.
     AutoExplainLog,
     /// psql's aligned output: header, borders, `+` continuations, row count.
@@ -503,6 +505,9 @@ pub enum Wrapper {
     PsqlExpanded,
     /// psql's wrapped output, whose long lines were joined back.
     PsqlWrapped,
+    /// Result cells in double quotes, as GUI clients such as pgAdmin and
+    /// DataGrip, and psql's CSV format, copy them.
+    QuotedCells,
 }
 
 /// A problem found while parsing. `line` is 1-based and refers to the plan

@@ -1,10 +1,11 @@
 //! Removing what surrounds a plan in real-world input, and telling JSON
 //! plans from text plans.
 //!
-//! Handled: Markdown code fences; auto_explain entries in jsonlog records and
-//! in stderr logs; psql's aligned output (ASCII and Unicode line styles,
+//! Handled: Markdown code fences; auto_explain entries in jsonlog, csvlog and
+//! stderr logs; psql's aligned output (ASCII and Unicode line styles,
 //! borders 0 to 2, `+`/`↵` continuation marks, wrapped lines); psql's
-//! expanded output; prompts and other text before a text plan; CRLF line
+//! expanded output; result cells copied in double quotes (pgAdmin, DataGrip,
+//! psql's CSV format); prompts and other text before a text plan; CRLF line
 //! endings, a byte order mark and non-breaking spaces.
 
 use serde_json::Value;
@@ -37,12 +38,21 @@ pub(crate) fn normalize(input: &str) -> Normalized {
             let (plan, query) = split_query_text(&body);
             query_text = query_text.or(query);
             text = plan;
+        } else if let Some((body, count)) = csvlog_body(&text) {
+            wrappers.push(Wrapper::CsvLog);
+            note_extra_entries(count, &mut warnings);
+            let (plan, query) = split_query_text(&body);
+            query_text = query_text.or(query);
+            text = plan;
         } else if let Some((body, count)) = log_body(&text) {
             wrappers.push(Wrapper::AutoExplainLog);
             note_extra_entries(count, &mut warnings);
             let (plan, query) = split_query_text(&body);
             query_text = query_text.or(query);
             text = plan;
+        } else if let Some(inner) = quoted_cells(&text) {
+            wrappers.push(Wrapper::QuotedCells);
+            text = inner;
         } else if let Some(inner) = psql_expanded(&text) {
             wrappers.push(Wrapper::PsqlExpanded);
             text = inner;
@@ -138,6 +148,107 @@ fn jsonlog_body(text: &str) -> Option<(String, usize)> {
     }
     let count = bodies.len();
     bodies.into_iter().next().map(|body| (body, count))
+}
+
+/// The plan part of the first auto_explain message in csvlog records, and
+/// the number of such messages.
+fn csvlog_body(text: &str) -> Option<(String, usize)> {
+    if !starts_log_entry(text) {
+        return None;
+    }
+    let mut bodies = Vec::new();
+    for record in csv_records(text) {
+        // The message is the 14th column in the csvlog of every version.
+        if record.len() < 14 || !starts_log_entry(&record[0]) {
+            continue;
+        }
+        if let Some(body) = auto_explain_body(&record[13]) {
+            bodies.push(body.to_owned());
+        }
+    }
+    let count = bodies.len();
+    bodies.into_iter().next().map(|body| (body, count))
+}
+
+/// CSV records: fields separated by commas, and quoted fields that may hold
+/// commas, line breaks and doubled quotes. A quote left open at the end of
+/// the text closes the last record.
+fn csv_records(text: &str) -> Vec<Vec<String>> {
+    let mut records = Vec::new();
+    let mut record = Vec::new();
+    let mut field = String::new();
+    let mut quoted = false;
+    let mut chars = text.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '"' if quoted && chars.peek() == Some(&'"') => {
+                field.push('"');
+                chars.next();
+            }
+            '"' => quoted = !quoted,
+            ',' if !quoted => record.push(std::mem::take(&mut field)),
+            '\n' if !quoted => {
+                record.push(std::mem::take(&mut field));
+                records.push(std::mem::take(&mut record));
+            }
+            _ => field.push(c),
+        }
+    }
+    record.push(field);
+    records.push(record);
+    records
+}
+
+/// Result cells as GUI clients copy them, each in double quotes with inner
+/// quotes doubled: a text plan as one cell per line (pgAdmin quotes every
+/// line; DataGrip and psql's CSV format only lines that need it), or a JSON
+/// plan as a single cell. A `QUERY PLAN` header is dropped.
+fn quoted_cells(text: &str) -> Option<String> {
+    if text.trim_start().starts_with(['[', '{']) {
+        // Already JSON; a lone string on a line of it is not a cell.
+        return None;
+    }
+    let is_header = |line: &str| matches!(line.trim(), "QUERY PLAN" | "\"QUERY PLAN\"");
+    let body = match text.split_once('\n') {
+        Some((first, rest)) if is_header(first) => rest,
+        _ if is_header(text) => "",
+        _ => text,
+    };
+    // A JSON plan in one cell.
+    if let Some(json) = unquote(body.trim()) {
+        if json.trim_start().starts_with(['[', '{']) {
+            return Some(json);
+        }
+    }
+    // A text plan, one cell per line. No line of a text plan starts with a
+    // quote, so unquoting cannot damage one.
+    let mut quoted = false;
+    let lines: Vec<String> = body
+        .lines()
+        .map(|line| match unquote(line) {
+            Some(cell) => {
+                quoted = true;
+                cell
+            }
+            None => line.to_owned(),
+        })
+        .collect();
+    quoted.then(|| lines.join("\n"))
+}
+
+/// The content of a cell in double quotes, if `text` is exactly one.
+fn unquote(text: &str) -> Option<String> {
+    let inner = text.strip_prefix('"')?.strip_suffix('"')?;
+    let mut cell = String::with_capacity(inner.len());
+    let mut chars = inner.chars();
+    while let Some(c) = chars.next() {
+        if c == '"' && chars.next() != Some('"') {
+            // A lone quote: the text is not a single cell.
+            return None;
+        }
+        cell.push(c);
+    }
+    Some(cell)
 }
 
 /// What follows `plan:` in an auto_explain message.
@@ -355,6 +466,67 @@ fn start_at_plan(text: &str, warnings: &mut Vec<Warning>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reads_csv_records() {
+        let records = csv_records("a,\"b, \"\"c\"\"\",\n\"multi\nline\",d\n\"open");
+        assert_eq!(
+            records,
+            [
+                vec!["a", "b, \"c\"", ""],
+                vec!["multi\nline", "d"],
+                vec!["open"]
+            ]
+        );
+    }
+
+    #[test]
+    fn finds_auto_explain_entries_in_csvlog_records() {
+        let message = "duration: 0.3 ms  plan:\nQuery Text: SELECT 1\nResult  (cost=0.00..0.01 rows=1 width=4)";
+        let record = |message: &str| {
+            format!(
+                "2026-10-04 17:03:46.512 UTC,\"u\",\"db\",1,\"[local]\",x,1,\"SELECT\",2026-10-04 17:03:46 UTC,2/25,0,LOG,00000,\"{message}\",,,,,,,,,\"psql\",\"client backend\",,0"
+            )
+        };
+        let log = format!(
+            "{}\n{}\n{}",
+            record("checkpoint starting"),
+            record(message),
+            record(message)
+        );
+        let (body, count) = csvlog_body(&log).unwrap();
+        assert_eq!(
+            body,
+            "Query Text: SELECT 1\nResult  (cost=0.00..0.01 rows=1 width=4)"
+        );
+        assert_eq!(count, 2);
+        // A stderr log also starts with a timestamp, but has no such records.
+        assert_eq!(
+            csvlog_body(
+                "2026-10-04 17:03:46.512 UTC [5224] LOG:  duration: 0.3 ms  plan:\n\tResult"
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn unquotes_copied_cells() {
+        assert_eq!(unquote("\"a \"\"b\"\"\""), Some("a \"b\"".to_owned()));
+        assert_eq!(unquote("\"a\" b \"c\""), None);
+        assert_eq!(unquote("\"a"), None);
+        // Unquoted lines are left alone; a JSON plan is never unquoted line by line.
+        assert_eq!(
+            quoted_cells(
+                "\"QUERY PLAN\"\n\"Result  (cost=0.00..0.01 rows=1 width=4)\"\n  Output: 1"
+            ),
+            Some("Result  (cost=0.00..0.01 rows=1 width=4)\n  Output: 1".to_owned())
+        );
+        assert_eq!(quoted_cells("[\n\"Plan\"\n]"), None);
+        assert_eq!(
+            quoted_cells("Result  (cost=0.00..0.01 rows=1 width=4)"),
+            None
+        );
+    }
 
     #[test]
     fn cleans_line_endings_and_odd_characters() {

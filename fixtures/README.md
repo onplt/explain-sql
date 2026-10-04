@@ -57,10 +57,12 @@ ORDER BY grp
 | `psql-border2.txt` | `-P border=2` |
 | `psql-wrapped.txt` | `-P format=wrapped -P columns=60` |
 | `psql-expanded.txt`, `psql-expanded-json.txt` | `-x` |
+| `psql-csv.txt`, `psql-csv-json.txt` | `--csv` |
 | `auto_explain-text.log`, `auto_explain-json.log` | `auto_explain` (`log_analyze`, `log_buffers`, `log_min_duration = 0`) in the stderr log, with `log_format` text and json |
 | `jsonlog-text.json`, `jsonlog-json.json` | the same entries in the `jsonlog` log (`log_destination = 'stderr,jsonlog'`) |
+| `csvlog-text.csv`, `csvlog-json.csv` | the same entries in the `csvlog` log; the text one follows an unrelated error record |
 
-`crates/explainsql-core/tests/inputs.rs` requires every file to parse, without warnings, into the same tree as `reference.txt`, and the log entries to keep their query text. Unlike `pg/`, these files are not produced by `xtask`. To cover another form, capture it from a real server, add it here and add it to the test.
+`crates/explainsql-core/tests/inputs.rs` requires every file to parse, without warnings, into the same tree as `reference.txt`, and the log entries to keep their query text. Forms that cannot be captured from a server, such as cells copied from pgAdmin, are generated from `reference.txt` in the same test. Unlike `pg/`, these files are not produced by `xtask`. To cover another form, capture it from a real server, add it here and add it to the test.
 
 ## Scenario files
 

@@ -1,6 +1,6 @@
 //! The `explainsql` command-line tool.
 
-use std::io::{IsTerminal, Read};
+use std::io::{IsTerminal, Read, Write};
 use std::process::ExitCode;
 use std::{env, fs, io};
 
@@ -18,21 +18,25 @@ auto_explain log entry or a Markdown code fence.
   --json   print the parsed plan as JSON instead
 ";
 
+/// Appends a formatted line to a `String`.
+macro_rules! push_line {
+    ($out:expr, $($arg:tt)*) => {{
+        $out.push_str(&format!($($arg)*));
+        $out.push('\n');
+    }};
+}
+
 fn main() -> ExitCode {
     let args: Vec<String> = env::args().skip(1).collect();
     let version = env!("CARGO_PKG_VERSION");
     match args.first().map(String::as_str) {
         Some("--debug-parse") => {}
         None | Some("-h" | "--help") => {
-            print!(
+            return emit(&format!(
                 "explainsql {version}: in early development. See https://github.com/onplt/explain-sql\n\n{USAGE}"
-            );
-            return ExitCode::SUCCESS;
+            ));
         }
-        Some("-V" | "--version") => {
-            println!("explainsql {version}");
-            return ExitCode::SUCCESS;
-        }
+        Some("-V" | "--version") => return emit(&format!("explainsql {version}\n")),
         Some(other) => {
             eprintln!("error: unexpected argument `{other}`\n\n{USAGE}");
             return ExitCode::from(2);
@@ -43,10 +47,7 @@ fn main() -> ExitCode {
     for arg in &args[1..] {
         match arg.as_str() {
             "--json" => json = true,
-            "-h" | "--help" => {
-                print!("{USAGE}");
-                return ExitCode::SUCCESS;
-            }
+            "-h" | "--help" => return emit(USAGE),
             path if file.is_none() => file = Some(path.to_owned()),
             other => {
                 eprintln!("error: unexpected argument `{other}`\n\n{USAGE}");
@@ -63,21 +64,27 @@ fn main() -> ExitCode {
         }
     };
     match explainsql_core::parse(&input) {
-        Ok(plan) => {
-            if json {
-                println!(
-                    "{}",
-                    serde_json::to_string_pretty(&plan).expect("the IR serializes")
-                );
-            } else {
-                print_plan(&plan);
-            }
-            ExitCode::SUCCESS
-        }
+        Ok(plan) if json => emit(&format!(
+            "{}\n",
+            serde_json::to_string_pretty(&plan).expect("the IR serializes")
+        )),
+        Ok(plan) => emit(&render(&plan)),
         Err(error) => {
             eprintln!("error: {error}");
             ExitCode::FAILURE
         }
+    }
+}
+
+/// Writes to standard output. A reader that stops early, such as `head`,
+/// is not an error.
+fn emit(text: &str) -> ExitCode {
+    match io::stdout().lock().write_all(text.as_bytes()) {
+        Err(error) if error.kind() != io::ErrorKind::BrokenPipe => {
+            eprintln!("error: {error}");
+            ExitCode::FAILURE
+        }
+        _ => ExitCode::SUCCESS,
     }
 }
 
@@ -98,14 +105,17 @@ fn read_input(file: Option<&str>) -> io::Result<String> {
     Ok(String::from_utf8_lossy(&bytes).into_owned())
 }
 
-fn print_plan(plan: &Plan) {
+/// The plan tree, the statement summary and the warnings, as text.
+fn render(plan: &Plan) -> String {
+    let mut out = String::new();
     let wrappers: Vec<String> = plan
         .source
         .wrappers
         .iter()
         .map(|wrapper| format!("{wrapper:?}"))
         .collect();
-    println!(
+    push_line!(
+        out,
         "format: {:?}{}",
         plan.source.format,
         if wrappers.is_empty() {
@@ -115,7 +125,7 @@ fn print_plan(plan: &Plan) {
         }
     );
     for (depth, node) in plan.walk() {
-        println!("{}{}", "  ".repeat(depth), describe(node));
+        push_line!(out, "{}{}", "  ".repeat(depth), describe(node));
     }
     let summary = &plan.summary;
     let mut facts = Vec::new();
@@ -158,19 +168,20 @@ fn print_plan(plan: &Plan) {
         facts.push(format!("settings: {}", settings.join(", ")));
     }
     if !facts.is_empty() {
-        println!("statement: {}", facts.join("; "));
+        push_line!(out, "statement: {}", facts.join("; "));
     }
     if plan.warnings.is_empty() {
-        println!("warnings: none");
+        push_line!(out, "warnings: none");
     } else {
-        println!("warnings:");
+        push_line!(out, "warnings:");
         for warning in &plan.warnings {
             match warning.line {
-                Some(line) => println!("  line {line}: {}", warning.message),
-                None => println!("  {}", warning.message),
+                Some(line) => push_line!(out, "  line {line}: {}", warning.message),
+                None => push_line!(out, "  {}", warning.message),
             }
         }
     }
+    out
 }
 
 /// One line per node: its name, target, estimates and measurements.
