@@ -2,7 +2,7 @@
 
 **Find out why your PostgreSQL query is slow, get a fix, and prove it works, without leaving the terminal.**
 
-![ExplainSQL showing a plan, its findings and a suggested index](https://raw.githubusercontent.com/onplt/explain-sql/main/docs/demo.svg)
+![ExplainSQL run against PostgreSQL: the verdict on a slow query, why the planner uses no index, and the suggested index tested with HypoPG](https://raw.githubusercontent.com/onplt/explain-sql/main/docs/demo.svg)
 
 ExplainSQL reads `EXPLAIN (ANALYZE, BUFFERS)` output from PostgreSQL. Instead of only drawing the plan tree, it closes the loop:
 
@@ -67,7 +67,8 @@ cargo test --workspace            # all tests, including the corpus checks
 cargo run -p explainsql -- --demo # the viewer on the sample plan
 cargo xtask gen-fixtures          # regenerate the EXPLAIN corpus (requires Docker)
 cargo xtask rule-docs             # refresh the examples on the rule pages
-cargo xtask demo                  # redraw docs/demo.svg
+cargo xtask demo                  # redraw docs/demo.svg from its recording
+cargo xtask demo --record         # record a real session first (needs tmux and EXPLAINSQL_TEST_DATABASE_URL)
 mdbook build docs                 # the documentation site, in target/book
 ```
 

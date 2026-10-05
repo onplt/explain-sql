@@ -29,6 +29,10 @@ All notable changes to ExplainSQL. The format follows
 - Before and after comparisons lead with pages, then temporary files, then
   time, and ignore differences under 10% (and 0.1 ms). Fewer pages but a
   slower run is a mixed result.
+- The README's demo is a recording of a real session: explainsql run
+  against PostgreSQL on a slow query, asked why the planner uses no index,
+  and testing the suggested index with HypoPG. `cargo xtask demo --record`
+  records it again; `cargo xtask demo` draws it from the recording.
 
 ### Fixed
 
