@@ -50,3 +50,6 @@ try {
 } finally {
     Remove-Item -Recurse -Force $work
 }
+
+# The last check leaves a failing exit code behind on purpose.
+exit 0
