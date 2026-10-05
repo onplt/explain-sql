@@ -8,7 +8,8 @@ ExplainSQL reads `EXPLAIN (ANALYZE, BUFFERS)` output from PostgreSQL. Instead of
 
 1. **Diagnose.** It computes exclusive time and buffers for every node, including the parallel-query, CTE and trigger cases where simple subtraction gives the wrong answer. It opens on a one-line verdict: where the time went and why.
 2. **Suggest.** Twelve rules flag known red flags: selective sequential scans, row misestimates, sorts and hashes spilling to disk, expensive nested loops, slow foreign-key triggers, and more. An index advisor writes `CREATE INDEX CONCURRENTLY` candidates, each with its evidence and a confidence level, and explains why a slow scan gets none.
-3. **Prove.** Connected to a database, it runs the query inside a transaction that is always rolled back. It tests a suggested index with HypoPG, or, only when you opt in, by building it in a rolled-back transaction. It then shows before and after.
+3. **Prove.** Connected to a database, it runs the query inside a transaction that is always rolled back. It tests a suggested index with HypoPG, or, only when you opt in, by building it in a rolled-back transaction. It then shows before and after, pages first, so that a warm cache cannot pass for an improvement.
+4. **Ask why.** It asks the planner again with its choice taken away (`enable_seqscan = off`, `enable_nestloop = off`, more `work_mem`) and tells why it chose its plan: no index can serve the condition, and why not; the planner is right; or it is wrong because of a row misestimate or its cost settings, measured and not guessed.
 
 It works in three ways, all landing on the same screen:
 
@@ -47,6 +48,7 @@ psql -XAtq -c "EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) SELECT …" | explainsql
 explainsql --print --format md plan.txt                # a report for an issue or a pull request
 explainsql -d "$DATABASE_URL" -f slow.sql              # run it: estimated plan, then EXPLAIN ANALYZE, rolled back
 explainsql -d "$DATABASE_URL" -f slow.sql --print --prove   # and test each suggested index
+explainsql -d "$DATABASE_URL" -f slow.sql --print --why-not --measure   # why the planner chose its plan
 ```
 
 The [user guide](https://github.com/onplt/explain-sql/blob/main/docs/guide.md) covers the viewer's keys, the pager mode, connected mode and its safety rules, and testing suggestions. The [rule catalog](https://github.com/onplt/explain-sql/blob/main/docs/rules.md) explains every finding, with an example from real plans. Both are also published as the [documentation site](https://onplt.github.io/explain-sql/).

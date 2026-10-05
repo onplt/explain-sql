@@ -6,6 +6,8 @@
 mod common;
 
 use common::{plan_path, read};
+use explainsql_core::counterfactual::{self, Evaluation, Target};
+use explainsql_core::ir::Plan;
 use explainsql_core::{analyze, parse, report};
 
 /// One plan per kind of finding, the traps where nothing must be found, and
@@ -77,4 +79,62 @@ fn colors_are_optional() {
     assert!(report::text(&plan, &analysis, true).contains("\x1b["));
     assert!(!report::text(&plan, &analysis, false).contains('\x1b'));
     assert!(!report::markdown(&plan, &analysis).contains('\x1b'));
+}
+
+/// What the database said when asked why: a function of the column keeps
+/// the index out, and the planner estimates an index on a selective filter
+/// about as expensive as the scan.
+fn asked(scenario: &str, alternative: &str) -> (Plan, explainsql_core::Analysis) {
+    let plan = parse(&read(&plan_path(16, scenario, "txt"))).unwrap();
+    let mut analysis = analyze(&plan);
+    let question =
+        counterfactual::questions(&plan, &analysis, None, &Target::Hotspots, false).remove(0);
+    let alternative = parse(alternative).unwrap();
+    let answer = counterfactual::answer(
+        &plan,
+        &analysis,
+        &question,
+        &Evaluation {
+            chosen: &[],
+            alternative: std::slice::from_ref(&alternative),
+            with_cost_settings: None,
+            cost_settings_runs: &[],
+            catalog: None,
+        },
+    );
+    analysis.record(vec![answer]);
+    (plan, analysis)
+}
+
+#[test]
+fn why_not_reports() {
+    let (plan, analysis) = asked(
+        "seq_scan_function_on_column",
+        "Seq Scan on public.orders  (cost=10000000000.00..10000005417.00 rows=1000 width=64)\n  Filter: (date_trunc('day'::text, orders.created_at) = '2024-06-01 00:00:00+00'::timestamp with time zone)",
+    );
+    let text = report::text(&plan, &analysis, false);
+    let section = &text[text.find("Why not").unwrap()..text.find("Share and Time:").unwrap()];
+    insta::assert_snapshot!("why_not_text", section);
+
+    let (plan, analysis) = asked(
+        "seq_scan_selective",
+        "Bitmap Heap Scan on public.orders  (cost=12.00..5210.00 rows=10 width=64)\n  Recheck Cond: (orders.customer_id = 4242)\n  ->  Bitmap Index Scan on orders_customer_id_idx  (cost=0.00..12.00 rows=10 width=0)\n        Index Cond: (orders.customer_id = 4242)",
+    );
+    let markdown = report::markdown(&plan, &analysis);
+    insta::assert_snapshot!(
+        "why_not_markdown",
+        &markdown[markdown.find("### Why not").unwrap()..]
+    );
+    let value: serde_json::Value = serde_json::from_str(&report::json(&plan, &analysis)).unwrap();
+    let answer = &value["counterfactuals"][0];
+    assert_eq!(answer["verdict"], "costlier");
+    assert_eq!(answer["topic"], "index");
+    assert_eq!(answer["relation"], "orders");
+    assert_eq!(answer["comparison"]["basis"], "cost");
+    // Not asked: no section, and nothing in the JSON.
+    let plan = parse(&read(&plan_path(16, "seq_scan_selective", "txt"))).unwrap();
+    let analysis = analyze(&plan);
+    assert!(!report::text(&plan, &analysis, false).contains("Why not"));
+    let value: serde_json::Value = serde_json::from_str(&report::json(&plan, &analysis)).unwrap();
+    assert!(value.get("counterfactuals").is_none());
 }

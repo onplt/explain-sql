@@ -8,6 +8,7 @@
 
 use std::time::Duration;
 
+use explainsql_core::scenario::Setting;
 use explainsql_db::{Database, Error, Mode, Safety, Settings, Writes};
 
 fn database() -> Option<Database> {
@@ -255,10 +256,13 @@ fn proves_an_index_with_hypopg() {
         eprintln!("HypoPG is not installed; skipping");
         return;
     }
-    let proof = db.prove(SELECTIVE, DDL, false, Safety::default()).unwrap();
+    let proof = db
+        .prove(SELECTIVE, DDL, false, 1, Safety::default())
+        .unwrap();
     assert!(!proof.measured);
-    let before = explainsql_core::parse(&proof.before).unwrap();
-    let after = explainsql_core::parse(&proof.after).unwrap();
+    assert_eq!((proof.before.len(), proof.after.len()), (1, 1));
+    let before = explainsql_core::parse(&proof.before[0]).unwrap();
+    let after = explainsql_core::parse(&proof.after[0]).unwrap();
     let comparison = explainsql_core::compare::compare(&before, &after);
     assert!(comparison.improved(), "{}", comparison.summary());
     assert!(
@@ -270,9 +274,11 @@ fn proves_an_index_with_hypopg() {
         comparison.new_indexes
     );
     // Nothing is left behind, in the session or the catalog.
-    let again = db.prove(SELECTIVE, DDL, false, Safety::default()).unwrap();
+    let again = db
+        .prove(SELECTIVE, DDL, false, 1, Safety::default())
+        .unwrap();
     assert_eq!(
-        explainsql_core::parse(&again.before)
+        explainsql_core::parse(&again.before[0])
             .unwrap()
             .root()
             .node_type,
@@ -285,27 +291,121 @@ fn proves_an_index_built_and_rolled_back() {
     let Some(db) = database() else { return };
     let indexes = index_names(&db, "orders");
     assert!(matches!(
-        db.prove(SELECTIVE, DDL, true, Safety::default()),
+        db.prove(SELECTIVE, DDL, true, 1, Safety::default()),
         Err(Error::Refused(message)) if message.contains("--allow-ddl")
     ));
     let safety = Safety {
         allow_ddl: true,
         ..Safety::default()
     };
-    let proof = db.prove(SELECTIVE, DDL, true, safety).unwrap();
+    let proof = db.prove(SELECTIVE, DDL, true, 2, safety).unwrap();
     assert!(proof.measured);
-    let comparison = explainsql_core::compare::compare(
-        &explainsql_core::parse(&proof.before).unwrap(),
-        &explainsql_core::parse(&proof.after).unwrap(),
-    );
+    // Two measured runs on each side, after a run that warms the cache.
+    assert_eq!((proof.before.len(), proof.after.len()), (2, 2));
+    let parse = |plans: &[String]| -> Vec<explainsql_core::ir::Plan> {
+        plans
+            .iter()
+            .map(|plan| explainsql_core::parse(plan).unwrap())
+            .collect()
+    };
+    let comparison =
+        explainsql_core::compare::compare_runs(&parse(&proof.before), &parse(&proof.after));
     assert!(comparison.after.execution_time.is_some());
+    assert_eq!(comparison.after.runs, 2);
     assert!(comparison.improved(), "{}", comparison.summary());
+    assert_eq!(
+        comparison.basis,
+        Some(explainsql_core::compare::Basis::Pages),
+        "{}",
+        comparison.summary()
+    );
     // The index was rolled back with its transaction.
     assert_eq!(index_names(&db, "orders"), indexes);
     // Only CREATE INDEX statements are built.
     assert!(matches!(
-        db.prove(SELECTIVE, "DROP INDEX orders_created_at_idx", true, safety),
+        db.prove(
+            SELECTIVE,
+            "DROP INDEX orders_created_at_idx",
+            true,
+            1,
+            safety
+        ),
         Err(Error::Refused(_))
     ));
     assert_eq!(index_names(&db, "orders"), indexes);
+}
+
+#[test]
+fn plans_under_settings_only_inside_the_transaction() {
+    let Some(db) = database() else { return };
+    let parse = |json: String| explainsql_core::parse(&json).unwrap();
+    // audit_log has no index, so with sequential scans off the scan stays,
+    // disabled: 10¹⁰ more expensive before PostgreSQL 18, marked from 18.
+    let sql = "SELECT * FROM audit_log WHERE action = 'login'";
+    let off = [Setting::new("enable_seqscan", "off")];
+    let forced = parse(
+        db.explain_with(sql, Mode::Estimate, &off, Safety::default())
+            .unwrap(),
+    );
+    let root = forced.root();
+    assert_eq!(root.node_type, "Seq Scan");
+    assert!(
+        root.disabled
+            || root.estimates.unwrap().startup_cost >= explainsql_core::compare::DISABLE_COST,
+        "{root:?}"
+    );
+    // The setting ended with its transaction.
+    let normal = parse(db.explain(sql, Mode::Estimate, Safety::default()).unwrap());
+    assert!(!normal.root().disabled);
+    assert!(normal.root().estimates.unwrap().startup_cost < 1.0);
+
+    // Measured under a setting, after a run that warms the cache: the sort
+    // that spills with the default work_mem stays in memory.
+    let sort = "SELECT * FROM orders ORDER BY note";
+    let spilled = parse(db.explain(sort, Mode::Analyze, Safety::default()).unwrap());
+    assert_eq!(spilled.root().extra_str("Sort Space Type"), Some("Disk"));
+    let runs = db
+        .measure(
+            sort,
+            &[Setting::new("work_mem", "64MB")],
+            2,
+            Safety::default(),
+        )
+        .unwrap();
+    assert_eq!(runs.len(), 2);
+    for run in runs {
+        assert_eq!(
+            parse(run).root().extra_str("Sort Space Type"),
+            Some("Memory")
+        );
+    }
+
+    // Anything but a planner setting, or a value of the wrong type, is
+    // refused before anything runs.
+    for (name, value) in [
+        ("statement_timeout", "0"),
+        ("default_transaction_read_only", "off"),
+        ("role", "postgres"),
+        ("enable_seqscan", "off'; DROP TABLE orders; --"),
+        ("work_mem", "64"),
+    ] {
+        assert!(
+            matches!(
+                db.explain_with(
+                    sql,
+                    Mode::Estimate,
+                    &[Setting::new(name, value)],
+                    Safety::default()
+                ),
+                Err(Error::Refused(_))
+            ),
+            "{name} = {value}"
+        );
+    }
+    // Measuring a statement that writes still needs --allow-dml.
+    assert!(matches!(
+        db.measure("DELETE FROM audit_log", &[], 1, Safety::default()),
+        Err(Error::NeedsAllowDml(_))
+    ));
+    assert_eq!(count(&db, "audit_log"), 5000.0);
 }

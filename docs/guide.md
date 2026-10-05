@@ -51,6 +51,7 @@ The top line is the verdict: the statement's time, where most of it went, and wh
 | `x`, `w`, `b` | Time including children, CPU time, buffers |
 | `J` `K` | Scroll the details |
 | `r`, `e`, `t`, `Esc` | Connected: run again, edit the query, test a suggestion, cancel |
+| `y` | Connected: ask the planner why it chose the selected node |
 | `?`, `q` | Help, quit |
 
 Colors follow the terminal: true color, 256 or 16 colors, or none with `NO_COLOR`. `--theme light` suits light backgrounds.
@@ -92,4 +93,26 @@ explainsql -d shop -f slow.sql --print --prove
 - With [HypoPG](https://github.com/HypoPG/hypopg) installed (`CREATE EXTENSION hypopg`), explainsql plans the query with a hypothetical index. Nothing is built or locked, and the result is an estimate.
 - Otherwise, `--allow-ddl` lets explainsql build the index for real inside a transaction that is rolled back, and measure the query with it. Building blocks writes to the table while it runs, so the viewer shows the table's size and asks first. It gives up after waiting 2 seconds for its lock.
 
-Either way, explainsql shows before and after: execution time or estimated cost, pages read, and whether the planner used the index. A suggestion that does not help drops to low confidence and says so.
+Either way, explainsql shows before and after: pages read, pages written to temporary files, and execution time, or the estimated cost; and whether the planner used the index. Pages decide first: unlike times, they do not depend on what the cache holds. Times decide only when the pages are the same, and only by more than 10% and 0.1 ms. When measuring, each side runs once more first, only to warm the cache, so that the run without the index does not meet a colder cache than the runs with it. `--runs N` measures each side N times and compares the medians. A suggestion the planner does not use, or that does not make the statement better, drops to low confidence and says so.
+
+## Ask the planner why
+
+The planner picked a sequential scan, but there is an index; it joined with a nested loop; a sort spilled to disk. explainsql can ask the planner again, with the choice taken away, and compare:
+
+```sh
+explainsql -d shop -f slow.sql --print --why-not             # the slowest nodes
+explainsql -d shop -f slow.sql --print --why-not orders      # the scans of a table, or of an index's table
+explainsql -d shop -f slow.sql --print --why-not --measure --runs 3
+```
+
+In the viewer, select a node and press `y`.
+
+| The plan chose | explainsql plans again with | It tells |
+|---|---|---|
+| A sequential scan with a condition | `enable_seqscan = off` | whether an index can serve the condition at all, and if not, why: the condition casts the column or applies a function to it, ORs different columns, uses an operator the index does not serve, a pattern starting with a wildcard, a collation without `text_pattern_ops`, or the index starts with another column, is invalid or partial |
+| A nested loop on the hot path | `enable_nestloop = off` | whether a hash or merge join is possible, and better |
+| A sort or hash that spilled (with `--measure`) | `work_mem` large enough to stay in memory | whether more memory makes the statement faster |
+
+Without `--measure`, the alternatives are only planned: the answer says how much more expensive the planner estimates them, and whether `random_page_cost = 1.1` (as suits SSDs and cloud volumes) makes it choose the index by itself. With `--measure`, both plans run and are compared, pages first, and the answer says whether the planner is right. When it is not, it says why: a row misestimate (fix the statistics), or its cost settings. A cost setting is suggested only when the plan it leads to has been measured too, and is better.
+
+The settings are planner settings only, from a fixed list, set with `SET LOCAL` semantics inside the transaction that is rolled back: they never outlast the run. `enable_*` settings apply to the whole statement, so other parts of the plan can change as well; the answer says when they did.

@@ -42,10 +42,12 @@ pub struct Connection {
     pub hypopg: bool,
     /// Suggestions may be built, in a transaction that is rolled back.
     pub allow_ddl: bool,
+    /// `y` measures the alternatives rather than only estimating them.
+    pub measure: bool,
 }
 
 /// What the viewer asks the connection to do.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Command {
     /// Run the statement with EXPLAIN ANALYZE; first send the estimated plan
     /// when `estimate_first` (after an edit).
@@ -56,6 +58,12 @@ pub enum Command {
         sql: String,
         ddl: String,
         measured: bool,
+    },
+    /// Ask the planner why it chose what it chose for a node of the plan.
+    WhyNot {
+        sql: String,
+        plan: Box<Plan>,
+        node: explainsql_core::ir::NodeId,
     },
 }
 
@@ -72,6 +80,8 @@ pub enum Event {
         comparison: Box<explainsql_core::compare::Comparison>,
         measured: bool,
     },
+    /// What the planner said when asked again.
+    Answered(Vec<explainsql_core::counterfactual::Answer>),
     Failed(String),
 }
 
@@ -98,6 +108,7 @@ pub fn run_connected(
         task: String::new(),
         hypopg: connection.hypopg,
         allow_ddl: connection.allow_ddl,
+        measure: connection.measure,
     });
     run_with(app, options, Some(connection))
 }
@@ -189,6 +200,22 @@ fn event_loop(
                     };
                 }
             }
+            (Outcome::WhyNot { node }, Some(connection)) => {
+                let Some(live) = &mut app.live else { continue };
+                let command = Command::WhyNot {
+                    sql: live.sql.clone(),
+                    plan: Box::new(app.plan.clone()),
+                    node,
+                };
+                if connection.commands.send(command).is_ok() {
+                    live.running = Some(Instant::now());
+                    live.task = if live.measure {
+                        "Measuring the planner's choice and the alternative".to_owned()
+                    } else {
+                        "Asking the planner".to_owned()
+                    };
+                }
+            }
             (Outcome::Edit, Some(connection)) => {
                 let sql = app
                     .live
@@ -255,7 +282,7 @@ fn receive(app: &mut App, event: Event) {
             if let Some(comparison) = comparison {
                 app.message = Some(format!(
                     "Compared with the previous run: {}.",
-                    comparison.summary()
+                    comparison.details()
                 ));
             }
         }
@@ -267,7 +294,7 @@ fn receive(app: &mut App, event: Event) {
             if let Some(live) = &mut app.live {
                 live.running = None;
             }
-            let summary = comparison.summary();
+            let summary = comparison.details();
             let advice = app.analysis.advice.iter_mut().find(|advice| {
                 matches!(&advice.kind, explainsql_core::advisor::AdviceKind::Index { ddl: other, .. } if *other == ddl)
             });
@@ -275,6 +302,19 @@ fn receive(app: &mut App, event: Event) {
                 explainsql_core::advisor::verify(advice, *comparison, measured);
             }
             app.message = Some(format!("Tested: {summary}."));
+        }
+        Event::Answered(answers) => {
+            if let Some(live) = &mut app.live {
+                live.running = None;
+            }
+            app.message = answers.first().map(|answer| {
+                format!(
+                    "{}: {}. The details show why (J and K scroll).",
+                    answer.verdict.label(),
+                    answer.verdict.describe()
+                )
+            });
+            app.analysis.record(answers);
         }
         Event::Failed(error) => {
             if let Some(live) = &mut app.live {
@@ -354,9 +394,66 @@ pub fn render(app: &mut App, theme: &Theme, width: u16, height: u16) -> ratatui:
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
+    /// What the planner said shows in the status line and the details, and
+    /// ends the run.
+    #[test]
+    fn receives_answers() {
+        use explainsql_core::counterfactual::{self, Evaluation, Target};
+        use explainsql_core::ir::NodeId;
+        let plan = explainsql_core::parse(
+            "Seq Scan on orders  (cost=0.00..4917.00 rows=10 width=64) (actual time=1.053..11.865 rows=10 loops=1)\n  Filter: (customer_id = 4242)\n  Rows Removed by Filter: 199990\nExecution Time: 11.900 ms",
+        )
+        .unwrap();
+        let analysis = explainsql_core::analyze(&plan);
+        let question =
+            counterfactual::questions(&plan, &analysis, None, &Target::Node(NodeId(0)), false)
+                .remove(0);
+        let alternative = explainsql_core::parse(
+            "Seq Scan on orders  (cost=10000000000.00..10000004917.00 rows=10 width=64)\n  Filter: (customer_id = 4242)",
+        )
+        .unwrap();
+        let answer = counterfactual::answer(
+            &plan,
+            &analysis,
+            &question,
+            &Evaluation {
+                chosen: &[],
+                alternative: std::slice::from_ref(&alternative),
+                with_cost_settings: None,
+                cost_settings_runs: &[],
+                catalog: None,
+            },
+        );
+        let mut app = App::new(plan, analysis);
+        app.live = Some(Live {
+            database: "db".to_owned(),
+            sql: "SELECT".to_owned(),
+            measured: true,
+            running: Some(Instant::now()),
+            task: "Asking the planner".to_owned(),
+            hypopg: false,
+            allow_ddl: false,
+            measure: false,
+        });
+        receive(&mut app, Event::Answered(vec![answer.clone()]));
+        assert!(app.live.as_ref().unwrap().running.is_none());
+        assert_eq!(
+            app.message.as_deref(),
+            Some(
+                "UNUSABLE: no index can serve the condition. The details show why (J and K scroll)."
+            )
+        );
+        assert_eq!(app.analysis.counterfactuals, std::slice::from_ref(&answer));
+        // Asked again: the new answer replaces the old one.
+        receive(&mut app, Event::Answered(vec![answer]));
+        assert_eq!(app.analysis.counterfactuals.len(), 1);
+    }
+
     #[test]
     fn encodes_base64() {
-        assert_eq!(super::base64(b""), "");
+        assert_eq!(base64(b""), "");
         assert_eq!(super::base64(b"f"), "Zg==");
         assert_eq!(super::base64(b"fo"), "Zm8=");
         assert_eq!(super::base64(b"foo"), "Zm9v");

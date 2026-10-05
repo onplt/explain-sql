@@ -200,33 +200,45 @@ impl Advice {
 }
 
 /// Records the test of an index suggestion: estimated with HypoPG, or
-/// measured with the index built and rolled back. A suggestion the planner
-/// would not use, or that does not help, drops to low confidence and says
-/// so.
+/// measured with the index built and rolled back. Only a suggestion the
+/// planner uses and that makes the statement better by more than the noise
+/// (fewer pages first, then less time; a lower estimated cost when
+/// estimated) keeps a high confidence. Any other drops to low confidence
+/// and says why.
 pub fn verify(advice: &mut Advice, proof: crate::compare::Comparison, measured: bool) {
+    use crate::compare::Change;
     advice.verification = if measured {
         Verification::Measured
     } else {
         Verification::Estimated
     };
     let used = !proof.new_indexes.is_empty();
-    advice
-        .caveats
-        .retain(|caveat| !caveat.starts_with(NOT_USED) && !caveat.starts_with(NOT_FASTER));
-    if used && proof.improved() {
-        advice.confidence = Confidence::High;
-    } else {
-        advice.confidence = Confidence::Low;
-        advice
-            .caveats
-            .insert(0, if used { NOT_FASTER } else { NOT_USED }.to_owned());
+    advice.caveats.retain(|caveat| {
+        ![NOT_USED, NOT_FASTER, MIXED]
+            .iter()
+            .any(|prefix| caveat.starts_with(prefix))
+    });
+    let caveat = match (used, proof.change) {
+        (true, Change::Better) => None,
+        (false, _) => Some(NOT_USED),
+        (true, Change::Mixed) => Some(MIXED),
+        (true, _) => Some(NOT_FASTER),
+    };
+    match caveat {
+        None => advice.confidence = Confidence::High,
+        Some(caveat) => {
+            advice.confidence = Confidence::Low;
+            advice.caveats.insert(0, caveat.to_owned());
+        }
     }
     advice.proof = Some(proof);
 }
 
 const NOT_USED: &str =
     "With the index in place, the planner still chose another plan: it would not use it here.";
-const NOT_FASTER: &str = "The planner uses the index, but the plan is not faster with it.";
+const NOT_FASTER: &str =
+    "The planner uses the index, but the statement is not better with it: within 10%, or worse.";
+const MIXED: &str = "With the index the statement reads fewer pages but runs slower, or the reverse: measure again with more runs before relying on it.";
 
 /// Quotes an identifier when PostgreSQL would need it.
 fn quote(name: &str) -> String {

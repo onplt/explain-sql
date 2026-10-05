@@ -4,6 +4,41 @@ All notable changes to ExplainSQL. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- Ask the planner why it chose its plan: `--why-not [TABLE]` in connected
+  mode, or `y` on a node in the viewer. The statement is planned again with
+  the choice taken away (`enable_seqscan = off`, `enable_nestloop = off`) or
+  with enough `work_mem` for a spill, and the plans are compared. The answer
+  says whether an index can serve the condition at all and what keeps it
+  out, how much more expensive the planner estimates the alternative, and,
+  with `--measure`, whether the planner is right, or wrong because of a row
+  misestimate or its cost settings. A cost setting such as
+  `random_page_cost = 1.1` is suggested only once the plan it leads to is
+  measured better too. An existing index the planner did not use gets the
+  reason found instead of the likely ones.
+- `--measure` and `--runs N`: measure each plan N times, after one run that
+  only warms the cache, and compare the medians.
+- Comparisons report pages written to temporary files, and the JSON report
+  says how two plans compare (`change`, `basis`).
+
+### Changed
+
+- Before and after comparisons lead with pages, then temporary files, then
+  time, and ignore differences under 10% (and 0.1 ms). Fewer pages but a
+  slower run is a mixed result.
+
+### Fixed
+
+- Measuring a suggested index favored the index: the run without it often
+  met a colder cache than the run with it, which followed the build that
+  read the whole table, and any faster run counted as better. Both sides now
+  run once first to warm the cache, pages decide before time, and a
+  suggestion that is not better by more than the noise drops to low
+  confidence.
+
 ## [0.1.0] - 2026-10-05
 
 The first release: find out why a PostgreSQL query is slow, get a fix, and

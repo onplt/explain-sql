@@ -5,9 +5,14 @@
 //! `--allow-dml`, and everything else runs in a `READ ONLY` transaction, so
 //! that even a function that writes fails. Statements are sent with the
 //! extended query protocol, which refuses several statements in one string.
+//!
+//! A statement can be planned under planner settings (`enable_seqscan =
+//! off`, `work_mem = 64MB`): only those [`Setting::check`] accepts, set with
+//! `set_config(…, true)` inside the transaction, so they end with it.
 
 use std::time::Duration;
 
+use explainsql_core::scenario::Setting;
 use tokio_postgres::Client;
 
 use crate::{Error, Safety, describe};
@@ -102,6 +107,14 @@ pub(crate) fn options(mode: Mode, server_version: u32) -> String {
     }
 }
 
+/// Refuses settings explainsql does not change, before anything runs.
+pub(crate) fn check(settings: &[Setting]) -> Result<(), Error> {
+    for setting in settings {
+        setting.check().map_err(Error::Refused)?;
+    }
+    Ok(())
+}
+
 /// What a statement writes, from its estimated plan.
 pub(crate) async fn writes(
     client: &Client,
@@ -118,6 +131,7 @@ pub(crate) async fn writes(
         ),
         true,
         safety.timeout,
+        &[],
     )
     .await?;
     Ok(writes_of(&estimated))
@@ -145,10 +159,14 @@ pub(crate) async fn explain(
     client: &Client,
     sql: &str,
     mode: Mode,
+    settings: &[Setting],
     safety: Safety,
     server_version: u32,
 ) -> Result<String, Error> {
     let sql = statement(sql)?;
+    check(settings)?;
+    // Planned under the settings: whether the statement writes does not
+    // depend on them.
     let estimated = run(
         client,
         &format!(
@@ -157,24 +175,92 @@ pub(crate) async fn explain(
         ),
         true,
         safety.timeout,
+        settings,
     )
     .await?;
     if mode == Mode::Estimate {
         return Ok(estimated);
     }
-    let writes = writes_of(&estimated);
-    if let Some(reason) = writes.reason() {
-        if !safety.allow_dml {
-            return Err(Error::NeedsAllowDml(reason.to_owned()));
-        }
-    }
+    let writes = allowed_writes(&estimated, safety)?;
     run(
         client,
         &format!("EXPLAIN ({}) {sql}", options(Mode::Analyze, server_version)),
         writes == Writes::No,
         safety.timeout,
+        settings,
     )
     .await
+}
+
+/// Measures a statement `runs` times with EXPLAIN ANALYZE, after one more
+/// run that only warms the cache, so that each measured run finds what the
+/// statement reads already cached, as the others do. Each run happens in
+/// its own transaction that is rolled back.
+pub(crate) async fn measure(
+    client: &Client,
+    sql: &str,
+    settings: &[Setting],
+    runs: usize,
+    safety: Safety,
+    server_version: u32,
+) -> Result<Vec<String>, Error> {
+    let sql = statement(sql)?;
+    check(settings)?;
+    let estimated = run(
+        client,
+        &format!(
+            "EXPLAIN ({}) {sql}",
+            options(Mode::Estimate, server_version)
+        ),
+        true,
+        safety.timeout,
+        settings,
+    )
+    .await?;
+    let writes = allowed_writes(&estimated, safety)?;
+    let explain = format!("EXPLAIN ({}) {sql}", options(Mode::Analyze, server_version));
+    let mut plans = Vec::with_capacity(runs.max(1));
+    for warm_up in std::iter::once(true).chain(std::iter::repeat_n(false, runs.max(1))) {
+        let plan = run(
+            client,
+            &explain,
+            writes == Writes::No,
+            safety.timeout,
+            settings,
+        )
+        .await?;
+        if !warm_up {
+            plans.push(plan);
+        }
+    }
+    Ok(plans)
+}
+
+/// What the estimated plan says the statement writes, if `--allow-dml`
+/// lets it run.
+fn allowed_writes(estimated: &str, safety: Safety) -> Result<Writes, Error> {
+    let writes = writes_of(estimated);
+    match writes.reason() {
+        Some(reason) if !safety.allow_dml => Err(Error::NeedsAllowDml(reason.to_owned())),
+        _ => Ok(writes),
+    }
+}
+
+/// Sets planner settings until the end of the transaction. The names and
+/// values are bound as parameters, never spliced into the SQL.
+pub(crate) async fn apply(
+    client: &Client,
+    settings: &[Setting],
+) -> Result<(), tokio_postgres::Error> {
+    for setting in settings {
+        client
+            .query(
+                "SELECT set_config($1, $2, true)",
+                &[&setting.name, &setting.value],
+            )
+            .await?;
+    }
+    Ok(())
 }
 
 /// Runs one EXPLAIN inside a transaction that is rolled back, and returns
@@ -184,6 +270,7 @@ async fn run(
     explain: &str,
     read_only: bool,
     timeout: Duration,
+    settings: &[Setting],
 ) -> Result<String, Error> {
     let server = |error: tokio_postgres::Error| Error::Server(describe(&error));
     client
@@ -201,6 +288,7 @@ async fn run(
                 timeout.as_millis().max(1)
             ))
             .await?;
+        apply(client, settings).await?;
         client.query(explain, &[]).await
     }
     .await;

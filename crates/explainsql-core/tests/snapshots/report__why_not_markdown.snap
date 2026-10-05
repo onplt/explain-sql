@@ -1,0 +1,11 @@
+---
+source: crates/explainsql-core/tests/report.rs
+expression: "&markdown[markdown.find(\"### Why not\").unwrap()..]"
+---
+### Why not: the planner asked again
+
+- **COSTLIER · Why does Seq Scan on orders not use an index?** PostgreSQL can use Bitmap Heap Scan on orders, and estimates it about as expensive as the sequential scan (a close call: 5,210 against 4,917, within 10%). A small change in the statistics or the cost settings can flip this plan.
+  - Planner's choice: `Seq Scan on orders; statement cost 4,917`
+  - Alternative: `Bitmap Heap Scan on orders; statement cost 5,210`
+  - **Action:** Measure both plans to know whether the planner is right: --measure, or y in a viewer started with --measure.
+  - Planned again with enable\_seqscan = off; estimated.

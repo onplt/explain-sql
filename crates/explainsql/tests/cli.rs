@@ -223,3 +223,96 @@ fn connected_mode_runs_queries_safely() {
     let json: serde_json::Value = serde_json::from_str(&stdout(&output)).unwrap();
     assert!(json["plan"]["nodes"][0].get("actuals").is_none());
 }
+
+/// Asking the planner why, against the database named by
+/// `EXPLAINSQL_TEST_DATABASE_URL`; skipped without it.
+#[test]
+fn connected_mode_asks_the_planner_why() {
+    let Ok(url) = std::env::var("EXPLAINSQL_TEST_DATABASE_URL") else {
+        eprintln!("EXPLAINSQL_TEST_DATABASE_URL is not set; skipping");
+        return;
+    };
+    let json = |args: &[&str]| -> serde_json::Value {
+        let mut all = vec!["-d", url.as_str(), "--format", "json"];
+        all.extend_from_slice(args);
+        let output = run(&all, None);
+        assert!(output.status.success(), "{output:?}");
+        serde_json::from_str(&stdout(&output)).unwrap()
+    };
+
+    // A function of the column: no index can serve it, and the answer
+    // names the index it keeps out.
+    let report = json(&[
+        "-c",
+        "SELECT * FROM orders WHERE date_trunc('day', created_at) = timestamptz '2024-06-01 00:00:00+00'",
+        "--why-not",
+    ]);
+    let answer = &report["counterfactuals"][0];
+    assert_eq!(answer["topic"], "index", "{answer}");
+    assert_eq!(answer["verdict"], "unusable", "{answer}");
+    assert_eq!(answer["settings"][0]["name"], "enable_seqscan");
+    assert!(
+        answer["evidence"][0]["value"]
+            .as_str()
+            .unwrap()
+            .contains("applies date_trunc() to created_at"),
+        "{answer}"
+    );
+
+    // Most of the table: the planner can use the index, and estimates it
+    // more expensive.
+    let broad = "SELECT * FROM orders WHERE created_at < timestamptz '2025-06-01 00:00:00+00'";
+    let report = json(&["-c", broad, "--why-not", "orders"]);
+    let answer = &report["counterfactuals"][0];
+    assert_eq!(answer["verdict"], "costlier", "{answer}");
+    assert_eq!(answer["measured"], false);
+    // Measured, both plans run the same number of times.
+    let report = json(&["-c", broad, "--why-not", "--measure", "--runs", "2"]);
+    let answer = &report["counterfactuals"][0];
+    assert_eq!(answer["measured"], true, "{answer}");
+    assert_eq!(answer["comparison"]["before"]["runs"], 2, "{answer}");
+    assert_eq!(answer["comparison"]["after"]["runs"], 2, "{answer}");
+    assert_ne!(answer["verdict"], "unusable", "{answer}");
+
+    // A sort that spills: with more work_mem it stays in memory; whether
+    // that is faster is what the measurement says.
+    let report = json(&[
+        "-c",
+        "SELECT * FROM orders ORDER BY note",
+        "--why-not",
+        "--measure",
+    ]);
+    let answer = &report["counterfactuals"][0];
+    assert_eq!(answer["topic"], "memory", "{answer}");
+    assert_eq!(answer["comparison"]["after"]["temp_pages"], 0, "{answer}");
+
+    // Nothing to ask about a table the plan does not scan.
+    let output = run(
+        &[
+            "-d",
+            &url,
+            "-c",
+            "SELECT 1",
+            "--why-not",
+            "orders",
+            "--print",
+        ],
+        None,
+    );
+    assert!(output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("nothing to ask the planner about"),
+        "{output:?}"
+    );
+}
+
+#[test]
+fn asking_why_needs_a_database() {
+    let path = fixture("pg/16/seq_scan_selective.txt");
+    let output = run(&[path.to_str().unwrap(), "--why-not"], None);
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr)
+            .contains("--why-not and --measure ask the database")
+    );
+}

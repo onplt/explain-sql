@@ -4,26 +4,26 @@ expression: "frame(&mut app, 100, 30)"
 ---
 369.3 ms. 51% of it in Seq Scan on order_items oi, which reads 3,000,000 rows over 10 loops, and the
 join filter above keeps 14 of them.
-Planning 0.526 ms · Execution 369.3 ms · Buffers 21,527 pages, 18% from cache
- Plan · time in ea┌ Keys ────────────────────────────────────────────────────────┐──────────────────
-    Share     Time│ j k ↓ ↑     Move                                             │s Estimate Buffers
-!     45% 167.8 ms│ PgDn PgUp   Move a page                                      │4       15       0
-     3.3%  12.1 ms│ g G         First, last node                                 │0       10   2,417
-!     51% 189.3 ms│ h l ← →     Fold, unfold (h on a leaf: go to its parent)     │0  300,000  19,110
- Details ─────────│ Enter Space Fold or unfold                                   │──────────────────
-Nested Loop       │ /           Search node names and conditions                 │
-Time in node: 167.│ n N         Next, previous match                             │
-With children: 369│ 1 … 9       Go to the slowest nodes                          │
-Rows: 14 per loop │ f i         Show the findings, the advice                    │
-Estimate: 15 rows;│ Tab         Switch between the plan and the list             │
-Removed by join fi│ Enter       In the list: go to the node                      │
-Buffers: shared hi│ c           Copy the suggested CREATE INDEX                  │
-Read by the node i│ x           Time in the node, or including its children      │
-                  │ w           Wall-clock or CPU time (parallel plans)          │
-Join Filter: (o.id│ b           Time or buffers                                  │
-Output: o.id, oi.p│ J K         Scroll the details                               │
-                  │ r e         Connected: run again, edit the statement         │
-HIGH   ES005 Expen│ t           Connected: test the suggested index              │
+Planning 0.526 ms ┌ Keys ────────────────────────────────────────────────────────┐
+ Plan · time in ea│ j k ↓ ↑     Move                                             │──────────────────
+    Share     Time│ PgDn PgUp   Move a page                                      │s Estimate Buffers
+!     45% 167.8 ms│ g G         First, last node                                 │4       15       0
+     3.3%  12.1 ms│ h l ← →     Fold, unfold (h on a leaf: go to its parent)     │0       10   2,417
+!     51% 189.3 ms│ Enter Space Fold or unfold                                   │0  300,000  19,110
+ Details ─────────│ /           Search node names and conditions                 │──────────────────
+Nested Loop       │ n N         Next, previous match                             │
+Time in node: 167.│ 1 … 9       Go to the slowest nodes                          │
+With children: 369│ f i         Show the findings, the advice                    │
+Rows: 14 per loop │ Tab         Switch between the plan and the list             │
+Estimate: 15 rows;│ Enter       In the list: go to the node                      │
+Removed by join fi│ c           Copy the suggested CREATE INDEX                  │
+Buffers: shared hi│ x           Time in the node, or including its children      │
+Read by the node i│ w           Wall-clock or CPU time (parallel plans)          │
+                  │ b           Time or buffers                                  │
+Join Filter: (o.id│ J K         Scroll the details                               │
+Output: o.id, oi.p│ r e         Connected: run again, edit the statement         │
+                  │ t           Connected: test the suggested index              │
+HIGH   ES005 Expen│ y           Connected: ask the planner why it chose this node│
 On Nested Loop    │ Esc         Connected: cancel a run                          │
 Nested Loop repeat│ ?           This help                                        │p's time.
 Inner loops: 10   │ q Esc       Quit                                             │

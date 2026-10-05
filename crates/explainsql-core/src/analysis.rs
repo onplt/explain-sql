@@ -3,6 +3,7 @@
 use serde::Serialize;
 
 use crate::advisor::{self, Advice};
+use crate::counterfactual::Answer;
 use crate::format;
 use crate::ir::Plan;
 use crate::metrics::{self, Metrics};
@@ -19,6 +20,10 @@ pub struct Analysis {
     pub findings: Vec<Finding>,
     /// Index candidates, rewrites, and why slow scans get no index.
     pub advice: Vec<Advice>,
+    /// What the database said when asked why the planner chose its plan
+    /// (connected mode); empty until asked.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub counterfactuals: Vec<Answer>,
 }
 
 /// Computes the metrics and runs the rules.
@@ -32,6 +37,20 @@ pub fn analyze(plan: &Plan) -> Analysis {
         metrics,
         findings,
         advice,
+        counterfactuals: Vec::new(),
+    }
+}
+
+impl Analysis {
+    /// Records answers from the database, replacing earlier answers about
+    /// the same nodes and questions, and puts them into the advice.
+    pub fn record(&mut self, answers: Vec<Answer>) {
+        for answer in answers {
+            self.counterfactuals
+                .retain(|other| !(other.node == answer.node && other.question == answer.question));
+            self.counterfactuals.push(answer);
+        }
+        crate::counterfactual::annotate(&mut self.advice, &self.counterfactuals);
     }
 }
 

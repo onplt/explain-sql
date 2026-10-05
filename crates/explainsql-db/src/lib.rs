@@ -19,6 +19,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use explainsql_core::catalog::Catalog;
+use explainsql_core::scenario::Setting;
 use tokio::runtime::Runtime;
 use tokio_postgres::{CancelToken, Client};
 use tokio_postgres_rustls::MakeRustlsConnect;
@@ -177,11 +178,46 @@ impl Database {
     /// The plan of a statement as JSON: estimated, or measured with
     /// `EXPLAIN ANALYZE` inside a transaction that is always rolled back.
     pub fn explain(&self, sql: &str, mode: Mode, safety: Safety) -> Result<String, Error> {
+        self.explain_with(sql, mode, &[], safety)
+    }
+
+    /// The plan of a statement under planner settings, such as
+    /// `enable_seqscan = off`. They hold only inside the transaction that is
+    /// rolled back; settings that are not planner settings are refused.
+    pub fn explain_with(
+        &self,
+        sql: &str,
+        mode: Mode,
+        settings: &[Setting],
+        safety: Safety,
+    ) -> Result<String, Error> {
         self.canceller.cancelled.store(false, Ordering::SeqCst);
         let result = self.runtime.block_on(exec::explain(
             &self.client,
             sql,
             mode,
+            settings,
+            safety,
+            self.server_version,
+        ));
+        self.classify(result, safety)
+    }
+
+    /// `runs` measured plans of a statement under planner settings, after a
+    /// run that only warms the cache. Each run is rolled back.
+    pub fn measure(
+        &self,
+        sql: &str,
+        settings: &[Setting],
+        runs: usize,
+        safety: Safety,
+    ) -> Result<Vec<String>, Error> {
+        self.canceller.cancelled.store(false, Ordering::SeqCst);
+        let result = self.runtime.block_on(exec::measure(
+            &self.client,
+            sql,
+            settings,
+            runs,
             safety,
             self.server_version,
         ));
@@ -200,12 +236,14 @@ impl Database {
 
     /// The statement's plan without and with a suggested index: estimated
     /// with a HypoPG hypothetical index, or with `measured`, built for real
-    /// in a transaction that is rolled back and run with EXPLAIN ANALYZE.
+    /// in a transaction that is rolled back and run with EXPLAIN ANALYZE
+    /// `runs` times on each side, after a run that only warms the cache.
     pub fn prove(
         &self,
         sql: &str,
         ddl: &str,
         measured: bool,
+        runs: usize,
         safety: Safety,
     ) -> Result<Proof, Error> {
         self.canceller.cancelled.store(false, Ordering::SeqCst);
@@ -214,6 +252,7 @@ impl Database {
                 &self.client,
                 sql,
                 ddl,
+                runs,
                 safety,
                 self.server_version,
             ))
