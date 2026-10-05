@@ -2,7 +2,7 @@
 
 **Find out why your PostgreSQL query is slow, get a fix, and prove it works, without leaving the terminal.**
 
-![ExplainSQL showing a plan, its findings and a suggested index](demo.svg)
+![ExplainSQL run against PostgreSQL: the verdict on a slow query, why the planner uses no index, and the suggested index tested with HypoPG](demo.svg)
 
 ExplainSQL reads `EXPLAIN (ANALYZE, BUFFERS)` output from PostgreSQL 12 to 18, in JSON or text, as EXPLAIN prints it or still wrapped in psql output, a server log or a Markdown fence. It then:
 

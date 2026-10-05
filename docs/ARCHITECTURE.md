@@ -52,9 +52,9 @@ explain-sql/
 ├─ tools/cross-check/            # compares exclusive times with pev2 and explain.depesz.com
 ├─ docs/                         # the documentation site (mdBook): guide, rule catalog, design documents
 │  ├─ rules/ES001.md …           # one page per rule, with an example from the corpus
-│  └─ demo.svg                   # the README's demo, drawn by cargo xtask demo
+│  └─ demo.svg                   # the README's demo, drawn from xtask/demo/recording.json
 ├─ install/                      # install.sh, install.ps1, packaging and smoke tests for releases
-├─ xtask/                        # fixtures, rule pages, link check, demo
+├─ xtask/                        # fixtures, rule pages, link check, demo; demo/: its query and recording
 └─ .github/workflows/            # ci, docs, release, fixtures
 ```
 
@@ -340,4 +340,4 @@ A plan shows what the planner chose, not what it turned down. `counterfactual.rs
   - as `rule.docs` in JSON.
 
   `cargo xtask rule-docs` writes each rule page's example: the scenario that shows the rule best, its plan and explainsql's finding. `cargo xtask check-links` checks every relative link and anchor, and keeps site pages from linking outside `docs/`. The `docs` workflow runs both checks and builds the site on every push. It deploys to GitHub Pages only when run by hand or on a release tag, once Pages is enabled in the repository settings.
-- **Demo.** `cargo xtask demo` drives the viewer over the demo plan with a scripted sequence of keys. It draws each frame with the same renderer as the tests and writes an animated SVG (`docs/demo.svg`). The recording is deterministic, needs no terminal recorder, and CI checks it is current.
+- **Demo.** The README's demo is a recording of a real session. `cargo xtask demo --record` builds the release binary and runs it in a tmux pane against the database named by `EXPLAINSQL_TEST_DATABASE_URL` (the fixture schema, with HypoPG). It types the query and a scripted sequence of keys, waits for each result, and saves every screen as tmux shows it, colors included, to `xtask/demo/recording.json`. `cargo xtask demo` draws the animated SVG (`docs/demo.svg`) from that recording: drawing needs no database and gives the same SVG every time, so CI checks it is current.

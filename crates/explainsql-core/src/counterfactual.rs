@@ -551,6 +551,7 @@ pub fn answer(
     };
     let context = Context {
         plan,
+        analysis,
         alternative,
         run,
         run_metrics,
@@ -624,6 +625,8 @@ pub fn failed(question: &Question, error: &str) -> Answer {
 struct Context<'a> {
     /// The statement as the planner chose it.
     plan: &'a Plan,
+    /// Its findings and advice.
+    analysis: &'a Analysis,
     /// The first plan under the question's settings.
     alternative: &'a Plan,
     /// A measured run of the planner's choice, or the plan itself, and its
@@ -815,7 +818,9 @@ fn index_answer(
         for reason in &reasons {
             answer.evidence.push(evidence("Why", reason.clone()));
         }
-        answer.action = Some(unusable_action(&reasons));
+        answer.action = Some(
+            unusable_action(&reasons).unwrap_or_else(|| index_action(context, scan, relation)),
+        );
         return;
     }
     let path = format::node(other);
@@ -1207,28 +1212,85 @@ fn index_reason(name: &str, table: &Table) -> Option<String> {
     Some(format!("no index on {} starts with {name}", table.name))
 }
 
-fn unusable_action(reasons: &[String]) -> String {
-    if reasons
+/// What to do about a reason that names its own fix; `None` when the fix
+/// is an index.
+fn unusable_action(reasons: &[String]) -> Option<String> {
+    let action = if reasons
         .iter()
         .any(|reason| reason.starts_with("the condition casts"))
     {
-        "Compare the column with a value of its own type, so that it stands alone in the condition (the advice shows the rewrite).".to_owned()
+        "Compare the column with a value of its own type, so that it stands alone in the condition (the advice shows the rewrite)."
     } else if reasons
         .iter()
         .any(|reason| reason.starts_with("the condition applies"))
     {
-        "Rewrite the condition so that the column stands alone, such as a range of values instead of a function of the column, or index the expression itself.".to_owned()
+        "Rewrite the condition so that the column stands alone, such as a range of values instead of a function of the column, or index the expression itself."
     } else if reasons.iter().any(|reason| reason.contains("is invalid")) {
         "Rebuild the invalid index (REINDEX INDEX CONCURRENTLY), or drop it and create it again."
-            .to_owned()
     } else if reasons
         .iter()
         .any(|reason| reason.contains("scan has no condition"))
     {
-        "Nothing for an index to do: the statement reads every row.".to_owned()
+        "Nothing for an index to do: the statement reads every row."
+    } else if reasons
+        .iter()
+        .any(|reason| reason.contains("ORs conditions on different columns"))
+    {
+        "Index each column of the OR, so that PostgreSQL can combine the indexes with a BitmapOr."
     } else {
-        "Create an index that serves the condition: see the advice.".to_owned()
+        return None;
+    };
+    Some(action.to_owned())
+}
+
+/// Rows kept per row read from which reading the table usually beats an
+/// index: the share below which ES001 calls a scan selective.
+const MAX_SELECTIVITY: f64 = 0.05;
+
+/// What to do when an index is the fix: create the one the advice
+/// suggests. When the advice suggests none, the reason why, rather than a
+/// pointer to advice that is not there.
+fn index_action(context: &Context, scan: &Node, relation: &Relation) -> String {
+    let advice = || {
+        context
+            .analysis
+            .advice
+            .iter()
+            .filter(|advice| advice.node == Some(scan.id))
+    };
+    if advice().any(|advice| advice.index().is_some()) {
+        return "Create an index that serves the condition: see the advice.".to_owned();
     }
+    if let Some(reason) = advice().find_map(|advice| match &advice.kind {
+        AdviceKind::NoIndex { reason } => Some(reason),
+        _ => None,
+    }) {
+        return format!("No index is worth creating here: {reason}");
+    }
+    if let Some(kept) = kept_share(context, scan, relation).filter(|&kept| kept >= MAX_SELECTIVITY)
+    {
+        return format!(
+            "An index would hardly help: the scan keeps {} of the rows it reads, and fetching that many through an index usually costs more than reading the table.",
+            format::percent(kept)
+        );
+    }
+    "Create an index that serves the condition.".to_owned()
+}
+
+/// The share of the rows it reads that a measured scan keeps with its own
+/// filter: from the plan, or from the measured run of it.
+fn kept_share(context: &Context, scan: &Node, relation: &Relation) -> Option<f64> {
+    let measured = if scan.actuals.is_some() {
+        scan
+    } else {
+        fingerprint::find_scan(context.run, relation)?
+    };
+    measured.predicate(PredicateKind::Filter)?;
+    let actuals = measured
+        .actuals
+        .filter(|actuals| !actuals.never_executed())?;
+    let read = actuals.rows + measured.rows_removed_by_filter;
+    (read > 0.0).then(|| actuals.rows / read)
 }
 
 fn join_answer(context: &Context, question: &Question, answer: &mut Answer) {
@@ -1660,6 +1722,77 @@ Index Scan using orders_created_at_idx on orders  (cost=0.42..12000.00 rows=1000
         assert_eq!(
             answer.evidence[0].value,
             "the condition casts customer_id (integer), so an index on customer_id cannot serve it"
+        );
+    }
+
+    #[test]
+    fn points_at_the_advice_only_when_there_is_one() {
+        let action = |plan: &Plan, target: &Target, alternative: &str| {
+            let question = &ask(plan, target, false)[0];
+            let answer = respond(plan, question, &[], &[parse(alternative)], None, None);
+            assert_eq!(answer.verdict, Verdict::Unusable);
+            answer.action.unwrap()
+        };
+        // A selective scan of a large table: the advice suggests the index.
+        assert_eq!(
+            action(
+                &seq_scan(10, 2417, "11.900"),
+                &Target::Hotspots,
+                "Seq Scan on orders  (cost=10000000000.00..10000004917.00 rows=10 width=64)\n  Filter: (customer_id = 4242)",
+            ),
+            "Create an index that serves the condition: see the advice."
+        );
+        // Half of a small table: the advisor says why no index would help.
+        let half = parse(
+            "\
+Seq Scan on shipments  (cost=0.00..1839.00 rows=50000 width=12) (actual time=0.010..12.000 rows=50000 loops=1)
+  Filter: (state = 'active'::text)
+  Rows Removed by Filter: 50000
+  Buffers: shared hit=589
+Execution Time: 14.000 ms",
+        );
+        assert_eq!(
+            action(
+                &half,
+                &Target::Hotspots,
+                "Seq Scan on shipments  (cost=10000000000.00..10000001839.00 rows=50000 width=12)\n  Filter: (state = 'active'::text)",
+            ),
+            "No index is worth creating here: the table is small (589 pages (4.6 MB)), so reading all of it is cheap."
+        );
+        // Named, but too cold for advice: how much of the table it keeps.
+        let cold = parse(
+            "\
+Hash Join  (cost=5167.00..11203.00 rows=20000 width=12) (actual time=6.100..101.000 rows=20000 loops=1)
+  Hash Cond: (oi.order_id = o.id)
+  Buffers: shared hit=4401
+  ->  Seq Scan on order_items oi  (cost=0.00..4911.00 rows=300000 width=8) (actual time=0.010..60.000 rows=300000 loops=1)
+        Buffers: shared hit=1911
+  ->  Hash  (cost=4917.00..4917.00 rows=20000 width=4) (actual time=6.000..6.000 rows=20000 loops=1)
+        Buckets: 32768  Batches: 1  Memory Usage: 960kB
+        ->  Seq Scan on orders o  (cost=0.00..4917.00 rows=20000 width=4) (actual time=0.010..5.000 rows=20000 loops=1)
+              Filter: (status = 'shipped'::text)
+              Rows Removed by Filter: 180000
+              Buffers: shared hit=2490
+Execution Time: 102.000 ms",
+        );
+        assert_eq!(
+            action(
+                &cold,
+                &Target::parse("orders"),
+                "Seq Scan on orders o  (cost=10000000000.00..10000004917.00 rows=20000 width=4)\n  Filter: (status = 'shipped'::text)",
+            ),
+            "An index would hardly help: the scan keeps 10% of the rows it reads, and fetching that many through an index usually costs more than reading the table."
+        );
+        // Estimated only: nothing tells how many rows the scan keeps.
+        assert_eq!(
+            action(
+                &parse(
+                    "Seq Scan on orders  (cost=0.00..4917.00 rows=10 width=64)\n  Filter: (customer_id = 4242)"
+                ),
+                &Target::Node(NodeId(0)),
+                "Seq Scan on orders  (cost=10000000000.00..10000004917.00 rows=10 width=64)\n  Filter: (customer_id = 4242)",
+            ),
+            "Create an index that serves the condition."
         );
     }
 
