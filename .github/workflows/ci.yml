@@ -45,3 +45,23 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: cargo test --workspace --locked
+
+  db:
+    name: connected mode (PostgreSQL 16)
+    runs-on: ubuntu-24.04
+    env:
+      EXPLAINSQL_TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/explainsql?sslmode=disable
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Start PostgreSQL 16 with HypoPG and the fixture schema
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-16 postgresql-16-hypopg
+          sudo systemctl start postgresql
+          sudo -u postgres psql -c "ALTER USER postgres PASSWORD 'postgres'"
+          sudo -u postgres createdb explainsql
+          export PGPASSWORD=postgres
+          psql -h localhost -U postgres -d explainsql -q -v ON_ERROR_STOP=1 -f fixtures/schema.sql
+      - run: cargo test --locked -p explainsql-db -p explainsql

@@ -137,3 +137,69 @@ fn pager_passes_output_through_when_not_in_a_terminal() {
     let plan = std::fs::read_to_string(fixture("inputs/psql-aligned.txt")).unwrap();
     assert_eq!(stdout(&run(&["--pager"], Some(&plan))), plan);
 }
+
+#[test]
+fn connected_mode_needs_a_query() {
+    let output = run(&["-d", "postgresql://localhost/x"], None);
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("-f FILE or -c SQL"));
+}
+
+/// Against the database named by `EXPLAINSQL_TEST_DATABASE_URL`, as the
+/// CI's `db` job provides; skipped without it.
+#[test]
+fn connected_mode_runs_queries_safely() {
+    let Ok(url) = std::env::var("EXPLAINSQL_TEST_DATABASE_URL") else {
+        eprintln!("EXPLAINSQL_TEST_DATABASE_URL is not set; skipping");
+        return;
+    };
+    let output = run(
+        &[
+            "-d",
+            &url,
+            "-c",
+            "SELECT * FROM orders WHERE customer_id = 4242",
+        ],
+        None,
+    );
+    assert!(output.status.success(), "{output:?}");
+    let text = stdout(&output);
+    assert!(
+        text.contains("CREATE INDEX CONCURRENTLY ON public.orders (customer_id);"),
+        "{text}"
+    );
+    assert!(!text.contains("Not connected"), "{text}");
+
+    let delete = "DELETE FROM orders WHERE id > 199980";
+    let refused = run(&["-d", &url, "-c", delete], None);
+    assert!(!refused.status.success());
+    assert!(String::from_utf8_lossy(&refused.stderr).contains("--allow-dml"));
+    let output = run(&["-d", &url, "-c", delete, "--allow-dml"], None);
+    assert!(output.status.success(), "{output:?}");
+    let text = stdout(&output);
+    assert!(text.contains("ES009"), "{text}");
+    // The foreign key's columns come from the catalog.
+    assert!(
+        text.contains("CREATE INDEX CONCURRENTLY ON public.order_items (order_id);"),
+        "{text}"
+    );
+
+    // A query from a file, estimated only.
+    let file = std::env::temp_dir().join(format!("explainsql-cli-{}.sql", std::process::id()));
+    std::fs::write(&file, "SELECT count(*) FROM orders;\n").unwrap();
+    let output = run(
+        &[
+            "-d",
+            &url,
+            "-f",
+            file.to_str().unwrap(),
+            "--no-analyze",
+            "--format",
+            "json",
+        ],
+        None,
+    );
+    std::fs::remove_file(&file).unwrap();
+    let json: serde_json::Value = serde_json::from_str(&stdout(&output)).unwrap();
+    assert!(json["plan"]["nodes"][0].get("actuals").is_none());
+}

@@ -296,6 +296,14 @@ fn draw_tree(frame: &mut Frame, app: &mut App, theme: &Theme, area: Rect) {
         .title(Line::from(vec![
             Span::styled(" Plan ", theme.title),
             Span::styled(format!("· {mode} "), theme.dim),
+            Span::styled(
+                match &app.live {
+                    Some(live) if !live.measured => "· estimated: not run yet ",
+                    Some(_) => "· measured with EXPLAIN ANALYZE, rolled back ",
+                    None => "",
+                },
+                theme.warm,
+            ),
         ]));
     let inner = block.inner(area);
     frame.render_widget(block, area);
@@ -946,9 +954,24 @@ fn draw_status(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
             Span::styled("▏", theme.key),
             Span::styled("  Enter: find  Esc: cancel", theme.dim),
         ]),
+        _ if app.live.as_ref().is_some_and(|live| live.running.is_some()) => {
+            let (database, elapsed) = app
+                .live
+                .as_ref()
+                .and_then(|live| Some((live.database.as_str(), live.running?.elapsed())))
+                .unwrap_or_default();
+            Line::from(vec![
+                Span::styled("Running EXPLAIN ANALYZE ", theme.warm),
+                Span::styled(format!("on {database}… "), theme.dim),
+                Span::raw(format!("{:.1} s", elapsed.as_secs_f64())),
+                Span::styled("  Esc", theme.key),
+                Span::styled(" cancel", theme.dim),
+            ])
+        }
         (_, Some(message)) => Line::raw(message.clone()),
         _ => {
             let mut spans = Vec::new();
+            let connected = app.live.is_some();
             for (key, what) in [
                 ("j/k", "move"),
                 ("h/l", "fold"),
@@ -956,9 +979,14 @@ fn draw_status(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
                 ("1-9", "hotspots"),
                 ("Tab", "list"),
                 ("i", "advice"),
+                ("r", "run"),
+                ("e", "edit"),
                 ("?", "help"),
                 ("q", "quit"),
             ] {
+                if !connected && (key == "r" || key == "e") {
+                    continue;
+                }
                 spans.push(Span::styled(key, theme.key));
                 spans.push(Span::styled(format!(" {what}  "), theme.dim));
             }
@@ -968,7 +996,7 @@ fn draw_status(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
     frame.render_widget(Paragraph::new(line), area);
 }
 
-const HELP: [(&str, &str); 19] = [
+const HELP: [(&str, &str); 21] = [
     ("j k ↓ ↑", "Move"),
     ("PgDn PgUp", "Move a page"),
     ("g G", "First, last node"),
@@ -985,6 +1013,8 @@ const HELP: [(&str, &str); 19] = [
     ("w", "Wall-clock or CPU time (parallel plans)"),
     ("b", "Time or buffers"),
     ("J K", "Scroll the details"),
+    ("r e", "Connected: run again, edit the statement"),
+    ("Esc", "Connected: cancel a run"),
     ("?", "This help"),
     ("q Esc", "Quit"),
     ("", "Any key closes this help."),

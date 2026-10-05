@@ -4,7 +4,10 @@ use std::io::{IsTerminal, Read, Write};
 use std::process::{Command, ExitCode, Stdio};
 use std::{env, fs, io};
 
+mod connected;
+
 use clap::{Parser, ValueEnum};
+use explainsql_core::Analysis;
 use explainsql_core::ir::{Node, Plan};
 use explainsql_core::report;
 
@@ -20,6 +23,10 @@ use explainsql_core::report;
 ///
 /// For the most useful report, capture the plan with
 /// EXPLAIN (ANALYZE, BUFFERS, VERBOSE, SETTINGS).
+///
+/// Connected mode runs a query itself: explainsql -d "$DATABASE_URL" -f
+/// slow.sql. It shows the estimated plan, then runs EXPLAIN ANALYZE in a
+/// transaction that is always rolled back, READ ONLY unless --allow-dml.
 #[derive(Parser)]
 #[command(name = "explainsql", version)]
 struct Cli {
@@ -57,6 +64,35 @@ struct Cli {
     /// how a plan was read (with --format json: the parsed plan as JSON).
     #[arg(long)]
     debug_parse: bool,
+
+    /// Connected mode: the database, as a URL (postgresql://user@host/db),
+    /// key=value settings or a name. PG* variables, the service file and
+    /// ~/.pgpass apply as in psql.
+    #[arg(short = 'd', long, value_name = "DATABASE")]
+    dbname: Option<String>,
+
+    /// Connected mode: run the query in this file.
+    #[arg(short = 'f', long, value_name = "FILE", conflicts_with_all = ["file", "demo", "pager"])]
+    query_file: Option<String>,
+
+    /// Connected mode: run this query.
+    #[arg(short = 'c', long, value_name = "SQL", conflicts_with_all = ["file", "demo", "pager", "query_file"])]
+    command: Option<String>,
+
+    /// Connected mode: also run statements that modify data or lock rows.
+    /// They run inside a transaction that is rolled back, but sequences,
+    /// dblink calls and other effects outside the database are not undone.
+    #[arg(long)]
+    allow_dml: bool,
+
+    /// Connected mode: stop a run after this many seconds.
+    #[arg(long, value_name = "SECONDS", default_value_t = 30)]
+    timeout: u64,
+
+    /// Connected mode: show the estimated plan only, without running the
+    /// query.
+    #[arg(long)]
+    no_analyze: bool,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, ValueEnum)]
@@ -97,6 +133,13 @@ const DEMO: &str = include_str!("../demo/plan.txt");
 
 fn main() -> ExitCode {
     let cli = Cli::parse();
+    if cli.query_file.is_some() || cli.command.is_some() {
+        return connected::run(&cli);
+    }
+    if cli.dbname.is_some() {
+        eprintln!("error: give the query to run with -f FILE or -c SQL");
+        return ExitCode::FAILURE;
+    }
     let input = if cli.demo {
         DEMO.to_owned()
     } else {
@@ -131,14 +174,7 @@ fn main() -> ExitCode {
     }
     let analysis = explainsql_core::analyze(&plan);
     if cli.format == Format::Text && !cli.print && interactive() {
-        let options = explainsql_tui::Options {
-            background: match cli.theme {
-                Theme::Dark => explainsql_tui::Background::Dark,
-                Theme::Light => explainsql_tui::Background::Light,
-            },
-            depth: None,
-        };
-        match explainsql_tui::run(plan.clone(), analysis.clone(), options) {
+        match explainsql_tui::run(plan.clone(), analysis.clone(), viewer_options(&cli)) {
             Ok(()) => return ExitCode::SUCCESS,
             // Without a usable terminal, the report is the next best thing.
             Err(error) => {
@@ -146,7 +182,22 @@ fn main() -> ExitCode {
             }
         }
     }
-    let output = match cli.format {
+    emit(&report_for(&cli, &plan, &analysis))
+}
+
+fn viewer_options(cli: &Cli) -> explainsql_tui::Options {
+    explainsql_tui::Options {
+        background: match cli.theme {
+            Theme::Dark => explainsql_tui::Background::Dark,
+            Theme::Light => explainsql_tui::Background::Light,
+        },
+        depth: None,
+    }
+}
+
+/// The report in the format asked for.
+fn report_for(cli: &Cli, plan: &Plan, analysis: &Analysis) -> String {
+    match cli.format {
         Format::Text => {
             let color = match cli.color {
                 Color::Always => true,
@@ -157,12 +208,11 @@ fn main() -> ExitCode {
                         && env::var("TERM").map_or(true, |term| term != "dumb")
                 }
             };
-            report::text(&plan, &analysis, color)
+            report::text(plan, analysis, color)
         }
-        Format::Md => report::markdown(&plan, &analysis),
-        Format::Json => report::json(&plan, &analysis),
-    };
-    emit(&output)
+        Format::Md => report::markdown(plan, analysis),
+        Format::Json => report::json(plan, analysis),
+    }
 }
 
 /// Whether the viewer can run: the output is a terminal that can show it.

@@ -17,6 +17,7 @@
 
 pub mod advisor;
 pub mod analysis;
+pub mod catalog;
 pub mod expr;
 pub mod format;
 pub mod ir;

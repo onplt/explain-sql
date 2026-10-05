@@ -50,7 +50,7 @@ explain-sql/
 └─ .github/workflows/            # ci, fixtures, release
 ```
 
-Not there yet: the contents of `explainsql-db` (an empty placeholder for now), `docs/rules/` and the release workflow. In a terminal the binary opens the viewer; elsewhere, or with `--print`, it prints a report (`--format text|md|json`). `--debug-parse` shows what the parsers made of an input.
+Not there yet: the proof loop of `explainsql-db`, `docs/rules/` and the release workflow. In a terminal the binary opens the viewer; elsewhere, or with `--print`, it prints a report (`--format text|md|json`). `--debug-parse` shows what the parsers made of an input.
 
 We use four crates and no more. Keeping `core` free of I/O is required for WebAssembly and for fast, deterministic tests; finer splits would slow down early development.
 
@@ -237,14 +237,42 @@ We considered `sqlparser-rs`, which would mean wrapping each condition as `SELEC
 
 Quality gate (`tests/advisor.rs`): every scenario says what the advisor must conclude: `advice: none` (a trap for naive advisors), `advice: rewrite`, or `advice: index` with each expected index in an `index:` line. On every version and in both formats, a trap gets no suggestion, and an index scenario gets exactly its indexes. A scenario without an `advice` line must get no suggestion either, so every suggestion the corpus produces has been reviewed.
 
-Planned for connected mode (Phase 4b): candidates compared with the existing indexes by the left-prefix rule, with an explanation of why an existing index was probably not used (a cast, the collation, stale statistics, selectivity) instead of a duplicate; partial indexes for rare constants in `pg_stats.most_common_freqs`; the exact columns of a foreign key.
+In connected mode the catalog refines the advice (see "Connected mode and safety" below). Partial indexes for rare constants in `pg_stats.most_common_freqs` and `INCLUDE` columns are left for later.
 
 Related work: Microsoft's AutoAdmin "what-if" indexes (Chaudhuri and Narasayya), Dexter, postgres-mcp (HypoPG with a greedy, "Anytime"-style search) and pganalyze's writing on its indexing engine.
 
 ## Connected mode and safety
 
-- Connection settings follow libpq conventions (`PG*` environment variables, `~/.pgpass`, service files): if `psql` connects, `explainsql` should too.
-- `EXPLAIN ANALYZE` really executes the statement. Every run happens inside `BEGIN … ROLLBACK` with a `statement_timeout`. Statements that do not modify data run in a `READ ONLY` transaction. Data-modifying statements require an explicit `--allow-dml`, and the tool warns that some side effects are not undone by a rollback: sequence increments, dblink calls, and functions or foreign data wrappers that reach external systems.
-- The estimated plan (`EXPLAIN` without `ANALYZE`) is shown immediately. The `ANALYZE` run happens in the background and can be cancelled.
-- DDL for verification is disabled by default (`--allow-ddl`), uses `SET LOCAL lock_timeout`, and asks for confirmation after showing the table size.
-- Catalog reads are limited to the relations that appear in the plan.
+`explainsql -d "$DATABASE_URL" -f slow.sql` (or `-c "SELECT …"`) runs the query itself. `explainsql-db` holds the connection on a small Tokio runtime behind a blocking API. The binary runs it on a worker thread that talks to the viewer over channels.
+
+- **Connection settings follow libpq** (`conn.rs`): if `psql` connects, `explainsql` does too. In order of precedence:
+  1. what `-d` gives: a URL, `key=value` settings or a database name;
+  2. the service file (`PGSERVICE`, `~/.pg_service.conf`, then the system file);
+  3. the `PG*` environment variables;
+  4. the defaults: the Unix socket, or localhost, port 5432 and the user's name.
+
+  The password comes from `~/.pgpass` (`%APPDATA%\postgresql\pgpass.conf` on Windows). Like libpq, explainsql ignores the file when others can read it. TLS uses rustls (`tls.rs`) with libpq's meanings:
+  - `prefer` and `require` encrypt without checking the certificate;
+  - `verify-ca` checks the chain against `sslrootcert` or the system store;
+  - `verify-full` also checks the host name.
+- **Every run is rolled back** (`exec.rs`). Each `EXPLAIN` happens inside `BEGIN … ROLLBACK`, with `SET LOCAL statement_timeout` (`--timeout`, 30 s by default). `ROLLBACK` runs whatever happened before it, and the code has no path that commits.
+- **The estimated plan comes first.** It shows at once, and it tells what the statement does. A `ModifyTable` node (`INSERT`, `UPDATE`, `DELETE`, `MERGE`, also inside a `WITH`) or a `LockRows` node (`FOR UPDATE`) means the statement writes. Such statements run under `EXPLAIN ANALYZE` only with `--allow-dml`, whose help warns that sequences, dblink calls and other effects outside the database are not undone. Every other statement runs in a `READ ONLY` transaction, where even a function that writes fails.
+- **One statement, of a kind EXPLAIN takes.** Statements go through the extended query protocol, which refuses several statements in one string. Anything that does not start with `SELECT`, `WITH`, `VALUES`, `TABLE`, `INSERT`, `UPDATE`, `DELETE` or `MERGE` is refused before anything runs. That covers DDL, `CREATE TABLE AS` and a pasted `EXPLAIN`.
+- **In the viewer**, `EXPLAIN ANALYZE` runs in the background while the estimated plan is shown. The status line counts the seconds, and `Esc` cancels the run through PostgreSQL's cancel request. `r` runs the statement again. `e` opens it in `$VISUAL` or `$EDITOR`, then shows the estimated plan of the edited statement and runs it.
+- **Catalog reads** (`catalog.rs`) cover only what the advisor needs. They run in a read-only transaction:
+  - for the tables in the plan, in the advice and behind the foreign keys it names: the size, the indexes (with their key columns and validity), the column collations and `n_distinct`, and the last analyze;
+  - the columns of those foreign keys;
+  - the installed extensions.
+
+  `advisor::refine` then:
+  - turns a candidate that an existing valid index already covers (by the left-prefix rule) into an explanation of why the planner probably did not use it;
+  - turns a foreign-key suggestion into a `CREATE INDEX` on its referencing columns;
+  - drops `text_pattern_ops` for columns with the C collation, and the `pg_trgm` caveat when the extension is installed;
+  - states how large the table to index is.
+- **Tests** (`crates/explainsql-db/tests/live.rs`, and the connected cases of `crates/explainsql/tests/cli.rs`) run against a database with the fixture schema, named by `EXPLAINSQL_TEST_DATABASE_URL`; the CI's `db` job provides PostgreSQL 16 with HypoPG. A second session counts the rows of the tables touched by `DELETE`, `UPDATE`, `INSERT` and a data-modifying `WITH` before and after each runs with `--allow-dml`: nothing ever changes. Other tests cover:
+  - the refusal without `--allow-dml`;
+  - a writing function failing in the read-only transaction;
+  - several statements and DDL being refused;
+  - the timeout and cancellation, after which the connection stays usable;
+  - the catalog reads.
+- **Planned (Phase 4c):** verifying a suggestion with HypoPG, or with `--allow-ddl` by building the index in a rolled-back transaction under `SET LOCAL lock_timeout`, after confirming the table size; then a before/after comparison.

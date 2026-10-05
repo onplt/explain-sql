@@ -2,7 +2,7 @@
 
 **Find out why your PostgreSQL query is slow, get a fix, and prove it works, without leaving the terminal.**
 
-> 🚧 **Early development.** There is no release yet. The repository holds the design documents, a corpus of real `EXPLAIN` plans from PostgreSQL 12–18, the parsers, the analysis (exclusive times, twelve rules and a static report), the interactive viewer and the offline index advisor. The connected mode is not built yet. Watch the repository if you want to know when the first release ships.
+> 🚧 **Early development.** There is no release yet. The repository holds the design documents, a corpus of real `EXPLAIN` plans from PostgreSQL 12–18, the parsers, the analysis (exclusive times, twelve rules and a static report), the interactive viewer, the index advisor and the connected mode. The proof loop (testing a suggested index) is not built yet. Watch the repository if you want to know when the first release ships.
 
 ## What it will do
 
@@ -34,12 +34,15 @@ cargo test --workspace                              # all tests, including the c
 cargo run -p explainsql -- --demo                   # try the viewer on a sample plan
 cargo run -p explainsql -- plan.txt                 # open a plan in the viewer (press ? for the keys)
 cargo run -p explainsql -- --print plan.txt         # print the report instead: where the time went, and what to do
+cargo run -p explainsql -- -d "$DATABASE_URL" -f slow.sql   # run the query: estimated plan, then EXPLAIN ANALYZE, rolled back
 cargo run -p explainsql -- --format md plan.txt     # the same report as Markdown (or --format json)
 cargo run -p explainsql -- --debug-parse plan.txt   # show what the parser made of a plan
 cargo xtask gen-fixtures                            # regenerate the EXPLAIN corpus (requires Docker)
 ```
 
 The plan can come from a file or standard input, in JSON or text. It can be as `EXPLAIN` printed it, or still wrapped in psql output, a server log entry, cells copied from a GUI client or a Markdown code fence. For the most useful report, capture it with `EXPLAIN (ANALYZE, BUFFERS, VERBOSE, SETTINGS)`.
+
+In connected mode, `-d` takes what psql takes: a URL, `key=value` settings or a database name, with the `PG*` variables, the service file and `~/.pgpass` applied the same way. Every run happens in a transaction that is rolled back. It is `READ ONLY` unless `--allow-dml` lets data-modifying statements run (sequences and effects outside the database are not undone). `--timeout` (30 s by default) and `Esc` in the viewer stop a run.
 
 To make every `EXPLAIN` in psql open in the viewer, set the pager. Other output goes on to `$PAGER` or `less -S`:
 
@@ -58,4 +61,4 @@ The plan corpus and its scenario format are described in [fixtures/README.md](fi
 
 ## Status
 
-Pre-alpha. Phase 0 (workspace skeleton, CI and the fixture corpus) and Phase 1 (the parsers) are done. Phase 2 (the metrics engine, the rules and the static report) and Phase 3 (the interactive viewer) are code-complete. In Phase 4, the offline index advisor is done; the connected mode and the proof loop are next. Feedback is welcome in the issues.
+Pre-alpha. Phase 0 (workspace skeleton, CI and the fixture corpus) and Phase 1 (the parsers) are done. Phase 2 (the metrics engine, the rules and the static report) and Phase 3 (the interactive viewer) are code-complete. In Phase 4, the index advisor and the connected mode are done; the proof loop is next. Feedback is welcome in the issues.

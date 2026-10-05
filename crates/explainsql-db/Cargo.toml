@@ -9,6 +9,12 @@ repository.workspace = true
 
 [dependencies]
 explainsql-core.workspace = true
+rustls.workspace = true
+rustls-native-certs.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+tokio-postgres.workspace = true
+tokio-postgres-rustls.workspace = true
 
 [lints]
 workspace = true

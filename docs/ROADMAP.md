@@ -57,12 +57,18 @@ Phase 0 is complete: the workspace skeleton, CI, and 65 scenarios captured on Po
 
 Phase 2 is code-complete. The metrics engine, the twelve rules and the static report are in place. Exclusive times agree with pev2 and explain.depesz.com within 5% on every node of 24 reference plans, except one deliberate difference in rounding (see [tools/cross-check](../tools/cross-check/README.md)). The report snapshots are stable. The remaining exit criterion is a quiet alpha with a few DBAs.
 
-Phase 3 is code-complete. The viewer has the layout, the virtualized tree, details, findings, search, folding (including similar siblings), view modes, colors, pager mode and `--demo`. A frame of a 5,000-node plan takes about 0.3 ms. `TestBackend` snapshots cover 120×40 and 80×24. The keys for the connected mode (`t`, `e`, `r`) come with Phase 4.
+Phase 3 is code-complete. The viewer has the layout, the virtualized tree, details, findings, search, folding (including similar siblings), view modes, colors, pager mode and `--demo`. A frame of a 5,000-node plan takes about 0.3 ms. `TestBackend` snapshots cover 120×40 and 80×24. The keys for the connected mode come with Phase 4.
 
 Phase 4 is in progress, in three steps:
 - 4a, the offline advisor, is done. Conditions are read by the hand-written reader in `expr.rs`. Candidates come from the scan rules and from three more patterns (top-N sorts, partitions, correlated subqueries), followed by the rewrites and explanations of why no index would help. In the viewer, `i` shows the advice and `c` copies a statement. All 7 `advice: none` scenarios get no suggestion on every version and in both formats.
-- 4b, the connected mode, is next.
-- 4c, the proof loop, follows.
+- 4b, the connected mode, is done:
+  - libpq-compatible connection settings and TLS;
+  - the safe executor: always rolled back, `READ ONLY` unless `--allow-dml`, a `statement_timeout`, a single statement through the extended protocol;
+  - catalog reads that refine the advice;
+  - in the viewer, background `EXPLAIN ANALYZE` with `Esc`, plus `r` and `e`.
+
+  Integration tests against PostgreSQL 16 show that data-modifying statements are never committed.
+- 4c, the proof loop, is next.
 
 | Phase | Estimate | Scope | Exit criteria |
 |---|---|---|---|

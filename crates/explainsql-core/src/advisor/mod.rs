@@ -12,6 +12,9 @@
 
 mod keys;
 mod patterns;
+mod refine;
+
+pub use refine::refine;
 
 use serde::Serialize;
 
@@ -50,6 +53,9 @@ pub enum AdviceKind {
     /// Rewrite the condition: it wraps the column, so no index on the column
     /// can serve it.
     Rewrite { column: String, wrapper: String },
+    /// An index that would serve the condition already exists (connected
+    /// mode): why the planner probably did not use it.
+    AlreadyIndexed { index: String, definition: String },
     /// A slow scan that an index would not help, and why.
     NoIndex { reason: String },
 }
@@ -184,6 +190,7 @@ impl Advice {
             AdviceKind::Rewrite { column, .. } => {
                 format!("Rewrite the condition on {column}")
             }
+            AdviceKind::AlreadyIndexed { index, .. } => format!("Already indexed by {index}"),
             AdviceKind::NoIndex { .. } => "No index".to_owned(),
         }
     }
@@ -222,7 +229,9 @@ pub fn advise(plan: &Plan, metrics: &Metrics, findings: &[Finding]) -> Vec<Advic
     advice.sort_by_key(|advice| {
         let rank = match advice.kind {
             AdviceKind::Index { .. } => 0,
-            AdviceKind::Rewrite { .. } | AdviceKind::ForeignKey { .. } => 1,
+            AdviceKind::Rewrite { .. }
+            | AdviceKind::ForeignKey { .. }
+            | AdviceKind::AlreadyIndexed { .. } => 1,
             AdviceKind::NoIndex { .. } => 2,
         };
         (rank, std::cmp::Reverse(advice.confidence))

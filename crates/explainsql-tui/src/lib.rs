@@ -6,12 +6,14 @@ mod theme;
 mod ui;
 
 use std::io::{self, Write};
+use std::sync::mpsc::{Receiver, Sender};
+use std::time::{Duration, Instant};
 
 use explainsql_core::Analysis;
 use explainsql_core::ir::Plan;
-use ratatui::crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
+use ratatui::crossterm::event::{self, KeyCode, KeyEventKind, KeyModifiers};
 
-pub use app::{App, Key, Outcome};
+pub use app::{App, Key, Live, Outcome};
 pub use theme::{Background, Depth, Theme};
 
 /// How the viewer looks.
@@ -22,19 +24,103 @@ pub struct Options {
     pub depth: Option<Depth>,
 }
 
+/// Connected mode: the statement, and the channels to the thread that runs
+/// it. The viewer sends [`Command`]s and shows the [`Event`]s that come back.
+pub struct Connection {
+    /// `user@host:port/dbname`.
+    pub database: String,
+    pub sql: String,
+    pub commands: Sender<Command>,
+    pub events: Receiver<Event>,
+    /// Stops the running statement, from the viewer's thread.
+    pub cancel: Box<dyn Fn() + Send>,
+    /// The plan shown first was measured, not estimated.
+    pub measured: bool,
+    /// Start an EXPLAIN ANALYZE as soon as the viewer opens.
+    pub analyze_now: bool,
+}
+
+/// What the viewer asks the connection to do.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Command {
+    /// Run the statement with EXPLAIN ANALYZE; first send the estimated plan
+    /// when `estimate_first` (after an edit).
+    Analyze { sql: String, estimate_first: bool },
+}
+
+/// What comes back.
+pub enum Event {
+    Plan {
+        plan: Box<Plan>,
+        analysis: Box<Analysis>,
+        measured: bool,
+    },
+    Failed(String),
+}
+
 /// Shows a plan until the user quits. Keys are read from the terminal even
 /// when the plan came from standard input.
 pub fn run(plan: Plan, analysis: Analysis, options: Options) -> io::Result<()> {
+    run_with(App::new(plan, analysis), options, None)
+}
+
+/// Shows a plan from a database, with `r` to run the statement again, `e`
+/// to edit it and `Esc` to cancel a run.
+pub fn run_connected(
+    plan: Plan,
+    analysis: Analysis,
+    options: Options,
+    connection: Connection,
+) -> io::Result<()> {
+    let mut app = App::new(plan, analysis);
+    app.live = Some(Live {
+        database: connection.database.clone(),
+        sql: connection.sql.clone(),
+        measured: connection.measured,
+        running: None,
+    });
+    run_with(app, options, Some(connection))
+}
+
+fn run_with(mut app: App, options: Options, connection: Option<Connection>) -> io::Result<()> {
     let theme = Theme::new(
         options.background,
         options.depth.unwrap_or_else(Depth::detect),
     );
-    let mut app = App::new(plan, analysis);
+    if let Some(connection) = &connection {
+        if connection.analyze_now {
+            start(&mut app, connection, false);
+        }
+    }
     // Restores the terminal on panic as well.
     let mut terminal = ratatui::try_init()?;
-    let result = (|| loop {
-        terminal.draw(|frame| ui::draw(frame, &mut app, &theme))?;
-        let Event::Key(key) = event::read()? else {
+    let result = event_loop(&mut terminal, &mut app, &theme, connection.as_ref());
+    ratatui::try_restore()?;
+    result
+}
+
+fn event_loop(
+    terminal: &mut ratatui::DefaultTerminal,
+    app: &mut App,
+    theme: &Theme,
+    connection: Option<&Connection>,
+) -> io::Result<()> {
+    loop {
+        if let Some(connection) = connection {
+            while let Ok(event) = connection.events.try_recv() {
+                receive(app, event);
+            }
+        }
+        terminal.draw(|frame| ui::draw(frame, app, theme))?;
+        // While a statement runs, wake up to show the elapsed time and the
+        // result.
+        let running = app.live.as_ref().is_some_and(|live| live.running.is_some());
+        if connection.is_some()
+            && !event::poll(Duration::from_millis(if running { 100 } else { 250 }))?
+        {
+            continue;
+        }
+        let event::Event::Key(key) = event::read()? else {
             // Resizes and other events just redraw.
             continue;
         };
@@ -63,14 +149,107 @@ pub fn run(plan: Plan, analysis: Analysis, options: Options) -> io::Result<()> {
             _ => continue,
         };
         let page = app.tree_height.saturating_sub(1);
-        match app.handle(key, page) {
-            Outcome::Quit => return Ok(()),
-            Outcome::Copy(text) => copy(&text)?,
-            Outcome::Continue => {}
+        match (app.handle(key, page), connection) {
+            (Outcome::Quit, _) => return Ok(()),
+            (Outcome::Copy(text), _) => copy(&text)?,
+            (Outcome::Run, Some(connection)) => start(app, connection, false),
+            (Outcome::Edit, Some(connection)) => {
+                let sql = app
+                    .live
+                    .as_ref()
+                    .map(|live| live.sql.clone())
+                    .unwrap_or_default();
+                ratatui::try_restore()?;
+                let edited = edit(&sql);
+                *terminal = ratatui::try_init()?;
+                match edited {
+                    Ok(Some(sql)) => {
+                        if let Some(live) = &mut app.live {
+                            live.sql = sql;
+                        }
+                        start(app, connection, true);
+                    }
+                    Ok(None) => app.message = Some("The statement is unchanged.".to_owned()),
+                    Err(error) => app.message = Some(format!("Cannot edit: {error}")),
+                }
+            }
+            (Outcome::Cancel, Some(connection)) => {
+                (connection.cancel)();
+                app.message = Some("Cancelling…".to_owned());
+            }
+            _ => {}
         }
-    })();
-    ratatui::try_restore()?;
-    result
+    }
+}
+
+/// Asks the connection for an EXPLAIN ANALYZE of the current statement.
+fn start(app: &mut App, connection: &Connection, estimate_first: bool) {
+    let Some(live) = &mut app.live else {
+        return;
+    };
+    let command = Command::Analyze {
+        sql: live.sql.clone(),
+        estimate_first,
+    };
+    if connection.commands.send(command).is_ok() {
+        live.running = Some(Instant::now());
+    } else {
+        app.message = Some("The connection is closed.".to_owned());
+    }
+}
+
+fn receive(app: &mut App, event: Event) {
+    match event {
+        Event::Plan {
+            plan,
+            analysis,
+            measured,
+        } => {
+            app.replace(*plan, *analysis);
+            if let Some(live) = &mut app.live {
+                live.measured = measured;
+                if measured {
+                    live.running = None;
+                }
+            }
+        }
+        Event::Failed(error) => {
+            if let Some(live) = &mut app.live {
+                live.running = None;
+            }
+            app.message = Some(error);
+        }
+    }
+}
+
+/// Opens the statement in `$VISUAL` or `$EDITOR`; `None` when it comes back
+/// unchanged or empty.
+fn edit(sql: &str) -> io::Result<Option<String>> {
+    let path = std::env::temp_dir().join(format!("explainsql-{}.sql", std::process::id()));
+    std::fs::write(&path, format!("{sql}\n"))?;
+    let editor = std::env::var("VISUAL")
+        .or_else(|_| std::env::var("EDITOR"))
+        .unwrap_or_else(|_| if cfg!(windows) { "notepad" } else { "vi" }.to_owned());
+    let status = if cfg!(windows) {
+        std::process::Command::new("cmd")
+            .arg("/C")
+            .arg(format!("{editor} \"{}\"", path.display()))
+            .status()
+    } else {
+        std::process::Command::new("sh")
+            .arg("-c")
+            .arg(format!("{editor} \"$1\""))
+            .arg("sh")
+            .arg(&path)
+            .status()
+    };
+    let edited = std::fs::read_to_string(&path);
+    let _ = std::fs::remove_file(&path);
+    if !status?.success() {
+        return Err(io::Error::other(format!("{editor} failed")));
+    }
+    let edited = edited?.trim().to_owned();
+    Ok((!edited.is_empty() && edited != sql.trim()).then_some(edited))
 }
 
 /// Puts text on the clipboard with the OSC 52 escape sequence, which

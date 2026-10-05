@@ -62,7 +62,7 @@ fn every_plan_gets_exactly_its_advice() {
                         targets.insert(format!("constraint {constraint}"));
                     }
                     AdviceKind::Rewrite { .. } => rewrites += 1,
-                    AdviceKind::NoIndex { .. } => {}
+                    AdviceKind::NoIndex { .. } | AdviceKind::AlreadyIndexed { .. } => {}
                 }
             }
             suggestions += targets.len();

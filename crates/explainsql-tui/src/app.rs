@@ -56,6 +56,24 @@ pub enum Outcome {
     Quit,
     /// Put this text on the clipboard.
     Copy(String),
+    /// Run the statement again with EXPLAIN ANALYZE (connected mode).
+    Run,
+    /// Open the statement in the editor, then run it (connected mode).
+    Edit,
+    /// Stop the running statement (connected mode).
+    Cancel,
+}
+
+/// The state of connected mode.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Live {
+    /// `user@host:port/dbname`.
+    pub database: String,
+    pub sql: String,
+    /// The plan shown was measured with EXPLAIN ANALYZE, not estimated.
+    pub measured: bool,
+    /// A run in progress, and since when.
+    pub running: Option<std::time::Instant>,
 }
 
 /// The search being typed or last confirmed.
@@ -88,6 +106,8 @@ pub struct App {
     pub help: bool,
     /// A one-line notice in the status bar.
     pub message: Option<String>,
+    /// Set in connected mode.
+    pub live: Option<Live>,
     /// Rows of the tree on screen at the last frame, for paging.
     pub tree_height: usize,
     /// The first finding on screen.
@@ -144,6 +164,7 @@ impl App {
             search: None,
             help: false,
             message: None,
+            live: None,
             tree_height: 10,
             findings_offset: 0,
             labels: Vec::new(),
@@ -151,13 +172,44 @@ impl App {
             cpu_total: 0.0,
             subtree_cpu: Vec::new(),
         };
+        app.load();
+        app
+    }
+
+    /// Shows another plan of the same statement, such as the measured plan
+    /// after the estimated one: folds, search and lists start over, and the
+    /// selection stays on the same row when it can.
+    pub fn replace(&mut self, plan: Plan, analysis: Analysis) {
+        let selected = self.selected;
+        self.plan = plan;
+        self.analysis = analysis;
+        self.rows.clear();
+        self.collapsed.clear();
+        self.expanded.clear();
+        self.finding = 0;
+        self.findings_offset = 0;
+        self.advice = 0;
+        self.advice_offset = 0;
+        self.detail_scroll = 0;
+        self.search = None;
+        if self.focus != Focus::Tree {
+            self.focus = Focus::Tree;
+        }
+        self.panel = Panel::Findings;
+        self.load();
+        self.selected = selected.min(self.rows.len().saturating_sub(1));
+    }
+
+    /// Derives what the viewer shows from the plan and the analysis.
+    fn load(&mut self) {
+        let app = self;
         if app.analysis.findings.is_empty() && !app.analysis.advice.is_empty() {
             app.panel = Panel::Advice;
         }
         app.labels = app.plan.nodes.iter().map(format::node).collect();
         let mut widths = ["Rows".len(), "Estimate".len(), 0];
         for node in &app.plan.nodes {
-            let counts = crate::ui::counts(&app, node.id);
+            let counts = crate::ui::counts(app, node.id);
             for (width, cell) in
                 widths
                     .iter_mut()
@@ -186,7 +238,6 @@ impl App {
         app.cpu_total = subtree.first().copied().unwrap_or(0.0);
         app.subtree_cpu = subtree;
         app.rebuild();
-        app
     }
 
     /// A node's name: `Seq Scan on orders`.
@@ -313,8 +364,24 @@ impl App {
             self.help = false;
             return Outcome::Continue;
         }
+        let running = self
+            .live
+            .as_ref()
+            .is_some_and(|live| live.running.is_some());
         match key {
+            Key::Esc if running => return Outcome::Cancel,
             Key::Char('q') | Key::Esc => return Outcome::Quit,
+            Key::Char('r') | Key::Char('e') if self.live.is_none() => {
+                self.message = Some(
+                    "Not connected: r and e run the statement in connected mode (explainsql -d … -f query.sql)."
+                        .to_owned(),
+                );
+            }
+            Key::Char('r') | Key::Char('e') if running => {
+                self.message = Some("A run is in progress; Esc cancels it.".to_owned());
+            }
+            Key::Char('r') => return Outcome::Run,
+            Key::Char('e') => return Outcome::Edit,
             Key::Char('?') => self.help = true,
             Key::Tab => {
                 self.focus = match (self.focus, self.panel) {
