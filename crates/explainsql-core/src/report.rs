@@ -3,7 +3,7 @@
 
 use serde::Serialize;
 
-use crate::advisor::{Advice, AdviceKind, Confidence};
+use crate::advisor::{Advice, AdviceKind, Confidence, Verification};
 use crate::analysis::Analysis;
 use crate::format;
 use crate::ir::{NodeId, Plan};
@@ -237,6 +237,10 @@ fn text_advice(out: &mut String, plan: &Plan, analysis: &Analysis, paint: &Paint
             }
             out.push_str(&wrap(&advice.summary, 10));
             out.push('\n');
+            if let Some(line) = proof_line(advice) {
+                out.push_str(&wrap(&line, 10));
+                out.push('\n');
+            }
             for caveat in &advice.caveats {
                 out.push_str(&paint.dim(&wrap(&format!("! {caveat}"), 10)));
                 out.push('\n');
@@ -271,6 +275,9 @@ fn markdown_advice(out: &mut String, plan: &Plan, analysis: &Analysis) {
             if let AdviceKind::Index { ddl, .. } = &advice.kind {
                 out.push_str(&format!("  ```sql\n  {ddl}\n  ```\n"));
             }
+            if let Some(line) = proof_line(advice) {
+                out.push_str(&format!("  - **{}**\n", escape(&line)));
+            }
             for caveat in &advice.caveats {
                 out.push_str(&format!("  - {}\n", escape(caveat)));
             }
@@ -285,6 +292,16 @@ fn markdown_advice(out: &mut String, plan: &Plan, analysis: &Analysis) {
             }
         }
     }
+}
+
+/// `Tested with HypoPG: Estimated cost 4917 → 46 (107× cheaper)`.
+fn proof_line(advice: &Advice) -> Option<String> {
+    let proof = advice.proof.as_ref()?;
+    let how = match advice.verification {
+        Verification::Measured => "Measured with the index built and rolled back",
+        _ => "Estimated with a hypothetical index (HypoPG)",
+    };
+    Some(format!("{how}: {}.", proof.summary()))
 }
 
 /// Suggestions, and explanations of why no index would help.

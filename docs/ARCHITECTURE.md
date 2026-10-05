@@ -32,6 +32,8 @@ explain-sql/
 │  │  ├─ src/expr.rs             # reads the conditions printed in plans
 │  │  ├─ src/rules/              # one file per rule
 │  │  ├─ src/advisor/            # index candidates, rewrites, and why no index
+│  │  ├─ src/catalog.rs          # what the database says about the plan's tables
+│  │  ├─ src/compare.rs          # before and after a change
 │  │  ├─ src/analysis.rs         # metrics + findings + the one-sentence verdict
 │  │  ├─ src/report.rs           # static reports: text, Markdown, JSON
 │  │  └─ tests/                  # corpus, inputs, metrics, rules, report snapshots, robustness
@@ -50,7 +52,7 @@ explain-sql/
 └─ .github/workflows/            # ci, fixtures, release
 ```
 
-Not there yet: the proof loop of `explainsql-db`, `docs/rules/` and the release workflow. In a terminal the binary opens the viewer; elsewhere, or with `--print`, it prints a report (`--format text|md|json`). `--debug-parse` shows what the parsers made of an input.
+Not there yet: `docs/rules/` and the release workflow. In a terminal the binary opens the viewer; elsewhere, or with `--print`, it prints a report (`--format text|md|json`). `--debug-parse` shows what the parsers made of an input.
 
 We use four crates and no more. Keeping `core` free of I/O is required for WebAssembly and for fast, deterministic tests; finer splits would slow down early development.
 
@@ -275,4 +277,12 @@ Related work: Microsoft's AutoAdmin "what-if" indexes (Chaudhuri and Narasayya),
   - several statements and DDL being refused;
   - the timeout and cancellation, after which the connection stays usable;
   - the catalog reads.
-- **Planned (Phase 4c):** verifying a suggestion with HypoPG, or with `--allow-ddl` by building the index in a rolled-back transaction under `SET LOCAL lock_timeout`, after confirming the table size; then a before/after comparison.
+- **The proof loop** (`prove.rs`) tests a suggested index before anyone creates it. It uses `t` in the viewer, or `--prove` with `--print`:
+  - With HypoPG installed, explainsql creates a hypothetical index inside a read-only transaction and gets the estimated plan with it. `hypopg_reset()` follows unconditionally, since hypothetical indexes outlive transactions. Nothing is built and nothing is locked.
+  - Without HypoPG, `--allow-ddl` builds the index for real, without `CONCURRENTLY`, inside a transaction that is rolled back. `SET LOCAL lock_timeout = '2s'` keeps it from waiting behind other sessions, and EXPLAIN ANALYZE measures the statement with it. Building blocks writes to the table, so the viewer first shows the table's size and asks. Only a single `CREATE INDEX` is accepted.
+  - `compare.rs` sets the plans side by side: execution time or estimated cost, pages, and the indexes the second plan uses. `advisor::verify` records the result: estimated or measured, with the before/after line. A suggestion the planner would not use, or that is not faster, drops to low confidence and says so.
+
+  After a run, `r` or an edit with `e` compares the new measured plan with the previous one in the status line.
+
+  A rolled-back `INSERT` or `UPDATE` still leaves dead rows until the next `VACUUM`, as any rolled-back transaction does; `--allow-dml`'s help says that effects outside the table data are not undone.
+- **Not yet:** a full tree diff between plans (v0.2), partial indexes from `pg_stats.most_common_freqs`, and `INCLUDE` columns.

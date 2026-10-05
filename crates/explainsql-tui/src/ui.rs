@@ -99,6 +99,9 @@ pub fn draw(frame: &mut Frame, app: &mut App, theme: &Theme) {
     if app.help {
         draw_help(frame, theme, area);
     }
+    if let Some(confirm) = &app.confirm {
+        draw_confirm(frame, theme, area, &confirm.question);
+    }
 }
 
 /// How many lines text takes when wrapped at word boundaries.
@@ -886,8 +889,9 @@ fn draw_advice(frame: &mut Frame, app: &mut App, theme: &Theme, area: Rect) {
                 AdviceKind::NoIndex { .. } => String::new(),
                 _ => format!(" {}: ", advice.title()),
             };
-            let text = match &advice.kind {
-                AdviceKind::Index { ddl, .. } => ddl.clone(),
+            let text = match (&advice.kind, &advice.proof) {
+                (AdviceKind::Index { .. }, Some(proof)) => format!("tested: {}", proof.summary()),
+                (AdviceKind::Index { ddl, .. }, None) => ddl.clone(),
                 _ => advice.summary.clone(),
             };
             let head = if head.is_empty() {
@@ -935,6 +939,26 @@ fn advice_lines<'a>(app: &App, theme: &Theme, advice: &Advice) -> Vec<Line<'a>> 
             Span::styled(caveat.clone(), theme.dim),
         ]));
     }
+    if let Some(proof) = &advice.proof {
+        lines.push(Line::raw(""));
+        lines.push(Line::styled(
+            format!("Before → after: {}", proof.summary()),
+            if proof.improved() {
+                theme.good
+            } else {
+                theme.warm
+            },
+        ));
+        if !proof.new_indexes.is_empty() {
+            lines.push(field(theme, "The plan uses", proof.new_indexes.join(", ")));
+        }
+    }
+    if matches!(advice.kind, AdviceKind::Index { .. })
+        && app.live.is_some()
+        && advice.proof.is_none()
+    {
+        lines.push(Line::styled("Press t to test it.", theme.dim));
+    }
     if !matches!(advice.kind, AdviceKind::NoIndex { .. }) {
         let status = match advice.verification {
             Verification::Unverified => "not verified: from the plan alone",
@@ -955,13 +979,19 @@ fn draw_status(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
             Span::styled("  Enter: find  Esc: cancel", theme.dim),
         ]),
         _ if app.live.as_ref().is_some_and(|live| live.running.is_some()) => {
-            let (database, elapsed) = app
+            let (task, database, elapsed) = app
                 .live
                 .as_ref()
-                .and_then(|live| Some((live.database.as_str(), live.running?.elapsed())))
+                .and_then(|live| {
+                    Some((
+                        live.task.as_str(),
+                        live.database.as_str(),
+                        live.running?.elapsed(),
+                    ))
+                })
                 .unwrap_or_default();
             Line::from(vec![
-                Span::styled("Running EXPLAIN ANALYZE ", theme.warm),
+                Span::styled(format!("{task} "), theme.warm),
                 Span::styled(format!("on {database}… "), theme.dim),
                 Span::raw(format!("{:.1} s", elapsed.as_secs_f64())),
                 Span::styled("  Esc", theme.key),
@@ -980,11 +1010,11 @@ fn draw_status(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
                 ("Tab", "list"),
                 ("i", "advice"),
                 ("r", "run"),
-                ("e", "edit"),
+                ("t", "test"),
                 ("?", "help"),
                 ("q", "quit"),
             ] {
-                if !connected && (key == "r" || key == "e") {
+                if !connected && (key == "r" || key == "t") {
                     continue;
                 }
                 spans.push(Span::styled(key, theme.key));
@@ -996,7 +1026,7 @@ fn draw_status(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
     frame.render_widget(Paragraph::new(line), area);
 }
 
-const HELP: [(&str, &str); 21] = [
+const HELP: [(&str, &str); 22] = [
     ("j k ↓ ↑", "Move"),
     ("PgDn PgUp", "Move a page"),
     ("g G", "First, last node"),
@@ -1014,11 +1044,34 @@ const HELP: [(&str, &str); 21] = [
     ("b", "Time or buffers"),
     ("J K", "Scroll the details"),
     ("r e", "Connected: run again, edit the statement"),
+    ("t", "Connected: test the suggested index"),
     ("Esc", "Connected: cancel a run"),
     ("?", "This help"),
     ("q Esc", "Quit"),
     ("", "Any key closes this help."),
 ];
+
+fn draw_confirm(frame: &mut Frame, theme: &Theme, area: Rect, question: &str) {
+    let width = area.width.min(60);
+    let height = (wrapped_lines(question, width.saturating_sub(4)) + 2).min(area.height);
+    let popup = Rect {
+        x: area.x + (area.width - width) / 2,
+        y: area.y + (area.height - height) / 2,
+        width,
+        height,
+    };
+    frame.render_widget(Clear, popup);
+    frame.render_widget(
+        Paragraph::new(question.to_owned())
+            .wrap(Wrap { trim: true })
+            .block(
+                Block::bordered()
+                    .border_style(theme.focused_border)
+                    .title(Span::styled(" Confirm ", theme.title)),
+            ),
+        popup,
+    );
+}
 
 fn draw_help(frame: &mut Frame, theme: &Theme, area: Rect) {
     let width = area.width.min(64);

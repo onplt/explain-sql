@@ -103,6 +103,7 @@ fn index_advice(
         evidence,
         caveats,
         verification: Verification::Unverified,
+        proof: None,
         rules,
     }
 }
@@ -184,6 +185,7 @@ fn selective_scan(context: &Context, finding: &Finding) -> Option<Advice> {
             "An index on the expression itself would also work, but only for an immutable expression written exactly as in the query.".to_owned(),
         ],
         verification: Verification::Unverified,
+        proof: None,
         rules: vec![finding.rule.id],
     })
 }
@@ -345,6 +347,7 @@ fn foreign_key(finding: &Finding) -> Option<Advice> {
         confidence: Confidence::High,
         evidence: finding.evidence.clone(),
         verification: Verification::Unverified,
+        proof: None,
         rules: vec![finding.rule.id],
     })
 }
@@ -717,6 +720,7 @@ pub fn explanations(context: &Context, advice: &[Advice]) -> Vec<Advice> {
             }],
             caveats: Vec::new(),
             verification: Verification::Unverified,
+            proof: None,
             rules: Vec::new(),
         });
     }

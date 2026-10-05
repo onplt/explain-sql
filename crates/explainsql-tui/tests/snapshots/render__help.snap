@@ -23,12 +23,12 @@ Read by the node i│ x           Time in the node, or including its children   
 Join Filter: (o.id│ b           Time or buffers                                  │
 Output: o.id, oi.p│ J K         Scroll the details                               │
                   │ r e         Connected: run again, edit the statement         │
-HIGH   ES005 Expen│ Esc         Connected: cancel a run                          │
-On Nested Loop    │ ?           This help                                        │
-Nested Loop repeat│ q Esc       Quit                                             │p's time.
-Inner loops: 10   │             Any key closes this help.                        │
-Inner side per loo└──────────────────────────────────────────────────────────────┘
- Findings (2) │ Advice (1) · Tab to browse, f/i to switch ──────────────────────────────────────────
+HIGH   ES005 Expen│ t           Connected: test the suggested index              │
+On Nested Loop    │ Esc         Connected: cancel a run                          │
+Nested Loop repeat│ ?           This help                                        │p's time.
+Inner loops: 10   │ q Esc       Quit                                             │
+Inner side per loo│             Any key closes this help.                        │
+ Findings (2) │ Ad└──────────────────────────────────────────────────────────────┘──────────────────
 HIGH   ES001 Selective sequential scan: Seq Scan on order_items oi reads 3,000,000 rows over 10 loo…
 HIGH   ES005 Expensive nested-loop inner side: Nested Loop repeats Seq Scan on order_items oi 10 ti…
 j/k move  h/l fold  / search  1-9 hotspots  Tab list  i advice  ? help  q quit

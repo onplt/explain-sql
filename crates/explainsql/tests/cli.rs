@@ -184,6 +184,26 @@ fn connected_mode_runs_queries_safely() {
         "{text}"
     );
 
+    // Testing the suggestion: with HypoPG when installed, else built and
+    // rolled back.
+    let output = run(
+        &[
+            "-d",
+            &url,
+            "-c",
+            "SELECT * FROM orders WHERE customer_id = 4242",
+            "--prove",
+            "--allow-ddl",
+        ],
+        None,
+    );
+    let text = stdout(&output);
+    assert!(
+        text.contains("Estimated with a hypothetical index")
+            || text.contains("Measured with the index built and rolled back"),
+        "{text}"
+    );
+
     // A query from a file, estimated only.
     let file = std::env::temp_dir().join(format!("explainsql-cli-{}.sql", std::process::id()));
     std::fs::write(&file, "SELECT count(*) FROM orders;\n").unwrap();

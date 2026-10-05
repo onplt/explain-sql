@@ -85,6 +85,18 @@ struct Cli {
     #[arg(long)]
     allow_dml: bool,
 
+    /// Connected mode: to test a suggested index without HypoPG, build it
+    /// inside a transaction that is rolled back. Building blocks writes to
+    /// the table while it runs.
+    #[arg(long)]
+    allow_ddl: bool,
+
+    /// Connected mode, with --print: test each suggested index (with
+    /// HypoPG, or with --allow-ddl by building it) and report before and
+    /// after.
+    #[arg(long)]
+    prove: bool,
+
     /// Connected mode: stop a run after this many seconds.
     #[arg(long, value_name = "SECONDS", default_value_t = 30)]
     timeout: u64,

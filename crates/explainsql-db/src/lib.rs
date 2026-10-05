@@ -10,6 +10,7 @@
 mod catalog;
 pub mod conn;
 mod exec;
+mod prove;
 mod tls;
 
 use std::fmt;
@@ -24,6 +25,7 @@ use tokio_postgres_rustls::MakeRustlsConnect;
 
 pub use conn::Settings;
 pub use exec::{Mode, Writes};
+pub use prove::Proof;
 
 /// What can go wrong, in words for the user.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -70,6 +72,8 @@ impl std::error::Error for Error {}
 pub struct Safety {
     /// Run statements that modify data or lock rows (always rolled back).
     pub allow_dml: bool,
+    /// Build a suggested index to measure it (always rolled back).
+    pub allow_ddl: bool,
     /// `statement_timeout` for each run.
     pub timeout: Duration,
 }
@@ -78,6 +82,7 @@ impl Default for Safety {
     fn default() -> Self {
         Safety {
             allow_dml: false,
+            allow_ddl: false,
             timeout: Duration::from_secs(30),
         }
     }
@@ -190,6 +195,37 @@ impl Database {
         let result =
             self.runtime
                 .block_on(exec::writes(&self.client, sql, safety, self.server_version));
+        self.classify(result, safety)
+    }
+
+    /// The statement's plan without and with a suggested index: estimated
+    /// with a HypoPG hypothetical index, or with `measured`, built for real
+    /// in a transaction that is rolled back and run with EXPLAIN ANALYZE.
+    pub fn prove(
+        &self,
+        sql: &str,
+        ddl: &str,
+        measured: bool,
+        safety: Safety,
+    ) -> Result<Proof, Error> {
+        self.canceller.cancelled.store(false, Ordering::SeqCst);
+        let result = if measured {
+            self.runtime.block_on(prove::measured(
+                &self.client,
+                sql,
+                ddl,
+                safety,
+                self.server_version,
+            ))
+        } else {
+            self.runtime.block_on(prove::hypothetical(
+                &self.client,
+                sql,
+                ddl,
+                safety,
+                self.server_version,
+            ))
+        };
         self.classify(result, safety)
     }
 

@@ -1,6 +1,6 @@
 # Roadmap
 
-Status: Phases 0 and 1 are complete, Phases 2 and 3 are code-complete, and Phase 4 is in progress (see [Development phases](#development-phases)). Time estimates assume a single developer working part-time.
+Status: Phases 0 and 1 are complete, and Phases 2, 3 and 4 are code-complete (see [Development phases](#development-phases)). Time estimates assume a single developer working part-time.
 
 ## v0.1 scope
 
@@ -59,7 +59,7 @@ Phase 2 is code-complete. The metrics engine, the twelve rules and the static re
 
 Phase 3 is code-complete. The viewer has the layout, the virtualized tree, details, findings, search, folding (including similar siblings), view modes, colors, pager mode and `--demo`. A frame of a 5,000-node plan takes about 0.3 ms. `TestBackend` snapshots cover 120×40 and 80×24. The keys for the connected mode come with Phase 4.
 
-Phase 4 is in progress, in three steps:
+Phase 4 is code-complete, in three steps:
 - 4a, the offline advisor, is done. Conditions are read by the hand-written reader in `expr.rs`. Candidates come from the scan rules and from three more patterns (top-N sorts, partitions, correlated subqueries), followed by the rewrites and explanations of why no index would help. In the viewer, `i` shows the advice and `c` copies a statement. All 7 `advice: none` scenarios get no suggestion on every version and in both formats.
 - 4b, the connected mode, is done:
   - libpq-compatible connection settings and TLS;
@@ -68,7 +68,9 @@ Phase 4 is in progress, in three steps:
   - in the viewer, background `EXPLAIN ANALYZE` with `Esc`, plus `r` and `e`.
 
   Integration tests against PostgreSQL 16 show that data-modifying statements are never committed.
-- 4c, the proof loop, is next.
+- 4c, the proof loop, is done. `t` in the viewer, or `--prove`, tests a suggestion two ways: with a HypoPG hypothetical index (estimated, nothing built), or with `--allow-ddl` by building the index in a rolled-back transaction under `lock_timeout` (measured, after confirming). Each test ends with a before/after comparison, and re-runs are compared with the previous run.
+
+Both exit criteria are met: no suggestion on the `advice: none` scenarios, and an integration test showing that data-modifying statements are never committed. Phase 5 is next.
 
 | Phase | Estimate | Scope | Exit criteria |
 |---|---|---|---|

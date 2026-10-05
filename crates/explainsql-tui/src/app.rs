@@ -62,6 +62,11 @@ pub enum Outcome {
     Edit,
     /// Stop the running statement (connected mode).
     Cancel,
+    /// Test an index suggestion (connected mode).
+    Prove {
+        ddl: String,
+        measured: bool,
+    },
 }
 
 /// The state of connected mode.
@@ -74,6 +79,19 @@ pub struct Live {
     pub measured: bool,
     /// A run in progress, and since when.
     pub running: Option<std::time::Instant>,
+    /// What is running: `Running EXPLAIN ANALYZE`.
+    pub task: String,
+    /// HypoPG is installed.
+    pub hypopg: bool,
+    /// Suggestions may be built in a rolled-back transaction.
+    pub allow_ddl: bool,
+}
+
+/// A question waiting for y or n.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Confirm {
+    pub question: String,
+    pub ddl: String,
 }
 
 /// The search being typed or last confirmed.
@@ -108,6 +126,8 @@ pub struct App {
     pub message: Option<String>,
     /// Set in connected mode.
     pub live: Option<Live>,
+    /// A question shown over everything else.
+    pub confirm: Option<Confirm>,
     /// Rows of the tree on screen at the last frame, for paging.
     pub tree_height: usize,
     /// The first finding on screen.
@@ -165,6 +185,7 @@ impl App {
             help: false,
             message: None,
             live: None,
+            confirm: None,
             tree_height: 10,
             findings_offset: 0,
             labels: Vec::new(),
@@ -364,6 +385,16 @@ impl App {
             self.help = false;
             return Outcome::Continue;
         }
+        if let Some(confirm) = self.confirm.take() {
+            if matches!(key, Key::Char('y' | 'Y')) {
+                return Outcome::Prove {
+                    ddl: confirm.ddl,
+                    measured: true,
+                };
+            }
+            self.message = Some("Not built.".to_owned());
+            return Outcome::Continue;
+        }
         let running = self
             .live
             .as_ref()
@@ -417,6 +448,7 @@ impl App {
                 };
             }
             Key::Char('c') => return self.copy(),
+            Key::Char('t') => return self.prove(),
             Key::Char('/') => {
                 self.search = Some(Search {
                     query: String::new(),
@@ -536,6 +568,79 @@ impl App {
                 Outcome::Continue
             }
         }
+    }
+
+    /// The index suggestion in focus: the selected advice, or the advice
+    /// for the selected node.
+    fn index_advice(&self) -> Option<&explainsql_core::advisor::Advice> {
+        match self.focus {
+            Focus::Advice => self
+                .analysis
+                .advice
+                .get(self.advice)
+                .filter(|advice| advice.index().is_some()),
+            _ => {
+                let node = self.selected_node();
+                self.analysis
+                    .advice
+                    .iter()
+                    .find(|advice| advice.node == Some(node) && advice.index().is_some())
+            }
+        }
+    }
+
+    /// Tests the index suggestion in focus: with HypoPG at once, or after
+    /// asking, by building it in a rolled-back transaction.
+    fn prove(&mut self) -> Outcome {
+        let Some(live) = &self.live else {
+            self.message = Some(
+                "Not connected: t tests a suggestion in connected mode (explainsql -d … -f query.sql)."
+                    .to_owned(),
+            );
+            return Outcome::Continue;
+        };
+        if live.running.is_some() {
+            self.message = Some("A run is in progress; Esc cancels it.".to_owned());
+            return Outcome::Continue;
+        }
+        let (hypopg, allow_ddl) = (live.hypopg, live.allow_ddl);
+        let Some(advice) = self.index_advice() else {
+            self.message =
+                Some("Select an index suggestion to test (press i for the advice).".to_owned());
+            return Outcome::Continue;
+        };
+        let Some(AdviceKind::Index { ddl, index }) = Some(&advice.kind) else {
+            return Outcome::Continue;
+        };
+        if hypopg {
+            return Outcome::Prove {
+                ddl: ddl.clone(),
+                measured: false,
+            };
+        }
+        if !allow_ddl {
+            self.message = Some(
+                "To test it, install HypoPG (CREATE EXTENSION hypopg), or restart with --allow-ddl to build it in a rolled-back transaction."
+                    .to_owned(),
+            );
+            return Outcome::Continue;
+        }
+        let size = advice
+            .caveats
+            .iter()
+            .find_map(|caveat| caveat.strip_prefix("Building it reads all of "))
+            .and_then(|rest| rest.split_once(" with its indexes"))
+            .and_then(|(table, _)| table.split_once(" ("))
+            .map(|(_, size)| format!(" ({size})"))
+            .unwrap_or_default();
+        self.confirm = Some(Confirm {
+            question: format!(
+                "Build the index on {}{size} inside a transaction that is rolled back? Writes to {} wait until it is built. y/n",
+                index.table, index.table
+            ),
+            ddl: ddl.clone(),
+        });
+        Outcome::Continue
     }
 
     /// Opens a collapsed node or a group of siblings.
@@ -903,5 +1008,56 @@ Execution Time: 12.100 ms",
         app.handle(Key::Char('g'), 2);
         app.scroll_into_view(2);
         assert_eq!(app.offset, 0);
+    }
+
+    #[test]
+    fn tests_a_suggestion_after_asking() {
+        let plan = explainsql_core::parse(
+            "\
+Seq Scan on public.orders  (cost=0.00..4917.00 rows=10 width=64) (actual time=1.053..11.865 rows=10 loops=1)
+  Filter: (orders.customer_id = 4242)
+  Rows Removed by Filter: 199990
+  Buffers: shared hit=2031 read=386
+Execution Time: 11.900 ms",
+        )
+        .unwrap();
+        let analysis = explainsql_core::analyze(&plan);
+        let mut app = App::new(plan, analysis);
+        // Offline, t explains how to test.
+        assert_eq!(app.handle(Key::Char('t'), 10), Outcome::Continue);
+        assert!(app.message.as_deref().unwrap().starts_with("Not connected"));
+        app.live = Some(Live {
+            database: "db".to_owned(),
+            sql: "SELECT".to_owned(),
+            measured: true,
+            running: None,
+            task: String::new(),
+            hypopg: false,
+            allow_ddl: true,
+        });
+        // Building the index asks first; anything but y declines.
+        assert_eq!(app.handle(Key::Char('t'), 10), Outcome::Continue);
+        assert!(app.confirm.is_some());
+        assert_eq!(app.handle(Key::Char('n'), 10), Outcome::Continue);
+        assert!(app.confirm.is_none());
+        app.handle(Key::Char('t'), 10);
+        assert_eq!(
+            app.handle(Key::Char('y'), 10),
+            Outcome::Prove {
+                ddl: "CREATE INDEX CONCURRENTLY ON public.orders (customer_id);".to_owned(),
+                measured: true
+            }
+        );
+        // With HypoPG, nothing is built and nothing is asked.
+        if let Some(live) = &mut app.live {
+            live.hypopg = true;
+        }
+        assert!(matches!(
+            app.handle(Key::Char('t'), 10),
+            Outcome::Prove {
+                measured: false,
+                ..
+            }
+        ));
     }
 }

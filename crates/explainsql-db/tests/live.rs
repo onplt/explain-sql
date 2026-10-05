@@ -232,3 +232,80 @@ fn reads_the_catalog() {
     assert_eq!(catalog.foreign_keys[0].table, "order_items");
     assert_eq!(catalog.foreign_keys[0].columns, ["order_id"]);
 }
+
+fn index_names(db: &Database, table: &str) -> Vec<String> {
+    let catalog = db.catalog(&[(None, table.to_owned())], &[]).unwrap();
+    let mut names: Vec<String> = catalog.tables[0]
+        .indexes
+        .iter()
+        .map(|index| index.name.clone())
+        .collect();
+    names.sort();
+    names
+}
+
+const SELECTIVE: &str = "SELECT * FROM orders WHERE customer_id = 4242";
+const DDL: &str = "CREATE INDEX CONCURRENTLY ON public.orders (customer_id);";
+
+#[test]
+fn proves_an_index_with_hypopg() {
+    let Some(db) = database() else { return };
+    let catalog = db.catalog(&[], &[]).unwrap();
+    if !catalog.extensions.iter().any(|name| name == "hypopg") {
+        eprintln!("HypoPG is not installed; skipping");
+        return;
+    }
+    let proof = db.prove(SELECTIVE, DDL, false, Safety::default()).unwrap();
+    assert!(!proof.measured);
+    let before = explainsql_core::parse(&proof.before).unwrap();
+    let after = explainsql_core::parse(&proof.after).unwrap();
+    let comparison = explainsql_core::compare::compare(&before, &after);
+    assert!(comparison.improved(), "{}", comparison.summary());
+    assert!(
+        comparison
+            .new_indexes
+            .iter()
+            .any(|name| name.contains("orders_customer_id")),
+        "{:?}",
+        comparison.new_indexes
+    );
+    // Nothing is left behind, in the session or the catalog.
+    let again = db.prove(SELECTIVE, DDL, false, Safety::default()).unwrap();
+    assert_eq!(
+        explainsql_core::parse(&again.before)
+            .unwrap()
+            .root()
+            .node_type,
+        before.root().node_type
+    );
+}
+
+#[test]
+fn proves_an_index_built_and_rolled_back() {
+    let Some(db) = database() else { return };
+    let indexes = index_names(&db, "orders");
+    assert!(matches!(
+        db.prove(SELECTIVE, DDL, true, Safety::default()),
+        Err(Error::Refused(message)) if message.contains("--allow-ddl")
+    ));
+    let safety = Safety {
+        allow_ddl: true,
+        ..Safety::default()
+    };
+    let proof = db.prove(SELECTIVE, DDL, true, safety).unwrap();
+    assert!(proof.measured);
+    let comparison = explainsql_core::compare::compare(
+        &explainsql_core::parse(&proof.before).unwrap(),
+        &explainsql_core::parse(&proof.after).unwrap(),
+    );
+    assert!(comparison.after.execution_time.is_some());
+    assert!(comparison.improved(), "{}", comparison.summary());
+    // The index was rolled back with its transaction.
+    assert_eq!(index_names(&db, "orders"), indexes);
+    // Only CREATE INDEX statements are built.
+    assert!(matches!(
+        db.prove(SELECTIVE, "DROP INDEX orders_created_at_idx", true, safety),
+        Err(Error::Refused(_))
+    ));
+    assert_eq!(index_names(&db, "orders"), indexes);
+}

@@ -64,4 +64,7 @@ jobs:
           sudo -u postgres createdb explainsql
           export PGPASSWORD=postgres
           psql -h localhost -U postgres -d explainsql -q -v ON_ERROR_STOP=1 -f fixtures/schema.sql
-      - run: cargo test --locked -p explainsql-db -p explainsql
+          psql -h localhost -U postgres -d explainsql -c "CREATE EXTENSION hypopg"
+      # One test at a time: building an index in one test waits for the
+      # locks of another's rolled-back UPDATE.
+      - run: cargo test --locked -p explainsql-db -p explainsql -- --test-threads=1

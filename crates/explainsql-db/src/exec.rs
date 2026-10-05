@@ -90,7 +90,7 @@ fn skip_comments(mut sql: &str) -> &str {
     }
 }
 
-fn options(mode: Mode, server_version: u32) -> String {
+pub(crate) fn options(mode: Mode, server_version: u32) -> String {
     let settings = if server_version >= 120_000 {
         ", SETTINGS"
     } else {

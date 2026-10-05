@@ -38,6 +38,9 @@ pub struct Advice {
     /// What the suggestion could not take into account.
     pub caveats: Vec<String>,
     pub verification: Verification,
+    /// Before and after, once verified.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub proof: Option<crate::compare::Comparison>,
     /// The rules whose findings led here, if any.
     pub rules: Vec<&'static str>,
 }
@@ -196,6 +199,35 @@ impl Advice {
     }
 }
 
+/// Records the test of an index suggestion: estimated with HypoPG, or
+/// measured with the index built and rolled back. A suggestion the planner
+/// would not use, or that does not help, drops to low confidence and says
+/// so.
+pub fn verify(advice: &mut Advice, proof: crate::compare::Comparison, measured: bool) {
+    advice.verification = if measured {
+        Verification::Measured
+    } else {
+        Verification::Estimated
+    };
+    let used = !proof.new_indexes.is_empty();
+    advice
+        .caveats
+        .retain(|caveat| !caveat.starts_with(NOT_USED) && !caveat.starts_with(NOT_FASTER));
+    if used && proof.improved() {
+        advice.confidence = Confidence::High;
+    } else {
+        advice.confidence = Confidence::Low;
+        advice
+            .caveats
+            .insert(0, if used { NOT_FASTER } else { NOT_USED }.to_owned());
+    }
+    advice.proof = Some(proof);
+}
+
+const NOT_USED: &str =
+    "With the index in place, the planner still chose another plan: it would not use it here.";
+const NOT_FASTER: &str = "The planner uses the index, but the plan is not faster with it.";
+
 /// Quotes an identifier when PostgreSQL would need it.
 fn quote(name: &str) -> String {
     let plain = name
@@ -293,6 +325,7 @@ fn placeholder() -> Advice {
         evidence: Vec::new(),
         caveats: Vec::new(),
         verification: Verification::Unverified,
+        proof: None,
         rules: Vec::new(),
     }
 }

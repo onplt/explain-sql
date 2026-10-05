@@ -38,6 +38,10 @@ pub struct Connection {
     pub measured: bool,
     /// Start an EXPLAIN ANALYZE as soon as the viewer opens.
     pub analyze_now: bool,
+    /// HypoPG is installed: suggestions can be tested without building them.
+    pub hypopg: bool,
+    /// Suggestions may be built, in a transaction that is rolled back.
+    pub allow_ddl: bool,
 }
 
 /// What the viewer asks the connection to do.
@@ -46,6 +50,13 @@ pub enum Command {
     /// Run the statement with EXPLAIN ANALYZE; first send the estimated plan
     /// when `estimate_first` (after an edit).
     Analyze { sql: String, estimate_first: bool },
+    /// Test an index: estimated with HypoPG, or `measured` with the index
+    /// built and rolled back.
+    Prove {
+        sql: String,
+        ddl: String,
+        measured: bool,
+    },
 }
 
 /// What comes back.
@@ -53,6 +64,12 @@ pub enum Event {
     Plan {
         plan: Box<Plan>,
         analysis: Box<Analysis>,
+        measured: bool,
+    },
+    /// The test of the suggestion whose statement is `ddl`.
+    Proved {
+        ddl: String,
+        comparison: Box<explainsql_core::compare::Comparison>,
         measured: bool,
     },
     Failed(String),
@@ -78,6 +95,9 @@ pub fn run_connected(
         sql: connection.sql.clone(),
         measured: connection.measured,
         running: None,
+        task: String::new(),
+        hypopg: connection.hypopg,
+        allow_ddl: connection.allow_ddl,
     });
     run_with(app, options, Some(connection))
 }
@@ -153,6 +173,22 @@ fn event_loop(
             (Outcome::Quit, _) => return Ok(()),
             (Outcome::Copy(text), _) => copy(&text)?,
             (Outcome::Run, Some(connection)) => start(app, connection, false),
+            (Outcome::Prove { ddl, measured }, Some(connection)) => {
+                let Some(live) = &mut app.live else { continue };
+                let command = Command::Prove {
+                    sql: live.sql.clone(),
+                    ddl,
+                    measured,
+                };
+                if connection.commands.send(command).is_ok() {
+                    live.running = Some(Instant::now());
+                    live.task = if measured {
+                        "Building the index in a rolled-back transaction".to_owned()
+                    } else {
+                        "Testing a hypothetical index (HypoPG)".to_owned()
+                    };
+                }
+            }
             (Outcome::Edit, Some(connection)) => {
                 let sql = app
                     .live
@@ -193,6 +229,7 @@ fn start(app: &mut App, connection: &Connection, estimate_first: bool) {
     };
     if connection.commands.send(command).is_ok() {
         live.running = Some(Instant::now());
+        live.task = "Running EXPLAIN ANALYZE".to_owned();
     } else {
         app.message = Some("The connection is closed.".to_owned());
     }
@@ -205,6 +242,9 @@ fn receive(app: &mut App, event: Event) {
             analysis,
             measured,
         } => {
+            // A measured plan after a measured plan: how the change did.
+            let previous = app.live.as_ref().is_some_and(|live| live.measured) && measured;
+            let comparison = previous.then(|| explainsql_core::compare::compare(&app.plan, &plan));
             app.replace(*plan, *analysis);
             if let Some(live) = &mut app.live {
                 live.measured = measured;
@@ -212,6 +252,29 @@ fn receive(app: &mut App, event: Event) {
                     live.running = None;
                 }
             }
+            if let Some(comparison) = comparison {
+                app.message = Some(format!(
+                    "Compared with the previous run: {}.",
+                    comparison.summary()
+                ));
+            }
+        }
+        Event::Proved {
+            ddl,
+            comparison,
+            measured,
+        } => {
+            if let Some(live) = &mut app.live {
+                live.running = None;
+            }
+            let summary = comparison.summary();
+            let advice = app.analysis.advice.iter_mut().find(|advice| {
+                matches!(&advice.kind, explainsql_core::advisor::AdviceKind::Index { ddl: other, .. } if *other == ddl)
+            });
+            if let Some(advice) = advice {
+                explainsql_core::advisor::verify(advice, *comparison, measured);
+            }
+            app.message = Some(format!("Tested: {summary}."));
         }
         Event::Failed(error) => {
             if let Some(live) = &mut app.live {
