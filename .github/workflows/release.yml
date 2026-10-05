@@ -5,12 +5,17 @@ name: Release
 #
 # - A `v*` tag (matching the version in Cargo.toml) builds, tests and
 #   publishes.
-# - Run by hand (workflow_dispatch), it is a dry run: it builds and tests,
-#   and leaves the archives as workflow artifacts; nothing is published.
+# - Run by hand (workflow_dispatch), or on a branch push that changes the
+#   pipeline itself, it is a dry run: it builds and tests, and leaves the
+#   archives as workflow artifacts; nothing is published.
 
 on:
   push:
     tags: ["v*"]
+    branches: ["**"]
+    paths:
+      - .github/workflows/release.yml
+      - install/**
   workflow_dispatch:
 
 permissions:
