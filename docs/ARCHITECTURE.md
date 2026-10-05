@@ -29,7 +29,9 @@ explain-sql/
 │  │  ├─ src/ir.rs               # the plan IR
 │  │  ├─ src/pg/                 # PostgreSQL front end: normalize, json, text, raw, lower
 │  │  ├─ src/metrics.rs          # inclusive and exclusive time and buffers, misestimates
-│  │  ├─ src/rules/              # one file per rule, plus a small predicate reader
+│  │  ├─ src/expr.rs             # reads the conditions printed in plans
+│  │  ├─ src/rules/              # one file per rule
+│  │  ├─ src/advisor/            # index candidates, rewrites, and why no index
 │  │  ├─ src/analysis.rs         # metrics + findings + the one-sentence verdict
 │  │  ├─ src/report.rs           # static reports: text, Markdown, JSON
 │  │  └─ tests/                  # corpus, inputs, metrics, rules, report snapshots, robustness
@@ -48,7 +50,7 @@ explain-sql/
 └─ .github/workflows/            # ci, fixtures, release
 ```
 
-Not there yet: the `advisor` and `expr` modules of `core`, the contents of `explainsql-db` (an empty placeholder for now), `docs/rules/` and the release workflow. In a terminal the binary opens the viewer; elsewhere, or with `--print`, it prints a report (`--format text|md|json`). `--debug-parse` shows what the parsers made of an input.
+Not there yet: the contents of `explainsql-db` (an empty placeholder for now), `docs/rules/` and the release workflow. In a terminal the binary opens the viewer; elsewhere, or with `--print`, it prints a report (`--format text|md|json`). `--debug-parse` shows what the parsers made of an input.
 
 We use four crates and no more. Keeping `core` free of I/O is required for WebAssembly and for fast, deterministic tests; finer splits would slow down early development.
 
@@ -175,7 +177,7 @@ The results agree with pev2 and explain.depesz.com, compared node by node on 24 
 - **Virtualized tree.** Only the rows on screen are built and drawn. Node names and column widths are computed once, when the viewer opens. A frame of a 5,000-node plan takes about 0.3 ms in a release build.
 - **Folding.** Any node can be folded. Runs of four or more similar leaves are folded into one row from the start, such as the scans of a thousand partitions. Leaves are similar when they have the same type, and the same relation and conditions once numbers are blanked out. The folded row adds up their time, rows and buffers.
 - **Views.** `x` shows time including children, `w` shows CPU time summed over parallel processes, and `b` shares by buffers instead of time. Including children, CPU time is summed over the subtree, because a `Gather`'s own figures cover only the leader.
-- **Findings.** A marker in the tree shows which nodes have findings. The findings list is browsable, and Enter jumps to the node, opening whatever folds hide it. Number keys jump to the hotspots.
+- **Findings and advice.** A marker in the tree shows which nodes have findings. The panel under the tree lists the findings (`f`) or the advice (`i`). Both lists are browsable, and Enter jumps to the node, opening whatever folds hide it. `c` copies the selected `CREATE INDEX` with the OSC 52 escape sequence, which works over SSH and inside tmux. Number keys jump to the hotspots.
 - **Colors.** True color, then 256 colors, then 16, depending on `COLORTERM` and `TERM`. With `NO_COLOR` it falls back to bold, dim and reverse video. `--theme light` adapts the palette to light backgrounds. Severities and misestimates always carry a word or a symbol as well as a color.
 - **Input.** Keys come from the terminal even when the plan arrived on standard input: Crossterm opens `/dev/tty` on Unix and the console input on Windows.
 - **Pager mode.** `--pager` reads what psql sends to its pager. A plan opens in the viewer. Anything else goes to `$EXPLAINSQL_PAGER`, `$PAGER` or `less -S`, never back to `explainsql`, and is printed directly when none of them runs. When the output is not a terminal, everything passes through unchanged.
@@ -183,27 +185,59 @@ The results agree with pev2 and explain.depesz.com, compared node by node on 24 
 
 ## Predicate parsing
 
-Filter and join conditions arrive as deparsed text such as `((status)::text = 'open'::text)`. We do not parse them with regular expressions. Instead:
+Filter and join conditions arrive as deparsed text such as `((status)::text = 'open'::text)`. `expr.rs` reads them with a small hand-written reader, not regular expressions:
 
-1. Replace plan-only syntax (`SubPlan N`, `hashed SubPlan N`, `(InitPlan N).colX`, `$N`, `alternatives: …`) with placeholders.
-2. Wrap the expression as `SELECT 1 WHERE (<expr>)` and parse it with `sqlparser-rs` using its PostgreSQL dialect. It is pure Rust and WebAssembly-friendly, and its MySQL dialect will help later.
-3. Extract columns, operators, casts, function calls and constants.
-4. If parsing fails, show the raw text and produce no advice for that predicate.
+- It splits conditions at the top-level `AND` and `OR`, outside parentheses, brackets and quotes, and finds the comparison operator of each part.
+- It tells a column from a value, a cast of a column (`(customer_id)::text`) and a function of one (`date_trunc('day', created_at)`).
+- It treats plan-only syntax as values: `$1`, `(InitPlan 1).col1`, `ANY ('{…}')` and `ARRAY[…]`.
 
-`libpg_query` (through `pg_query.rs`) may be added later for native builds only, where its query fingerprinting is useful for grouping queries found in logs.
+The rules and the advisor share it. The reader only has to understand what PostgreSQL's deparser prints, a narrow and regular dialect, and it has been run over every condition in the corpus.
+
+We considered `sqlparser-rs`, which would mean wrapping each condition as `SELECT 1 WHERE (…)` and first replacing plan-only syntax. The hand-written reader won for three reasons: it adds no dependency, it stays WebAssembly-friendly, and it never rejects deparse-only forms such as `~~` for `LIKE`. A condition it cannot read produces no advice. `libpg_query` (through `pg_query.rs`) may be added later for native builds only, where its query fingerprinting is useful for grouping queries found in logs.
 
 ## Index advisor (without requiring HypoPG)
 
-The advisor runs in six stages:
+`advisor/` turns the analysis into suggestions. Precision comes first: a wrong `CREATE INDEX` costs the reader more than a missing one.
 
-1. **Collect evidence.** For each scan: the relation and alias; `Filter`, `Index Cond` and `Recheck Cond`; `Rows Removed by Filter`; actual rows, loops and buffers; any `Sort Key` and `Limit` above it; and, on the inner side of a nested loop, the join condition.
-2. **Classify predicates:** equality, `IN`/`ANY`, range, prefix `LIKE`, containment (jsonb, arrays, full-text search → GIN), substring match (`%x%`, `ILIKE` → pg_trgm), a function of a column (→ expression index), a cast on the column side (→ fix the query, not an index), and non-sargable predicates (`OR` across columns, `<>`, `NOT`).
-3. **Score the opportunity.** The plan gives us the observed selectivity for free: `s = actual_rows / (actual_rows + rows_removed_by_filter)`. A sequential scan's buffer count approximates the table size in pages. Impact is the node's share of total exclusive time. Default gates, all configurable: `s < 5%`, more than about 1,000 pages (8 MB), and impact above 10%. On the inner side of a nested loop, the benefit is multiplied by `loops`. If the plan includes a `Settings` section (for example with `random_page_cost`), it feeds into the cost model.
-4. **Generate candidates.** Key columns are ordered by the ESR rule: equality first, then sort, then range. With `ORDER BY … LIMIT`, matching the sort order removes the sort and lets the scan stop early. At most one range column is used. In connected mode, a partial index is proposed when `pg_stats.most_common_freqs` shows a rare constant. `INCLUDE` columns are an optional, low-confidence addition. The operator class is chosen as needed (`text_pattern_ops`, GIN, with a warning when `pg_trgm` is required). Slow foreign-key triggers lead to an index on the referencing columns. The output is always `CREATE INDEX CONCURRENTLY`.
-5. **Apply negative rules.** The advisor makes no suggestion, and shows why, when: the table is small; selectivity is above roughly 10–20%; the node is not on the hot path; a hash join's build side needs the whole table anyway; the scan already stops early under a `Limit`; there is a cast on the column side; or the predicate is an `OR` across columns. In connected mode, candidates are compared with existing indexes using the left-prefix rule. If a suitable index already exists, the advisor explains why it was probably not used (a cast, the collation, stale statistics, selectivity) instead of suggesting a duplicate.
-6. **Report.** Each suggestion includes the DDL, a confidence level (high, medium or low), the evidence ("12 of 5,000,000 rows", "94% of runtime"), caveats ("not connected: existing indexes could not be checked", "write overhead on a hot table") and a verification status (unverified, estimated with HypoPG, or measured with rollback).
+- **Where candidates come from.** The rules have already decided that a scan is worth an index, with their gates on selectivity (under 5%), table size (1,000 pages or more), share of the runtime (10% or more) and early stops. The advisor takes their findings:
+  - ES001, a selective sequential scan: index the filtered columns, or for the inner side of a nested loop, the join key;
+  - ES005, a nested loop: index the inner side's join key;
+  - ES006, an index scan that filters: a composite index that also covers the filtered columns;
+  - ES009, a foreign-key trigger: index the constraint's referencing columns.
 
-Quality gate: fixture scenarios marked `advice: none` are plans where a naive advisor would make a bad suggestion. The expected result for each is "no suggestion", and precision is tracked in CI.
+  Three patterns no rule covers are added, with the same gates:
+  - `ORDER BY … LIMIT` sorting a whole table with a top-N heapsort: an index in the sort order;
+  - selective scans of every partition of a table, each too small for ES001 but large together: one index on the partitioned table;
+  - a correlated subquery (`SubPlan`) that rescans a table for every outer row: index the column it compares with the outer row.
+- **Keys** (`keys.rs`). Each condition is classified:
+  - equality: `=`, `IN`/`= ANY`, `IS NULL`, ORs on one column;
+  - range;
+  - prefix `LIKE`: b-tree with `text_pattern_ops`;
+  - substring `LIKE`/`ILIKE`: GIN with `gin_trgm_ops`;
+  - containment (`@>`, `&&`, `@@`, …): GIN;
+  - a cast or function of the column;
+  - an `OR` across columns.
+
+  Columns follow the ESR rule: equality first, then the sort order, then at most one range. A comparison with another table's column is a join key, which counts as equality. Plans do not list an index's columns. When an index scan under a `Limit` was chosen for its order, the sort column is read from PostgreSQL's default index name (`orders_created_at_idx`), and the suggestion says so.
+- **Rewrites.** A condition that wraps the column in a cast or a function gets a rewrite instead of an index, since no index on the column can serve it.
+- **Explanations.** A sequential scan that takes 10% or more of the runtime and gets no suggestion is explained, in this order:
+  - it has no filter, so the query needs every row;
+  - a `Limit` or semi join stops it early;
+  - its filter ORs different columns;
+  - the table is small;
+  - it keeps too many rows.
+- **Merging.** The same index found twice, or an index whose columns start another candidate's, is reported once, with the evidence of both.
+- **Output.** Each suggestion has:
+  - its DDL, always `CREATE INDEX CONCURRENTLY` except on partitioned tables, where PostgreSQL does not support it (the caveat says how to build it without blocking writes);
+  - a confidence: high, lowered to medium for an inferred column, an operator class that depends on the collation, `pg_trgm`, or a comparison with a run-time value;
+  - the evidence and the caveats;
+  - a verification status: unverified, estimated with HypoPG, or measured with rollback.
+
+  Without a connection every suggestion says that existing indexes, the write load and the statistics were not checked. A foreign-key suggestion names the constraint and the query that lists its columns, since the plan does not show them.
+
+Quality gate (`tests/advisor.rs`): every scenario says what the advisor must conclude: `advice: none` (a trap for naive advisors), `advice: rewrite`, or `advice: index` with each expected index in an `index:` line. On every version and in both formats, a trap gets no suggestion, and an index scenario gets exactly its indexes. A scenario without an `advice` line must get no suggestion either, so every suggestion the corpus produces has been reviewed.
+
+Planned for connected mode (Phase 4b): candidates compared with the existing indexes by the left-prefix rule, with an explanation of why an existing index was probably not used (a cast, the collation, stale statistics, selectivity) instead of a duplicate; partial indexes for rare constants in `pg_stats.most_common_freqs`; the exact columns of a foreign key.
 
 Related work: Microsoft's AutoAdmin "what-if" indexes (Chaudhuri and Narasayya), Dexter, postgres-mcp (HypoPG with a greedy, "Anytime"-style search) and pganalyze's writing on its indexing engine.
 

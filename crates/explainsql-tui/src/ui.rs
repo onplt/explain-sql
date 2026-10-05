@@ -2,6 +2,7 @@
 //! selected node, the findings and a status line. Only the rows on screen are
 //! drawn, so a frame costs the same for ten nodes as for ten thousand.
 
+use explainsql_core::advisor::{Advice, AdviceKind, Confidence, Verification};
 use explainsql_core::format;
 use explainsql_core::ir::{Buffers, NodeId, PredicateKind};
 use explainsql_core::metrics;
@@ -13,7 +14,7 @@ use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
 
-use crate::app::{App, Focus, Row};
+use crate::app::{App, Focus, Panel, Row};
 use crate::theme::Theme;
 
 /// From this width the details sit beside the tree rather than below it.
@@ -36,21 +37,19 @@ pub fn draw(frame: &mut Frame, app: &mut App, theme: &Theme) {
         );
         return;
     }
-    let header_height = wrapped_lines(&app.analysis.verdict, area.width).min(3)
-        + wrapped_lines(
-            &report::facts(&app.plan, &app.analysis).join(" · "),
-            area.width,
-        )
-        .min(2);
-    let header = header(app, theme);
-    let findings = if app.analysis.findings.is_empty() {
+    let facts = report::facts(&app.plan, &app.analysis).join(" · ");
+    let verdict_height = wrapped_lines(&app.analysis.verdict, area.width).min(3);
+    let facts_height = wrapped_lines(&facts, area.width).min(2);
+    let header_height = verdict_height + facts_height;
+    let listed = match app.panel {
+        Panel::Findings => app.analysis.findings.len(),
+        Panel::Advice => app.analysis.advice.len(),
+    };
+    let findings = if app.analysis.findings.is_empty() && app.analysis.advice.is_empty() {
         0
     } else {
         let room = if area.height >= 30 { 6 } else { 4 };
-        u16::try_from(app.analysis.findings.len())
-            .unwrap_or(u16::MAX)
-            .min(room)
-            + 1
+        u16::try_from(listed.max(1)).unwrap_or(u16::MAX).min(room) + 1
     };
     let [top, body, bottom, status] = Layout::vertical([
         Constraint::Length(header_height),
@@ -59,7 +58,21 @@ pub fn draw(frame: &mut Frame, app: &mut App, theme: &Theme) {
         Constraint::Length(1),
     ])
     .areas(area);
-    frame.render_widget(header, top);
+    // Apart, so that a long verdict cannot push the figures off screen.
+    let [verdict_area, facts_area] = Layout::vertical([
+        Constraint::Length(verdict_height),
+        Constraint::Length(facts_height),
+    ])
+    .areas(top);
+    frame.render_widget(
+        Paragraph::new(Line::styled(app.analysis.verdict.clone(), theme.title))
+            .wrap(Wrap { trim: true }),
+        verdict_area,
+    );
+    frame.render_widget(
+        Paragraph::new(Line::styled(facts, theme.dim)).wrap(Wrap { trim: true }),
+        facts_area,
+    );
 
     let (tree, detail) = if area.width >= SIDE_BY_SIDE {
         let detail = (area.width * 35 / 100).clamp(40, 64);
@@ -77,7 +90,10 @@ pub fn draw(frame: &mut Frame, app: &mut App, theme: &Theme) {
     draw_tree(frame, app, theme, tree);
     draw_detail(frame, app, theme, detail, area.width >= SIDE_BY_SIDE);
     if findings > 0 {
-        draw_findings(frame, app, theme, bottom);
+        match app.panel {
+            Panel::Findings => draw_findings(frame, app, theme, bottom),
+            Panel::Advice => draw_advice(frame, app, theme, bottom),
+        }
     }
     draw_status(frame, app, theme, status);
     if app.help {
@@ -101,15 +117,6 @@ fn wrapped_lines(text: &str, width: u16) -> u16 {
         column += if column > 0 { 1 + length } else { length };
     }
     lines
-}
-
-fn header<'a>(app: &App, theme: &Theme) -> Paragraph<'a> {
-    let mut lines = vec![Line::styled(app.analysis.verdict.clone(), theme.title)];
-    let facts = report::facts(&app.plan, &app.analysis);
-    if !facts.is_empty() {
-        lines.push(Line::styled(facts.join(" · "), theme.dim));
-    }
-    Paragraph::new(lines).wrap(Wrap { trim: true })
 }
 
 /// What the time columns show for a node.
@@ -506,6 +513,10 @@ fn draw_detail(frame: &mut Frame, app: &App, theme: &Theme, area: Rect, beside: 
             Some(finding) => (" Finding ", finding_lines(app, theme, finding)),
             None => (" Details ", Vec::new()),
         },
+        Focus::Advice => match app.analysis.advice.get(app.advice) {
+            Some(advice) => (" Advice ", advice_lines(app, theme, advice)),
+            None => (" Details ", Vec::new()),
+        },
         Focus::Tree => (" Details ", node_lines(app, theme)),
     };
     let block = Block::new()
@@ -750,20 +761,20 @@ fn draw_findings(frame: &mut Frame, app: &mut App, theme: &Theme, area: Rect) {
         } else {
             theme.border
         })
-        .title(Line::from(vec![
-            Span::styled(format!(" Findings ({count}) "), theme.title),
-            Span::styled(
-                if focused {
-                    "· Enter: go to the node "
-                } else {
-                    "· Tab to browse "
-                },
-                theme.dim,
-            ),
-        ]));
+        .title(panel_title(app, theme, focused));
     let inner = block.inner(area);
     frame.render_widget(block, area);
     let height = usize::from(inner.height).max(1);
+    if count == 0 {
+        frame.render_widget(
+            Paragraph::new(Line::styled(
+                "No findings: none of the rules found a problem. Press i for the advice.",
+                theme.dim,
+            )),
+            inner,
+        );
+        return;
+    }
     if app.finding < app.findings_offset {
         app.findings_offset = app.finding;
     } else if app.finding >= app.findings_offset + height {
@@ -795,6 +806,138 @@ fn draw_findings(frame: &mut Frame, app: &mut App, theme: &Theme, area: Rect) {
     frame.render_widget(Paragraph::new(lines), inner);
 }
 
+/// `Findings (2) · Advice (1)`, the shown list first, with what Enter does
+/// when it has the focus.
+fn panel_title<'a>(app: &App, theme: &Theme, focused: bool) -> Line<'a> {
+    let findings = format!(" Findings ({}) ", app.analysis.findings.len());
+    let advice = format!(" Advice ({}) ", app.analysis.advice.len());
+    let (findings_style, advice_style) = match app.panel {
+        Panel::Findings => (theme.title, theme.dim),
+        Panel::Advice => (theme.dim, theme.title),
+    };
+    let hint = if focused {
+        "· Enter: go to the node "
+    } else {
+        "· Tab to browse, f/i to switch "
+    };
+    Line::from(vec![
+        Span::styled(findings, findings_style),
+        Span::styled("│", theme.dim),
+        Span::styled(advice, advice_style),
+        Span::styled(hint, theme.dim),
+    ])
+}
+
+fn confidence<'a>(theme: &Theme, advice: &Advice) -> Span<'a> {
+    match (&advice.kind, advice.confidence) {
+        (AdviceKind::NoIndex { .. }, _) => Span::styled("NO    ", theme.low),
+        (_, Confidence::High) => Span::styled("SURE  ", theme.good),
+        (_, Confidence::Medium) => Span::styled("LIKELY", theme.good),
+        (_, Confidence::Low) => Span::styled("MAYBE ", theme.low),
+    }
+}
+
+fn draw_advice(frame: &mut Frame, app: &mut App, theme: &Theme, area: Rect) {
+    let focused = app.focus == Focus::Advice;
+    let block = Block::new()
+        .borders(Borders::TOP)
+        .border_style(if focused {
+            theme.focused_border
+        } else {
+            theme.border
+        })
+        .title(panel_title(app, theme, focused));
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+    if app.analysis.advice.is_empty() {
+        frame.render_widget(
+            Paragraph::new(Line::styled(
+                "No advice: no scan in this plan calls for an index.",
+                theme.dim,
+            )),
+            inner,
+        );
+        return;
+    }
+    let height = usize::from(inner.height).max(1);
+    if app.advice < app.advice_offset {
+        app.advice_offset = app.advice;
+    } else if app.advice >= app.advice_offset + height {
+        app.advice_offset = app.advice + 1 - height;
+    }
+    let width = usize::from(inner.width);
+    let lines: Vec<Line> = app
+        .analysis
+        .advice
+        .iter()
+        .enumerate()
+        .skip(app.advice_offset)
+        .take(height)
+        .map(|(index, advice)| {
+            let head = match &advice.kind {
+                AdviceKind::NoIndex { .. } => String::new(),
+                _ => format!(" {}: ", advice.title()),
+            };
+            let text = match &advice.kind {
+                AdviceKind::Index { ddl, .. } => ddl.clone(),
+                _ => advice.summary.clone(),
+            };
+            let head = if head.is_empty() {
+                " ".to_owned()
+            } else {
+                head
+            };
+            let used = 6 + head.chars().count();
+            let line = Line::from(vec![
+                confidence(theme, advice),
+                Span::styled(head, theme.title),
+                Span::raw(fit(&text, width.saturating_sub(used))),
+            ]);
+            if focused && index == app.advice {
+                line.style(theme.selected)
+            } else {
+                line
+            }
+        })
+        .collect();
+    frame.render_widget(Paragraph::new(lines), inner);
+}
+
+fn advice_lines<'a>(app: &App, theme: &Theme, advice: &Advice) -> Vec<Line<'a>> {
+    let mut lines = vec![Line::from(vec![
+        confidence(theme, advice),
+        Span::styled(format!(" {}", advice.title()), theme.title),
+    ])];
+    if let Some(node) = advice.node {
+        lines.push(Line::styled(format!("On {}", app.label(node)), theme.dim));
+    }
+    if let AdviceKind::Index { ddl, .. } = &advice.kind {
+        lines.push(Line::raw(""));
+        lines.push(Line::styled(ddl.clone(), theme.good));
+        lines.push(Line::styled("Press c to copy it.", theme.dim));
+        lines.push(Line::raw(""));
+    }
+    lines.push(Line::raw(advice.summary.clone()));
+    for evidence in &advice.evidence {
+        lines.push(field(theme, evidence.label, evidence.value.clone()));
+    }
+    for caveat in &advice.caveats {
+        lines.push(Line::from(vec![
+            Span::styled("! ", theme.warm),
+            Span::styled(caveat.clone(), theme.dim),
+        ]));
+    }
+    if !matches!(advice.kind, AdviceKind::NoIndex { .. }) {
+        let status = match advice.verification {
+            Verification::Unverified => "not verified: from the plan alone",
+            Verification::Estimated => "estimated with a hypothetical index (HypoPG)",
+            Verification::Measured => "measured with the index created and rolled back",
+        };
+        lines.push(field(theme, "Verification", status.to_owned()));
+    }
+    lines
+}
+
 fn draw_status(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
     let line = match (&app.search, &app.message) {
         (Some(search), _) if search.editing => Line::from(vec![
@@ -811,7 +954,8 @@ fn draw_status(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
                 ("h/l", "fold"),
                 ("/", "search"),
                 ("1-9", "hotspots"),
-                ("Tab", "findings"),
+                ("Tab", "list"),
+                ("i", "advice"),
                 ("?", "help"),
                 ("q", "quit"),
             ] {
@@ -824,7 +968,7 @@ fn draw_status(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
     frame.render_widget(Paragraph::new(line), area);
 }
 
-const HELP: [(&str, &str); 17] = [
+const HELP: [(&str, &str); 19] = [
     ("j k ↓ ↑", "Move"),
     ("PgDn PgUp", "Move a page"),
     ("g G", "First, last node"),
@@ -833,8 +977,10 @@ const HELP: [(&str, &str); 17] = [
     ("/", "Search node names and conditions"),
     ("n N", "Next, previous match"),
     ("1 … 9", "Go to the slowest nodes"),
-    ("Tab f", "Switch between the plan and the findings"),
-    ("Enter", "On a finding: go to its node"),
+    ("f i", "Show the findings, the advice"),
+    ("Tab", "Switch between the plan and the list"),
+    ("Enter", "In the list: go to the node"),
+    ("c", "Copy the suggested CREATE INDEX"),
     ("x", "Time in the node, or including its children"),
     ("w", "Wall-clock or CPU time (parallel plans)"),
     ("b", "Time or buffers"),

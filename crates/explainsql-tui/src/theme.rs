@@ -62,6 +62,8 @@ pub struct Theme {
     pub low: Style,
     pub matched: Style,
     pub key: Style,
+    /// Suggestions to act on.
+    pub good: Style,
 }
 
 impl Theme {
@@ -92,6 +94,11 @@ impl Theme {
             if dark { (110, 160, 230) } else { (30, 90, 170) },
             if dark { 75 } else { 25 },
             Color::Blue,
+        );
+        let green = pick(
+            if dark { (120, 200, 120) } else { (30, 120, 50) },
+            if dark { 114 } else { 28 },
+            Color::Green,
         );
         let gray = pick(
             if dark {
@@ -131,6 +138,7 @@ impl Theme {
             low: dim,
             matched: fg(yellow).add_modifier(Modifier::UNDERLINED),
             key: fg(blue).add_modifier(Modifier::BOLD),
+            good: fg(green).add_modifier(Modifier::BOLD),
         }
     }
 

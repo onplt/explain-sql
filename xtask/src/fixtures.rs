@@ -241,6 +241,7 @@ fn manifest_entry(scenario: &Scenario, status: &str, reason: Option<&str>) -> Va
         "description": scenario.description,
         "rules": scenario.rules,
         "advice": scenario.advice.map(Advice::as_str),
+        "indexes": scenario.indexes,
     });
     if let Some(reason) = reason {
         entry["reason"] = json!(reason);
@@ -265,8 +266,8 @@ pub fn check_json_plan(json: &str, executed: bool) -> Result<(), String> {
     Ok(())
 }
 
-/// `cargo xtask sync-manifests`: copies each scenario's description, rules
-/// and advice into the manifests, which repeat them, without regenerating
+/// `cargo xtask sync-manifests`: copies each scenario's description, rules,
+/// advice and expected indexes into the manifests, which repeat them, without regenerating
 /// any plan.
 pub fn sync_manifests() -> Result<(), String> {
     let root = workspace_root();
@@ -288,7 +289,7 @@ pub fn sync_manifests() -> Result<(), String> {
                 )
             })?;
             let fresh = manifest_entry(scenario, "", None);
-            for key in ["description", "rules", "advice"] {
+            for key in ["description", "rules", "advice", "indexes"] {
                 entry[key] = fresh[key].clone();
             }
         }
@@ -350,7 +351,7 @@ pub fn check_corpus(root: &Path) -> Result<String, Vec<String>> {
                 continue;
             };
             let expected = manifest_entry(scenario, "", None);
-            if ["description", "rules", "advice"]
+            if ["description", "rules", "advice", "indexes"]
                 .iter()
                 .any(|key| entry[key] != expected[key])
             {

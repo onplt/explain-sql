@@ -5,10 +5,10 @@
 //! Silent when the loop is cheap compared with the statement, when the inner
 //! side runs once, and when a Materialize or Memoize caches the inner side.
 
-use super::predicate::{self, Access};
 use super::{
     Context, Finding, Rule, Severity, column_list, evidence, qualifier, relation, scan_below,
 };
+use crate::expr::{self, Access};
 use crate::format;
 use crate::ir::{Node, PredicateKind, Relationship};
 
@@ -54,7 +54,7 @@ fn expensive_inner(context: &Context, join: &Node) -> Option<Finding> {
     {
         return None;
     }
-    let scan = scan_below(context, inner)?;
+    let scan = scan_below(context.plan, inner)?;
     let scan_actuals = scan.actuals?;
     let removed = scan.rows_removed_by_filter;
     let join_removed = join.rows_removed_by_join_filter;
@@ -152,10 +152,10 @@ fn join_key(join: &Node, scan: &Node) -> Option<String> {
         .into_iter()
         .chain(scan.predicate(PredicateKind::Filter));
     for condition in conditions {
-        for conjunct in predicate::conjuncts(condition) {
-            if let Access::Columns(a, b) = predicate::access(conjunct) {
+        for conjunct in expr::conjuncts(condition) {
+            if let Access::Columns(a, b) = expr::access(conjunct) {
                 for column in [a, b] {
-                    if predicate::split_column(column).0 == own && own.is_some() {
+                    if expr::split_column(column).0 == own && own.is_some() {
                         columns.push(column);
                     }
                 }

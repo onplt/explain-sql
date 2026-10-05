@@ -1,6 +1,6 @@
 # Roadmap
 
-Status: Phases 0 and 1 are complete, and Phase 2 is code-complete (see [Development phases](#development-phases)). Time estimates assume a single developer working part-time.
+Status: Phases 0 and 1 are complete, Phases 2 and 3 are code-complete, and Phase 4 is in progress (see [Development phases](#development-phases)). Time estimates assume a single developer working part-time.
 
 ## v0.1 scope
 
@@ -57,7 +57,12 @@ Phase 0 is complete: the workspace skeleton, CI, and 65 scenarios captured on Po
 
 Phase 2 is code-complete. The metrics engine, the twelve rules and the static report are in place. Exclusive times agree with pev2 and explain.depesz.com within 5% on every node of 24 reference plans, except one deliberate difference in rounding (see [tools/cross-check](../tools/cross-check/README.md)). The report snapshots are stable. The remaining exit criterion is a quiet alpha with a few DBAs.
 
-Phase 3 is code-complete. The viewer has the layout, the virtualized tree, details, findings, search, folding (including similar siblings), view modes, colors, pager mode and `--demo`. A frame of a 5,000-node plan takes about 0.3 ms. `TestBackend` snapshots cover 120×40 and 80×24. The keys for the advisor and the connected mode (`i`, `t`, `c`, `e`, `r`) come with Phase 4. Phase 4 is next.
+Phase 3 is code-complete. The viewer has the layout, the virtualized tree, details, findings, search, folding (including similar siblings), view modes, colors, pager mode and `--demo`. A frame of a 5,000-node plan takes about 0.3 ms. `TestBackend` snapshots cover 120×40 and 80×24. The keys for the connected mode (`t`, `e`, `r`) come with Phase 4.
+
+Phase 4 is in progress, in three steps:
+- 4a, the offline advisor, is done. Conditions are read by the hand-written reader in `expr.rs`. Candidates come from the scan rules and from three more patterns (top-N sorts, partitions, correlated subqueries), followed by the rewrites and explanations of why no index would help. In the viewer, `i` shows the advice and `c` copies a statement. All 7 `advice: none` scenarios get no suggestion on every version and in both formats.
+- 4b, the connected mode, is next.
+- 4c, the proof loop, follows.
 
 | Phase | Estimate | Scope | Exit criteria |
 |---|---|---|---|

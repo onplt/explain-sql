@@ -1,0 +1,44 @@
+---
+source: crates/explainsql-tui/tests/render.rs
+expression: "frame(&mut app, 120, 40)"
+---
+312.6 ms. 100% of it in Index Scan using orders_created_at_idx on orders, which finds 1,104,080 rows through
+orders_created_at_idx and its filter throws away 1,104,020. Nested Loop repeats Index Scan using orders_created_at_idx
+on orders 20 times; that takes 100% of the loop's time.
+Planning 0.619 ms · Execution 312.6 ms · Buffers 1,109,606 pages, 100% from cache
+ Plan · time in each node ────────────────────────────────────────────────────┌ Advice ─────────────────────────────────
+    Share     Time            Node                               Rows Estimate│LIKELY Index orders (customer_id,
+!  0.058% 0.180 ms            Nested Loop                          60       60│created_at)
+   0.017% 0.052 ms            ├─ Index Only Scan using custome…    20       20│On Index Scan using orders_created_at_idx
+   0.026% 0.080 ms            └─ Limit                          3 ×20        3│on orders
+!    100% 312.2 ms ██████████    └─ Index Scan using orders_cr… 3 ×20       10│
+                                                                              │CREATE INDEX CONCURRENTLY ON
+                                                                              │public.orders (customer_id, created_at);
+                                                                              │Press c to copy it.
+                                                                              │
+                                                                              │An index on orders (customer_id,
+                                                                              │created_at) would turn each of the 20
+                                                                              │runs of Index Scan using
+                                                                              │orders_created_at_idx on orders into an
+                                                                              │index lookup.
+                                                                              │Inner loops: 20
+                                                                              │Inner side per loop: 15.6 ms
+                                                                              │Repeated work: 312.5 ms of the loop's
+                                                                              │312.6 ms, 312.3 ms of it in the inner
+                                                                              │scans
+                                                                              │Rows removed per loop: 55,201 by the
+                                                                              │filter of Index Scan using
+                                                                              │orders_created_at_idx on orders
+                                                                              │Index: orders_created_at_idx
+                                                                              │Filter: (orders.customer_id = c.id)
+                                                                              │Rows removed by the filter: 55,201 of
+                                                                              │55,204 found per loop
+                                                                              │Loops: 20
+                                                                              │! Not connected to the database: existing
+                                                                              │indexes, the table's write load and the
+                                                                              │column statistics were not checked.
+                                                                              │! created_at is taken from the name of
+                                                                              │orders_created_at_idx, which Index Scan
+ Findings (2) │ Advice (1) · Enter: go to the node ─────────────────────────────────────────────────────────────────────
+LIKELY Index orders (customer_id, created_at): CREATE INDEX CONCURRENTLY ON public.orders (customer_id, created_at);
+j/k move  h/l fold  / search  1-9 hotspots  Tab list  i advice  ? help  q quit

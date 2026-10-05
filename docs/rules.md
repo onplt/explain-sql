@@ -2,6 +2,8 @@
 
 Rules turn plan data into findings. Every finding names its rule, the node it is about, a severity, the evidence that triggered it, and a suggested action. The bar for a rule is precision: a rule that is sometimes obviously wrong does more harm than a missing rule. So each rule also says when it deliberately stays silent.
 
+The index advisor builds its `CREATE INDEX` suggestions on the findings of ES001, ES005, ES006 and ES009 (see "Index advisor" in [ARCHITECTURE.md](ARCHITECTURE.md)).
+
 Each rule lives in its own file, `crates/explainsql-core/src/rules/esNNN_*.rs`, with its thresholds as named constants; they will become configurable. Every plan in the fixture corpus is checked against the rules its scenario expects, and no other rule may fire (see [fixtures/README.md](../fixtures/README.md)). Pages per rule will come with the documentation site.
 
 **Severity** follows the share of the runtime involved: half or more is high, a fifth or more is medium, anything less is low. When the plan has no timing, the share is taken from buffers. Misestimates are low on their own and at least medium when they feed a join.

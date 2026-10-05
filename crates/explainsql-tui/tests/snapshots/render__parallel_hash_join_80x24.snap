@@ -25,4 +25,4 @@ Read by the node itself: 0 pages
 Group Key: o.status
 Output: o.status, count(*)
 
-j/k move  h/l fold  / search  1-9 hotspots  Tab findings  ? help  q quit
+j/k move  h/l fold  / search  1-9 hotspots  Tab list  i advice  ? help  q quit

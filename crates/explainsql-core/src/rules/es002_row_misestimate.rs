@@ -10,8 +10,8 @@
 //! a recursive CTE, whose depth the planner cannot know. A CTE Scan inherits
 //! the error of the CTE it reads.
 
-use super::predicate;
 use super::{Context, Finding, Rule, Severity, column_list, evidence, relation};
+use crate::expr;
 use crate::format;
 use crate::ir::{Node, PredicateKind, Relationship};
 
@@ -168,7 +168,7 @@ fn action(node: &Node, feeds_join: bool) -> String {
         );
     }
     let table = relation(node);
-    let accesses: Vec<predicate::Access> = node
+    let accesses: Vec<expr::Access> = node
         .predicates
         .iter()
         .filter(|p| {
@@ -177,21 +177,21 @@ fn action(node: &Node, feeds_join: bool) -> String {
                 PredicateKind::Filter | PredicateKind::IndexCond | PredicateKind::RecheckCond
             )
         })
-        .flat_map(|p| predicate::conjuncts(&p.text))
-        .map(predicate::access)
+        .flat_map(|p| expr::conjuncts(&p.text))
+        .map(expr::access)
         .collect();
     // Conditions the planner cannot estimate from column statistics.
     if let Some(column) = accesses.iter().find_map(|access| match access {
-        predicate::Access::Wrapped { column, .. } => Some(*column),
+        expr::Access::Wrapped { column, .. } => Some(*column),
         _ => None,
     }) {
-        let (_, name) = predicate::split_column(column);
+        let (_, name) = expr::split_column(column);
         return format!(
             "The planner has no statistics for an expression of {name}, so it guessed. Rewriting the condition so that {name} stands alone fixes the estimate; otherwise CREATE STATISTICS on the expression (PostgreSQL 14 and later) gives the planner something to go on.{consequence}"
         );
     }
     if let Some(value) = accesses.iter().find_map(|access| match access {
-        predicate::Access::Column { value, .. } if is_runtime_value(value) => Some(*value),
+        expr::Access::Column { value, .. } if is_runtime_value(value) => Some(*value),
         _ => None,
     }) {
         return format!(
@@ -201,7 +201,7 @@ fn action(node: &Node, feeds_join: bool) -> String {
     let columns: Vec<&str> = accesses
         .iter()
         .filter_map(|access| match access {
-            predicate::Access::Column { column, .. } => Some(*column),
+            expr::Access::Column { column, .. } => Some(*column),
             _ => None,
         })
         .collect();

@@ -29,6 +29,14 @@ Findings (2)
           STATISTICS on the expression (PostgreSQL 14 and later) gives the planner something to go
           on.
 
+Advice (1)
+
+  SURE    Rewrite the condition on customer_id
+          The filter applies a cast to customer_id, so no index on customer_id can serve it. Compare
+          customer_id itself with a value of its own type, or a range of values, instead.
+          ! An index on the expression itself would also work, but only for an immutable expression
+          written exactly as in the query.
+
 Share and Time: time spent in each node itself, wall-clock. Rows: actual rows per loop, ×loops when
 it ran more than once. ▲/▼: actual rows above or below the estimate by 10× or more. Buffers: pages
 each node read itself.

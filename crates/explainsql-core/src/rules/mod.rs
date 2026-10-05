@@ -17,10 +17,10 @@ mod es009_foreign_key_trigger;
 mod es010_cartesian_product;
 mod es011_workers_not_launched;
 mod es012_jit_overhead;
-mod predicate;
 
 use serde::Serialize;
 
+use crate::expr;
 use crate::format;
 use crate::ir::{Node, Plan, Relationship};
 use crate::metrics::{self, Metrics, NodeMetrics};
@@ -201,7 +201,7 @@ fn evidence(label: &'static str, value: impl Into<String>) -> Evidence {
 }
 
 /// The relation a scan reads, for actions: `orders`.
-fn relation(node: &Node) -> String {
+pub(crate) fn relation(node: &Node) -> String {
     node.relation_name
         .clone()
         .or_else(|| node.alias.clone())
@@ -209,7 +209,7 @@ fn relation(node: &Node) -> String {
 }
 
 /// The name scans use to qualify their columns: the alias, or the relation.
-fn qualifier(node: &Node) -> Option<&str> {
+pub(crate) fn qualifier(node: &Node) -> Option<&str> {
     node.alias.as_deref().or(node.relation_name.as_deref())
 }
 
@@ -217,7 +217,7 @@ fn qualifier(node: &Node) -> Option<&str> {
 fn column_list<'c>(columns: impl IntoIterator<Item = &'c str>) -> String {
     let mut names: Vec<&str> = Vec::new();
     for column in columns {
-        let (_, name) = predicate::split_column(column);
+        let (_, name) = expr::split_column(column);
         if !names.contains(&name) {
             names.push(name);
         }
@@ -228,7 +228,7 @@ fn column_list<'c>(columns: impl IntoIterator<Item = &'c str>) -> String {
 /// The scan at the bottom of a chain of single-child nodes, such as the
 /// Index Scan under a Limit. `None` when a cache (Materialize, Memoize)
 /// is on the way, or the chain branches.
-fn scan_below<'a>(context: &Context<'a>, node: &'a Node) -> Option<&'a Node> {
+pub(crate) fn scan_below<'a>(plan: &'a Plan, node: &'a Node) -> Option<&'a Node> {
     let mut current = node;
     loop {
         if current.node_type.ends_with("Scan") {
@@ -237,7 +237,7 @@ fn scan_below<'a>(context: &Context<'a>, node: &'a Node) -> Option<&'a Node> {
         if matches!(current.node_type.as_str(), "Materialize" | "Memoize") {
             return None;
         }
-        let mut children = context.plan.children(current.id).filter(|child| {
+        let mut children = plan.children(current.id).filter(|child| {
             !matches!(
                 child.relationship,
                 Some(Relationship::InitPlan | Relationship::SubPlan)

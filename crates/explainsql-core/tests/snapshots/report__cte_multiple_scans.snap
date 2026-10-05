@@ -15,6 +15,10 @@ Planning 0.412 ms · Execution 43.9 ms · Buffers 2,417 pages, 93% from cache
 
 No findings: none of the rules found a problem in this plan.
 
+No index would help
+  Seq Scan on orders: it reads the whole table because the query needs every row; there is no
+  condition for an index to serve.
+
 Share and Time: time spent in each node itself, wall-clock. Rows: actual rows per loop, ×loops when
 it ran more than once. ▲/▼: actual rows above or below the estimate by 10× or more. Buffers: pages
 each node read itself.

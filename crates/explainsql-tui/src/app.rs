@@ -4,6 +4,7 @@
 use std::collections::HashSet;
 
 use explainsql_core::Analysis;
+use explainsql_core::advisor::AdviceKind;
 use explainsql_core::format;
 use explainsql_core::ir::{NodeId, Plan};
 
@@ -27,6 +28,14 @@ pub struct Row {
 pub enum Focus {
     Tree,
     Findings,
+    Advice,
+}
+
+/// What the panel under the tree lists.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Panel {
+    Findings,
+    Advice,
 }
 
 /// What the Time, Share and bar columns show.
@@ -41,10 +50,12 @@ pub struct View {
 }
 
 /// What a key asks the event loop to do.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Outcome {
     Continue,
     Quit,
+    /// Put this text on the clipboard.
+    Copy(String),
 }
 
 /// The search being typed or last confirmed.
@@ -65,7 +76,12 @@ pub struct App {
     /// The first tree row on screen.
     pub offset: usize,
     pub focus: Focus,
+    pub panel: Panel,
     pub finding: usize,
+    /// The selected advice.
+    pub advice: usize,
+    /// The first advice on screen.
+    pub advice_offset: usize,
     pub detail_scroll: u16,
     pub view: View,
     pub search: Option<Search>,
@@ -115,7 +131,10 @@ impl App {
             selected: 0,
             offset: 0,
             focus: Focus::Tree,
+            panel: Panel::Findings,
             finding: 0,
+            advice: 0,
+            advice_offset: 0,
             detail_scroll: 0,
             view: View {
                 inclusive: false,
@@ -132,6 +151,9 @@ impl App {
             cpu_total: 0.0,
             subtree_cpu: Vec::new(),
         };
+        if app.analysis.findings.is_empty() && !app.analysis.advice.is_empty() {
+            app.panel = Panel::Advice;
+        }
         app.labels = app.plan.nodes.iter().map(format::node).collect();
         let mut widths = ["Rows".len(), "Estimate".len(), 0];
         for node in &app.plan.nodes {
@@ -294,12 +316,40 @@ impl App {
         match key {
             Key::Char('q') | Key::Esc => return Outcome::Quit,
             Key::Char('?') => self.help = true,
-            Key::Tab | Key::Char('f') => {
-                self.focus = match self.focus {
-                    Focus::Tree if !self.analysis.findings.is_empty() => Focus::Findings,
+            Key::Tab => {
+                self.focus = match (self.focus, self.panel) {
+                    (Focus::Tree, Panel::Findings) if !self.analysis.findings.is_empty() => {
+                        Focus::Findings
+                    }
+                    (Focus::Tree, Panel::Advice) if !self.analysis.advice.is_empty() => {
+                        Focus::Advice
+                    }
                     _ => Focus::Tree,
                 };
             }
+            Key::Char('f') => {
+                self.panel = Panel::Findings;
+                self.focus = if self.focus == Focus::Findings {
+                    Focus::Tree
+                } else if self.analysis.findings.is_empty() {
+                    self.message = Some("No findings for this plan.".to_owned());
+                    Focus::Tree
+                } else {
+                    Focus::Findings
+                };
+            }
+            Key::Char('i') => {
+                self.panel = Panel::Advice;
+                self.focus = if self.focus == Focus::Advice {
+                    Focus::Tree
+                } else if self.analysis.advice.is_empty() {
+                    self.message = Some("No advice for this plan.".to_owned());
+                    Focus::Tree
+                } else {
+                    Focus::Advice
+                };
+            }
+            Key::Char('c') => return self.copy(),
             Key::Char('/') => {
                 self.search = Some(Search {
                     query: String::new(),
@@ -321,6 +371,7 @@ impl App {
                 }
             }
             _ if self.focus == Focus::Findings => self.findings_key(key, page),
+            _ if self.focus == Focus::Advice => self.advice_key(key, page),
             _ => self.tree_key(key, page),
         }
         Outcome::Continue
@@ -350,14 +401,11 @@ impl App {
     }
 
     fn findings_key(&mut self, key: Key, page: usize) {
-        let last = self.analysis.findings.len().saturating_sub(1);
+        if list_key(key, page, self.analysis.findings.len(), &mut self.finding) {
+            self.detail_scroll = 0;
+            return;
+        }
         match key {
-            Key::Down | Key::Char('j') => self.finding = (self.finding + 1).min(last),
-            Key::Up | Key::Char('k') => self.finding = self.finding.saturating_sub(1),
-            Key::PageDown => self.finding = (self.finding + page).min(last),
-            Key::PageUp => self.finding = self.finding.saturating_sub(page),
-            Key::Home | Key::Char('g') => self.finding = 0,
-            Key::End | Key::Char('G') => self.finding = last,
             Key::Enter | Key::Right | Key::Char('l') => {
                 match self
                     .analysis
@@ -372,6 +420,54 @@ impl App {
                 }
             }
             _ => {}
+        }
+    }
+
+    fn advice_key(&mut self, key: Key, page: usize) {
+        if list_key(key, page, self.analysis.advice.len(), &mut self.advice) {
+            self.detail_scroll = 0;
+            return;
+        }
+        if matches!(key, Key::Enter | Key::Right | Key::Char('l')) {
+            match self
+                .analysis
+                .advice
+                .get(self.advice)
+                .and_then(|advice| advice.node)
+            {
+                Some(node) => self.reveal(node),
+                None => {
+                    self.message = Some("This advice is about the statement as a whole.".to_owned())
+                }
+            }
+        }
+    }
+
+    /// The `CREATE INDEX` statement of the selected advice, or of the advice
+    /// for the selected node, for the clipboard.
+    fn copy(&mut self) -> Outcome {
+        let advice = match self.focus {
+            Focus::Advice => self.analysis.advice.get(self.advice),
+            _ => {
+                let node = self.selected_node();
+                self.analysis
+                    .advice
+                    .iter()
+                    .find(|advice| advice.node == Some(node) && advice.index().is_some())
+            }
+        };
+        match advice.map(|advice| &advice.kind) {
+            Some(AdviceKind::Index { ddl, .. }) => {
+                self.message = Some(format!("Copied: {ddl}"));
+                Outcome::Copy(ddl.clone())
+            }
+            _ => {
+                self.message = Some(
+                    "Nothing to copy: select an index suggestion (press i for the advice)."
+                        .to_owned(),
+                );
+                Outcome::Continue
+            }
         }
     }
 
@@ -480,6 +576,21 @@ impl App {
         let index = matches.iter().position(|&id| id == next).unwrap_or(0);
         self.message = Some(format!("Match {} of {}", index + 1, matches.len()));
     }
+}
+
+/// Moves the selection of a list; `false` when the key is not a move.
+fn list_key(key: Key, page: usize, len: usize, index: &mut usize) -> bool {
+    let last = len.saturating_sub(1);
+    *index = match key {
+        Key::Down | Key::Char('j') => (*index + 1).min(last),
+        Key::Up | Key::Char('k') => index.saturating_sub(1),
+        Key::PageDown => (*index + page.max(1)).min(last),
+        Key::PageUp => index.saturating_sub(page.max(1)),
+        Key::Home | Key::Char('g') => 0,
+        Key::End | Key::Char('G') => last,
+        _ => return false,
+    };
+    true
 }
 
 /// The rows to show: the tree in plan order, without the descendants of

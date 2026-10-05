@@ -1,0 +1,28 @@
+---
+source: crates/explainsql-tui/tests/render.rs
+expression: "frame(&mut app, 80, 24)"
+---
+312.6 ms. 100% of it in Index Scan using orders_created_at_idx on orders, which
+finds 1,104,080 rows through orders_created_at_idx and its filter throws away
+1,104,020. Nested Loop repeats Index Scan using orders_created_at_idx on orders
+Planning 0.619 ms · Execution 312.6 ms · Buffers 1,109,606 pages, 100% from
+cache
+ Plan · time in each node ──────────────────────────────────────────────────────
+    Share     Time            Node                                 Rows Estimate
+!  0.058% 0.180 ms            Nested Loop                            60       60
+   0.017% 0.052 ms            ├─ Index Only Scan using customers…    20       20
+   0.026% 0.080 ms            └─ Limit                            3 ×20        3
+!    100% 312.2 ms ██████████    └─ Index Scan using orders_crea… 3 ×20       10
+ Advice ────────────────────────────────────────────────────────────────────────
+LIKELY Index orders (customer_id, created_at)
+On Index Scan using orders_created_at_idx on orders
+
+CREATE INDEX CONCURRENTLY ON public.orders (customer_id, created_at);
+Press c to copy it.
+
+An index on orders (customer_id, created_at) would turn each of the 20 runs of
+Index Scan using orders_created_at_idx on orders into an index lookup.
+Inner loops: 20
+ Findings (2) │ Advice (1) · Enter: go to the node ─────────────────────────────
+LIKELY Index orders (customer_id, created_at): CREATE INDEX CONCURRENTLY ON pub…
+j/k move  h/l fold  / search  1-9 hotspots  Tab list  i advice  ? help  q quit

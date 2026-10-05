@@ -75,6 +75,24 @@ fn help_search_and_findings() {
 }
 
 #[test]
+fn advice() {
+    let mut app = plan("lateral_join_top_n");
+    app.handle(Key::Char('i'), 10);
+    insta::assert_snapshot!("advice_120x40", frame(&mut app, 120, 40));
+    insta::assert_snapshot!("advice_80x24", frame(&mut app, 80, 24));
+    let copied = app.handle(Key::Char('c'), 10);
+    assert_eq!(
+        copied,
+        explainsql_tui::Outcome::Copy(
+            "CREATE INDEX CONCURRENTLY ON public.orders (customer_id, created_at);".to_owned()
+        )
+    );
+    // Plans with no finding open on the advice.
+    let mut app = plan("sort_top_n_heapsort");
+    insta::assert_snapshot!("advice_without_findings", frame(&mut app, 100, 30));
+}
+
+#[test]
 fn view_modes() {
     let mut app = plan("parallel_hash_join");
     app.handle(Key::Char('x'), 10);

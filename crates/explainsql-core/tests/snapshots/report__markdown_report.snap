@@ -27,3 +27,12 @@ Planning 0.619 ms · Execution 312.6 ms · Buffers 1,109,606 pages, 100% from ca
   - Rows removed by the filter: `55,201 of 55,204 found per loop`
   - Loops: `20`
   - **Action:** An index on orders that starts with customer\_id and continues with the columns of orders\_created\_at\_idx would let the index do the filtering.
+
+### Advice
+
+- **Index orders (customer\_id, created\_at)** (medium confidence): An index on orders (customer\_id, created\_at) would turn each of the 20 runs of Index Scan using orders\_created\_at\_idx on orders into an index lookup.
+  ```sql
+  CREATE INDEX CONCURRENTLY ON public.orders (customer_id, created_at);
+  ```
+  - Not connected to the database: existing indexes, the table's write load and the column statistics were not checked.
+  - created\_at is taken from the name of orders\_created\_at\_idx, which Index Scan using orders\_created\_at\_idx on orders reads in order; plans do not list index columns.

@@ -29,6 +29,21 @@ Findings (2)
           used a default guess. ANALYZE cannot change that; it matters only if a plan choice above
           depends on this estimate.
 
+Advice (1)
+
+  LIKELY  Index orders (amount)
+          CREATE INDEX CONCURRENTLY ON public.orders (amount);
+          An index on orders (amount) would let Seq Scan on orders read only the rows it keeps
+          instead of the whole table.
+          ! Not connected to the database: existing indexes, the table's write load and the column
+          statistics were not checked.
+          ! The condition compares with a value known only at run time, so whether the planner uses
+          the index depends on that value.
+
+No index would help
+  Seq Scan on orders orders_1: it reads the whole table because the query needs every row; there is
+  no condition for an index to serve.
+
 Share and Time: time spent in each node itself, wall-clock. Rows: actual rows per loop, ×loops when
 it ran more than once. ▲/▼: actual rows above or below the estimate by 10× or more. Buffers: pages
 each node read itself.

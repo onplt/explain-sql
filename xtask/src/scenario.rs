@@ -5,6 +5,7 @@
 //! -- description: Sequential scan whose filter keeps 10 of 200,000 rows.
 //! -- rules: ES001
 //! -- advice: index
+//! -- index: orders (customer_id)
 //! -- set: max_parallel_workers_per_gather = 0
 //! SELECT * FROM orders WHERE customer_id = 4242;
 //! ```
@@ -30,6 +31,10 @@ pub struct Scenario {
     pub rules: Vec<String>,
     /// What the index advisor is expected to conclude, when the scenario pins it down.
     pub advice: Option<Advice>,
+    /// The indexes the advisor is expected to suggest, as `orders
+    /// (customer_id)`; an entry ending in `?` may be missing on some
+    /// versions.
+    pub indexes: Vec<String>,
     pub min_version: u32,
     pub requires_jit: bool,
     /// `name = value` pairs, applied with `SET` before the statement.
@@ -83,6 +88,7 @@ impl Scenario {
         let mut description = None;
         let mut rules = Vec::new();
         let mut advice = None;
+        let mut indexes = Vec::new();
         let mut min_version = OLDEST_VERSION;
         let mut requires_jit = false;
         let mut settings = Vec::new();
@@ -105,7 +111,7 @@ impl Scenario {
             if value.is_empty() {
                 return Err(format!("line {number}: `{key}` has no value"));
             }
-            if key != "set" {
+            if key != "set" && key != "index" {
                 if seen.contains(&key) {
                     return Err(format!("line {number}: `{key}` is given more than once"));
                 }
@@ -132,6 +138,7 @@ impl Scenario {
                         format!("line {number}: advice must be index, none or rewrite")
                     })?);
                 }
+                "index" => indexes.push(value.to_owned()),
                 "min_version" => {
                     min_version = value.parse().map_err(|_| {
                         format!("line {number}: min_version must be a major version number")
@@ -169,6 +176,7 @@ impl Scenario {
             description: description.ok_or("missing `description` directive")?,
             rules,
             advice,
+            indexes,
             min_version,
             requires_jit,
             settings,
@@ -263,6 +271,8 @@ mod tests {
 -- description: Hash join that spills to disk.
 -- rules: ES004, ES002?
 -- advice: index
+-- index: orders (customer_id)
+-- index: order_items (order_id)?
 -- min_version: 13
 -- requires: jit
 -- set: work_mem = '64kB'
@@ -280,6 +290,10 @@ JOIN order_items oi ON oi.order_id = o.id;
                 description: "Hash join that spills to disk.".to_owned(),
                 rules: vec!["ES004".to_owned(), "ES002?".to_owned()],
                 advice: Some(Advice::IndexCandidate),
+                indexes: vec![
+                    "orders (customer_id)".to_owned(),
+                    "order_items (order_id)?".to_owned()
+                ],
                 min_version: 13,
                 requires_jit: true,
                 settings: vec![

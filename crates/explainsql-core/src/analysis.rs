@@ -2,6 +2,7 @@
 
 use serde::Serialize;
 
+use crate::advisor::{self, Advice};
 use crate::format;
 use crate::ir::Plan;
 use crate::metrics::{self, Metrics};
@@ -16,6 +17,8 @@ pub struct Analysis {
     pub metrics: Metrics,
     /// Most severe first.
     pub findings: Vec<Finding>,
+    /// Index candidates, rewrites, and why slow scans get no index.
+    pub advice: Vec<Advice>,
 }
 
 /// Computes the metrics and runs the rules.
@@ -23,10 +26,12 @@ pub fn analyze(plan: &Plan) -> Analysis {
     let metrics = metrics::compute(plan);
     let findings = rules::check(plan, &metrics);
     let verdict = verdict(plan, &metrics, &findings);
+    let advice = advisor::advise(plan, &metrics, &findings);
     Analysis {
         verdict,
         metrics,
         findings,
+        advice,
     }
 }
 

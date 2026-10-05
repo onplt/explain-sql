@@ -23,6 +23,6 @@ Output: id, customer_id, status, created_at, amount, note
 HIGH   ES001 Selective sequential scan
 On Seq Scan on orders
 Seq Scan on orders reads 200,000 rows to keep 10.
- Findings (1) · Tab to browse ──────────────────────────────────────────────────
+ Findings (1) │ Advice (1) · Tab to browse, f/i to switch ──────────────────────
 HIGH   ES001 Selective sequential scan: Seq Scan on orders reads 200,000 rows t…
-j/k move  h/l fold  / search  1-9 hotspots  Tab findings  ? help  q quit
+j/k move  h/l fold  / search  1-9 hotspots  Tab list  i advice  ? help  q quit

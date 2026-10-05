@@ -9,8 +9,8 @@
 //! a function, the action is to rewrite the condition rather than to index
 //! the column.
 
-use super::predicate::{self, Access};
 use super::{Context, Finding, Rule, Severity, column_list, evidence, qualifier, relation};
+use crate::expr::{self, Access};
 use crate::format;
 use crate::ir::{Node, PredicateKind, Relationship};
 use crate::metrics;
@@ -138,8 +138,8 @@ fn action(node: &Node, condition: &str, join: bool) -> Option<String> {
     let mut indexable = Vec::new();
     let mut wrapped = None;
     let mut operators = Vec::new();
-    for conjunct in predicate::conjuncts(condition) {
-        match predicate::access(conjunct) {
+    for conjunct in expr::conjuncts(condition) {
+        match expr::access(conjunct) {
             Access::Column {
                 column,
                 operator,
@@ -151,7 +151,7 @@ fn action(node: &Node, condition: &str, join: bool) -> Option<String> {
             Access::Columns(a, b) if join => {
                 // The join key on this scan's side.
                 for column in [a, b] {
-                    if predicate::split_column(column).0 == own {
+                    if expr::split_column(column).0 == own {
                         indexable.push(column);
                     }
                 }
@@ -188,7 +188,7 @@ fn action(node: &Node, condition: &str, join: bool) -> Option<String> {
         return Some(action);
     }
     if let Some((column, wrapper)) = wrapped {
-        let (_, name) = predicate::split_column(column);
+        let (_, name) = expr::split_column(column);
         return Some(format!(
             "The filter applies {} to {name}, so an index on {name} cannot serve it. Rewrite the condition so that {name} stands alone, or index the expression itself.",
             if wrapper == "a cast" {
@@ -199,8 +199,8 @@ fn action(node: &Node, condition: &str, join: bool) -> Option<String> {
         ));
     }
     // ORs across columns, or nothing recognizable: no single index to name.
-    let unknown = predicate::conjuncts(condition)
+    let unknown = expr::conjuncts(condition)
         .into_iter()
-        .any(|conjunct| predicate::access(conjunct) == Access::Unknown);
+        .any(|conjunct| expr::access(conjunct) == Access::Unknown);
     unknown.then(|| format!("An index on {table} matching the filter would let PostgreSQL read only the matching rows."))
 }

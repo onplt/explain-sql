@@ -5,7 +5,7 @@ mod app;
 mod theme;
 mod ui;
 
-use std::io;
+use std::io::{self, Write};
 
 use explainsql_core::Analysis;
 use explainsql_core::ir::Plan;
@@ -63,12 +63,41 @@ pub fn run(plan: Plan, analysis: Analysis, options: Options) -> io::Result<()> {
             _ => continue,
         };
         let page = app.tree_height.saturating_sub(1);
-        if app.handle(key, page) == Outcome::Quit {
-            return Ok(());
+        match app.handle(key, page) {
+            Outcome::Quit => return Ok(()),
+            Outcome::Copy(text) => copy(&text)?,
+            Outcome::Continue => {}
         }
     })();
     ratatui::try_restore()?;
     result
+}
+
+/// Puts text on the clipboard with the OSC 52 escape sequence, which
+/// terminals support over SSH and inside tmux.
+fn copy(text: &str) -> io::Result<()> {
+    let mut out = io::stdout();
+    write!(out, "\x1b]52;c;{}\x07", base64(text.as_bytes()))?;
+    out.flush()
+}
+
+fn base64(bytes: &[u8]) -> String {
+    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    for chunk in bytes.chunks(3) {
+        let n = chunk
+            .iter()
+            .enumerate()
+            .fold(0u32, |n, (i, &byte)| n | u32::from(byte) << (16 - 8 * i));
+        for i in 0..4 {
+            if i <= chunk.len() {
+                out.push(char::from(ALPHABET[(n >> (18 - 6 * i) & 63) as usize]));
+            } else {
+                out.push('=');
+            }
+        }
+    }
+    out
 }
 
 /// Draws one frame into a buffer, for tests and benchmarks.
@@ -79,4 +108,16 @@ pub fn render(app: &mut App, theme: &Theme, width: u16, height: u16) -> ratatui:
         .draw(|frame| ui::draw(frame, app, theme))
         .expect("a test backend never fails");
     terminal.backend().buffer().clone()
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn encodes_base64() {
+        assert_eq!(super::base64(b""), "");
+        assert_eq!(super::base64(b"f"), "Zg==");
+        assert_eq!(super::base64(b"fo"), "Zm8=");
+        assert_eq!(super::base64(b"foo"), "Zm9v");
+        assert_eq!(super::base64(b"foobar"), "Zm9vYmFy");
+    }
 }

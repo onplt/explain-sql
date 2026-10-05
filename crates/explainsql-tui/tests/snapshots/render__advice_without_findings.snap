@@ -1,0 +1,34 @@
+---
+source: crates/explainsql-tui/tests/render.rs
+expression: "frame(&mut app, 100, 30)"
+---
+55.4 ms. 58% of it in Sort.
+Planning 0.325 ms · Execution 55.4 ms · Buffers 2,420 pages, 92% from cache
+ Plan · time in each node ──────────────────────────────────────────────────────────────────────────
+    Share     Time            Node                                     Rows         Estimate Buffers
+   0.007% 0.004 ms            Limit                                      20               20       0
+      58%  32.0 ms █████▊     └─ Sort                                    20 200,000 ▼10,000×       3
+      42%  23.4 ms ████▎         └─ Seq Scan on orders              200,000          200,000   2,417
+ Details ───────────────────────────────────────────────────────────────────────────────────────────
+Limit
+Time in node: 0.004 ms (0.007% of the runtime)
+With children: 55.4 ms
+Rows: 20 per loop
+Estimate: 20 rows; cost 9738.93..9738.98, width 10
+Buffers: shared hit 2,223, read 197, written 1
+Read by the node itself: 0 pages
+Output: id, amount
+
+
+
+
+
+
+
+
+
+
+
+ Findings (0) │ Advice (1) · Tab to browse, f/i to switch ──────────────────────────────────────────
+SURE   Index orders (amount): CREATE INDEX CONCURRENTLY ON public.orders (amount);
+j/k move  h/l fold  / search  1-9 hotspots  Tab list  i advice  ? help  q quit

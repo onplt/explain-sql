@@ -2,7 +2,7 @@
 
 **Find out why your PostgreSQL query is slow, get a fix, and prove it works, without leaving the terminal.**
 
-> 🚧 **Early development.** There is no release yet. The repository holds the design documents, a corpus of real `EXPLAIN` plans from PostgreSQL 12–18, the parsers, the analysis (exclusive times, twelve rules and a static report) and the interactive viewer. The index advisor and the connected mode are not built yet. Watch the repository if you want to know when the first release ships.
+> 🚧 **Early development.** There is no release yet. The repository holds the design documents, a corpus of real `EXPLAIN` plans from PostgreSQL 12–18, the parsers, the analysis (exclusive times, twelve rules and a static report), the interactive viewer and the offline index advisor. The connected mode is not built yet. Watch the repository if you want to know when the first release ships.
 
 ## What it will do
 
@@ -58,4 +58,4 @@ The plan corpus and its scenario format are described in [fixtures/README.md](fi
 
 ## Status
 
-Pre-alpha. Phase 0 (workspace skeleton, CI and the fixture corpus) and Phase 1 (the parsers) are done. Phase 2 (the metrics engine, the rules and the static report) and Phase 3 (the interactive viewer) are code-complete. Phase 4 (the index advisor and the connected mode) is next. Feedback is welcome in the issues.
+Pre-alpha. Phase 0 (workspace skeleton, CI and the fixture corpus) and Phase 1 (the parsers) are done. Phase 2 (the metrics engine, the rules and the static report) and Phase 3 (the interactive viewer) are code-complete. In Phase 4, the offline index advisor is done; the connected mode and the proof loop are next. Feedback is welcome in the issues.

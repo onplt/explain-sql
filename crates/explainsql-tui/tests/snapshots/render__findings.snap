@@ -28,7 +28,7 @@ Time in the node: 189.3 ms (51% of the runtime)
 
 
 
- Findings (2) · Enter: go to the node ──────────────────────────────────────────────────────────────
+ Findings (2) │ Advice (1) · Enter: go to the node ─────────────────────────────────────────────────
 HIGH   ES001 Selective sequential scan: Seq Scan on order_items oi reads 3,000,000 rows over 10 loo…
 HIGH   ES005 Expensive nested-loop inner side: Nested Loop repeats Seq Scan on order_items oi 10 ti…
-j/k move  h/l fold  / search  1-9 hotspots  Tab findings  ? help  q quit
+j/k move  h/l fold  / search  1-9 hotspots  Tab list  i advice  ? help  q quit

@@ -23,6 +23,15 @@ Findings (1)
           Rows removed by the filter: 3,809 of 3,836 found
           → A composite index on orders (status, created_at) would let the index do the filtering.
 
+Advice (1)
+
+  SURE    Index orders (status, created_at)
+          CREATE INDEX CONCURRENTLY ON public.orders (status, created_at);
+          An index on orders (status, created_at) would let the index do the filtering that Bitmap
+          Heap Scan on orders now does on every row it finds.
+          ! Not connected to the database: existing indexes, the table's write load and the column
+          statistics were not checked.
+
 Share and Time: time spent in each node itself, wall-clock. Rows: actual rows per loop, ×loops when
 it ran more than once. ▲/▼: actual rows above or below the estimate by 10× or more. Buffers: pages
 each node read itself.

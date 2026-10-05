@@ -20,7 +20,7 @@ Tasks:
       --only <list>       Only these scenarios, comma-separated (default: all)
       --keep-containers   Leave the containers running for debugging
   check-fixtures    Check that the committed corpus matches fixtures/scenarios
-  sync-manifests    Copy scenario descriptions, rules and advice into the manifests
+  sync-manifests    Copy scenario descriptions, rules, advice and indexes into the manifests
   help              Show this message
 ",
         versions.join(",")

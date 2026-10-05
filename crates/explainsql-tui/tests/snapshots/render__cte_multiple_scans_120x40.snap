@@ -39,6 +39,6 @@ Planning 0.412 ms · Execution 43.9 ms · Buffers 2,417 pages, 93% from cache
                                                                               │
                                                                               │
                                                                               │
-                                                                              │
-                                                                              │
-j/k move  h/l fold  / search  1-9 hotspots  Tab findings  ? help  q quit
+ Findings (0) │ Advice (1) · Tab to browse, f/i to switch ──────────────────────────────────────────────────────────────
+NO     Seq Scan on orders: it reads the whole table because the query needs every row; there is no condition for an ind…
+j/k move  h/l fold  / search  1-9 hotspots  Tab list  i advice  ? help  q quit

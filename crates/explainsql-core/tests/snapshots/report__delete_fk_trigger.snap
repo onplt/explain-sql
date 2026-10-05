@@ -23,6 +23,18 @@ Findings (1)
           each deleted or updated row looks up the rows that refer to it, and without an index every
           lookup scans that table.
 
+Advice (1)
+
+  SURE    Index the referencing columns of order_items_order_id_fkey
+          Each row deleted or updated makes PostgreSQL look up the rows that reference it through
+          order_items_order_id_fkey. Without an index on the referencing columns, every lookup scans
+          the referencing table.
+          ! The plan does not say which columns order_items_order_id_fkey covers. This query names
+          them: SELECT conrelid::regclass, pg_get_constraintdef(oid) FROM pg_constraint WHERE
+          conname = 'order_items_order_id_fkey';
+          ! Not connected to the database: existing indexes, the table's write load and the column
+          statistics were not checked.
+
 Share and Time: time spent in each node itself, wall-clock. Rows: actual rows per loop, ×loops when
 it ran more than once. ▲/▼: actual rows above or below the estimate by 10× or more. Buffers: pages
 each node read itself.

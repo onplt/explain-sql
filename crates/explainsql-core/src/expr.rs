@@ -1,6 +1,7 @@
-//! Just enough of PostgreSQL's deparsed expressions to tell which columns a
-//! condition compares with what, and whether it wraps them in a cast or a
-//! function. The full expression parser arrives with the index advisor.
+//! Conditions as PostgreSQL prints them in plans (`((status)::text =
+//! 'open'::text)`): enough of the deparsed expressions to tell which columns
+//! a condition compares with what, and whether it wraps them in a cast or a
+//! function. Shared by the rules and the index advisor.
 
 /// The parts of a condition joined by `AND` at the top level, without their
 /// outer parentheses.

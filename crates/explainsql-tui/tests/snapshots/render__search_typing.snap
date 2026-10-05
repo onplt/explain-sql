@@ -28,7 +28,7 @@ On Nested Loop
 Nested Loop repeats Seq Scan on order_items oi 10 times; that takes 97% of the loop's time.
 Inner loops: 10
 Inner side per loop: 18.9 ms
- Findings (2) · Tab to browse ──────────────────────────────────────────────────────────────────────
+ Findings (2) │ Advice (1) · Tab to browse, f/i to switch ──────────────────────────────────────────
 HIGH   ES001 Selective sequential scan: Seq Scan on order_items oi reads 3,000,000 rows over 10 loo…
 HIGH   ES005 Expensive nested-loop inner side: Nested Loop repeats Seq Scan on order_items oi 10 ti…
 /order_items▏  Enter: find  Esc: cancel

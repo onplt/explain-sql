@@ -80,7 +80,8 @@ The header is every leading line that starts with `--`. Everything after it is t
 |---|---|---|
 | `description` | yes | What the plan demonstrates |
 | `rules` | no | IDs from the [rule catalog](../docs/rules.md) that the plan triggers. No other rule may fire. An ID ending in `?` (`ES002?`) may fire on some server versions and not others, where their estimates differ |
-| `advice` | no | Expected advisor outcome: `index` (a candidate), `none` (no suggestion; a trap for naive advisors) or `rewrite` (fix the query rather than the schema) |
+| `advice` | no | Expected advisor outcome: `index` (a candidate), `none` (no suggestion; a trap for naive advisors) or `rewrite` (fix the query rather than the schema). Without it, the advisor must suggest nothing |
+| `index` | no, repeatable | With `advice: index`, an index the advisor must suggest, as `orders (customer_id)`, `events USING gin (payload)` or `constraint order_items_order_id_fkey`; no other may be suggested. A trailing `?` marks one that may be missing on some versions |
 | `min_version` | no | Oldest major version that supports the scenario (default 12) |
 | `requires` | no | `jit`: capture only on servers built with JIT |
 | `set` | no, repeatable | A setting applied with `SET` before the statement |
@@ -88,7 +89,7 @@ The header is every leading line that starts with `--`. Everything after it is t
 
 To add a scenario, write the file, run `cargo xtask gen-fixtures` for every version, read the text plans to confirm they show what the description claims, and commit the `.sql` file together with `pg/`.
 
-The manifests repeat each scenario's description, rules and advice. After changing only those, `cargo xtask sync-manifests` updates the manifests without regenerating any plan (and without Docker).
+The manifests repeat each scenario's description, rules, advice and indexes. After changing only those, `cargo xtask sync-manifests` updates the manifests without regenerating any plan (and without Docker).
 
 ## Dataset
 

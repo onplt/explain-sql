@@ -37,6 +37,17 @@ Findings (2)
           → An index on orders that starts with customer_id and continues with the columns of
           orders_created_at_idx would let the index do the filtering.
 
+Advice (1)
+
+  LIKELY  Index orders (customer_id, created_at)
+          CREATE INDEX CONCURRENTLY ON public.orders (customer_id, created_at);
+          An index on orders (customer_id, created_at) would turn each of the 20 runs of Index Scan
+          using orders_created_at_idx on orders into an index lookup.
+          ! Not connected to the database: existing indexes, the table's write load and the column
+          statistics were not checked.
+          ! created_at is taken from the name of orders_created_at_idx, which Index Scan using
+          orders_created_at_idx on orders reads in order; plans do not list index columns.
+
 Share and Time: time spent in each node itself, wall-clock. Rows: actual rows per loop, ×loops when
 it ran more than once. ▲/▼: actual rows above or below the estimate by 10× or more. Buffers: pages
 each node read itself.

@@ -15,7 +15,9 @@
 //! assert_eq!(plan.root().rows_removed_by_filter, 199990.0);
 //! ```
 
+pub mod advisor;
 pub mod analysis;
+pub mod expr;
 pub mod format;
 pub mod ir;
 pub mod metrics;

@@ -5,8 +5,8 @@
 //! Silent when few rows are removed, and when the scan is cheap compared
 //! with the statement.
 
-use super::predicate::{self, Access};
 use super::{Context, Finding, Rule, Severity, column_list, evidence, relation};
+use crate::expr::{self, Access};
 use crate::format;
 use crate::ir::{Node, PredicateKind};
 
@@ -88,22 +88,22 @@ fn filtering_scan(context: &Context, node: &Node) -> Option<Finding> {
         facts.push(evidence("Loops", format::rows(loops)));
     }
 
-    let filter_columns: Vec<&str> = predicate::conjuncts(filter)
+    let filter_columns: Vec<&str> = expr::conjuncts(filter)
         .into_iter()
-        .filter_map(|conjunct| match predicate::access(conjunct) {
+        .filter_map(|conjunct| match expr::access(conjunct) {
             Access::Column { column, .. } => Some(column),
             // A join condition pushed into the scan: the scan's own column.
             Access::Columns(a, b) => [a, b]
                 .into_iter()
-                .find(|column| predicate::split_column(column).0 == super::qualifier(node)),
+                .find(|column| expr::split_column(column).0 == super::qualifier(node)),
             _ => None,
         })
         .collect();
     let index_columns: Vec<&str> = index_condition
         .map(|condition| {
-            predicate::conjuncts(condition)
+            expr::conjuncts(condition)
                 .into_iter()
-                .filter_map(|conjunct| match predicate::access(conjunct) {
+                .filter_map(|conjunct| match expr::access(conjunct) {
                     Access::Column { column, .. } => Some(column),
                     _ => None,
                 })

@@ -3,6 +3,7 @@
 
 use serde::Serialize;
 
+use crate::advisor::{Advice, AdviceKind, Confidence};
 use crate::analysis::Analysis;
 use crate::format;
 use crate::ir::{NodeId, Plan};
@@ -116,6 +117,8 @@ pub fn text(plan: &Plan, analysis: &Analysis, color: bool) -> String {
         }
     }
 
+    text_advice(&mut out, plan, analysis, &paint);
+
     if !plan.warnings.is_empty() {
         out.push('\n');
         out.push_str(&paint.bold("Parser warnings"));
@@ -182,6 +185,7 @@ pub fn markdown(plan: &Plan, analysis: &Analysis) -> String {
             out.push_str(&format!("  - **Action:** {}\n", escape(&finding.action)));
         }
     }
+    markdown_advice(&mut out, plan, analysis);
     if !plan.warnings.is_empty() {
         out.push_str("\n### Parser warnings\n\n");
         for warning in &plan.warnings {
@@ -197,18 +201,105 @@ pub fn json(plan: &Plan, analysis: &Analysis) -> String {
     struct Report<'a> {
         verdict: &'a str,
         findings: &'a [Finding],
+        advice: &'a [Advice],
         metrics: &'a metrics::Metrics,
         plan: &'a Plan,
     }
     let report = Report {
         verdict: &analysis.verdict,
         findings: &analysis.findings,
+        advice: &analysis.advice,
         metrics: &analysis.metrics,
         plan,
     };
     let mut out = serde_json::to_string_pretty(&report).expect("the report serializes");
     out.push('\n');
     out
+}
+
+/// The advice section of the text report: suggestions, then the slow scans
+/// no index would help.
+fn text_advice(out: &mut String, plan: &Plan, analysis: &Analysis, paint: &Paint) {
+    let (suggestions, explanations) = split_advice(&analysis.advice);
+    if !suggestions.is_empty() {
+        out.push('\n');
+        out.push_str(&paint.bold(&format!("Advice ({})", suggestions.len())));
+        out.push('\n');
+        for advice in suggestions {
+            out.push('\n');
+            out.push_str(&format!(
+                "  {}  {}\n",
+                paint.confidence(advice.confidence),
+                advice.title()
+            ));
+            if let AdviceKind::Index { ddl, .. } = &advice.kind {
+                out.push_str(&format!("          {}\n", paint.bold(ddl)));
+            }
+            out.push_str(&wrap(&advice.summary, 10));
+            out.push('\n');
+            for caveat in &advice.caveats {
+                out.push_str(&paint.dim(&wrap(&format!("! {caveat}"), 10)));
+                out.push('\n');
+            }
+        }
+    }
+    if !explanations.is_empty() {
+        out.push('\n');
+        out.push_str(&paint.bold("No index would help"));
+        out.push('\n');
+        for advice in explanations {
+            let node = advice.node.map(|id| format::node(plan.node(id)));
+            if let (Some(node), AdviceKind::NoIndex { reason }) = (node, &advice.kind) {
+                out.push_str(&wrap(&format!("{node}: {reason}"), 2));
+                out.push('\n');
+            }
+        }
+    }
+}
+
+fn markdown_advice(out: &mut String, plan: &Plan, analysis: &Analysis) {
+    let (suggestions, explanations) = split_advice(&analysis.advice);
+    if !suggestions.is_empty() {
+        out.push_str("\n### Advice\n\n");
+        for advice in suggestions {
+            out.push_str(&format!(
+                "- **{}** ({} confidence): {}\n",
+                escape(&advice.title()),
+                confidence_name(advice.confidence),
+                escape(&advice.summary)
+            ));
+            if let AdviceKind::Index { ddl, .. } = &advice.kind {
+                out.push_str(&format!("  ```sql\n  {ddl}\n  ```\n"));
+            }
+            for caveat in &advice.caveats {
+                out.push_str(&format!("  - {}\n", escape(caveat)));
+            }
+        }
+    }
+    if !explanations.is_empty() {
+        out.push_str("\n### No index would help\n\n");
+        for advice in explanations {
+            let node = advice.node.map(|id| format::node(plan.node(id)));
+            if let (Some(node), AdviceKind::NoIndex { reason }) = (node, &advice.kind) {
+                out.push_str(&format!("- {}: {}\n", escape(&node), escape(reason)));
+            }
+        }
+    }
+}
+
+/// Suggestions, and explanations of why no index would help.
+fn split_advice(advice: &[Advice]) -> (Vec<&Advice>, Vec<&Advice>) {
+    advice
+        .iter()
+        .partition(|advice| !matches!(advice.kind, AdviceKind::NoIndex { .. }))
+}
+
+fn confidence_name(confidence: Confidence) -> &'static str {
+    match confidence {
+        Confidence::High => "high",
+        Confidence::Medium => "medium",
+        Confidence::Low => "low",
+    }
 }
 
 /// Statement-level figures: planning and execution time, triggers, JIT,
@@ -448,6 +539,14 @@ impl Paint {
             self.wrap("33", text)
         } else {
             text.to_owned()
+        }
+    }
+
+    fn confidence(&self, confidence: Confidence) -> String {
+        match confidence {
+            Confidence::High => self.wrap("1;32", "SURE  "),
+            Confidence::Medium => self.wrap("32", "LIKELY"),
+            Confidence::Low => self.wrap("2", "MAYBE "),
         }
     }
 
