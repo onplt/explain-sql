@@ -161,3 +161,46 @@ fn diff_reports() {
     );
     assert_eq!(json["matched"][0], serde_json::json!([0, 0]));
 }
+
+/// The checks of a CI run: a plan worse than its locked one, with its
+/// tested fix, a new plan and a plan that passed.
+#[test]
+fn check_reports() {
+    use explainsql_core::check::{Policy, check};
+    let indexed = "Index Scan using orders_customer_id_idx on orders o  (cost=0.42..44.50 rows=10 width=20) (actual time=0.020..0.051 rows=10 loops=1)\n  Index Cond: (customer_id = 4242)\n  Buffers: shared hit=13\nExecution Time: 0.070 ms";
+    let scanned = read(&plan_path(16, "seq_scan_selective", "txt"));
+    let (indexed, scanned) = (parse(indexed).unwrap(), parse(&scanned).unwrap());
+    let checked = vec![
+        check(
+            "queries/customer.sql",
+            scanned.clone(),
+            analyze(&scanned),
+            Some(indexed.clone()),
+            Policy::default(),
+        ),
+        check(
+            "queries/new.sql",
+            indexed.clone(),
+            analyze(&indexed),
+            None,
+            Policy::default(),
+        ),
+        check(
+            "queries/same.sql",
+            indexed.clone(),
+            analyze(&indexed),
+            Some(indexed),
+            Policy::default(),
+        ),
+    ];
+    insta::assert_snapshot!("check_text", report::check_text(&checked, false));
+    insta::assert_snapshot!("check_markdown", report::check_markdown(&checked));
+    let sarif: serde_json::Value = serde_json::from_str(&report::check_sarif(&checked)).unwrap();
+    assert_eq!(
+        sarif["runs"][0]["tool"]["driver"]["rules"]
+            .as_array()
+            .unwrap()
+            .len(),
+        14
+    );
+}

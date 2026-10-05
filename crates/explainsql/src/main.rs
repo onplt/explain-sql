@@ -4,6 +4,7 @@ use std::io::{IsTerminal, Read, Write};
 use std::process::{Command, ExitCode, Stdio};
 use std::{env, fs, io};
 
+mod check;
 mod connected;
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
@@ -28,7 +29,8 @@ use explainsql_core::report;
 /// slow.sql. It shows the estimated plan, then runs EXPLAIN ANALYZE in a
 /// transaction that is always rolled back, READ ONLY unless --allow-dml.
 ///
-/// explainsql diff BEFORE AFTER compares two plans of the same statement.
+/// explainsql diff BEFORE AFTER compares two plans of the same statement;
+/// explainsql check checks plans in continuous integration.
 #[derive(Parser)]
 #[command(
     name = "explainsql",
@@ -135,6 +137,11 @@ struct Cli {
     /// query.
     #[arg(long)]
     no_analyze: bool,
+
+    /// With a printed report: exit with 1 when a finding is at least this
+    /// severe, as a check in a script or CI.
+    #[arg(long, value_enum, value_name = "SEVERITY")]
+    fail_on: Option<Severity>,
 }
 
 #[derive(Subcommand)]
@@ -143,6 +150,104 @@ enum Task {
     /// read their table another way, which joins changed method or order,
     /// which nodes came or went, and how the work of each node changed.
     Diff(DiffArgs),
+    /// Check plans in continuous integration: each plan against its
+    /// findings and against the plan locked for it, with exit code 0 when
+    /// every plan passed, 1 when one failed and 2 on an error.
+    ///
+    /// Without -d, PATHS are plan files. With -d, they are SQL files, each
+    /// run in a transaction that is rolled back, READ ONLY unless
+    /// --allow-dml. Directories are searched for both. A plan fails when it
+    /// is worse than its locked plan by pages (by the estimated cost when
+    /// not run): time alone, for the same pages, does not fail it. --update
+    /// locks the plans as they are.
+    Check(CheckArgs),
+}
+
+#[derive(Args)]
+struct CheckArgs {
+    /// Plan files, or with -d, SQL files; directories are searched for
+    /// *.json and *.txt plans, or *.sql statements.
+    #[arg(required = true, value_name = "PATHS")]
+    paths: Vec<String>,
+
+    /// Run the SQL files against this database (as -d in connected mode).
+    #[arg(short = 'd', long, value_name = "DATABASE")]
+    dbname: Option<String>,
+
+    /// Also fail a plan with a finding at least this severe.
+    #[arg(long, value_enum, value_name = "SEVERITY")]
+    fail_on: Option<Severity>,
+
+    /// Also fail a plan whose shape changed from its locked plan, even when
+    /// it is not worse.
+    #[arg(long)]
+    strict: bool,
+
+    /// The file of locked plans.
+    #[arg(long, value_name = "FILE", default_value = "explainsql.lock")]
+    lock: String,
+
+    /// Lock the plans as they are now, rather than check them: to start,
+    /// or to accept a change. Other plans in the file stay as they are.
+    #[arg(long, conflicts_with_all = ["fail_on", "strict", "prove"])]
+    update: bool,
+
+    /// With -d: test the suggested indexes of each plan that failed with
+    /// HypoPG, and report before and after.
+    #[arg(long, requires = "dbname")]
+    prove: bool,
+
+    /// With -d: plan the statements without running them.
+    #[arg(long, requires = "dbname")]
+    no_analyze: bool,
+
+    /// With -d: also run statements that modify data or lock rows, in a
+    /// transaction that is rolled back.
+    #[arg(long, requires = "dbname")]
+    allow_dml: bool,
+
+    /// With -d: stop a statement after this many seconds.
+    #[arg(long, value_name = "SECONDS", default_value_t = 30)]
+    timeout: u64,
+
+    /// Report format: sarif for code scanning, md for a pull request
+    /// comment.
+    #[arg(long, value_enum, default_value_t = CheckFormat::Text)]
+    format: CheckFormat,
+
+    /// When to color the text report.
+    #[arg(long, value_enum, default_value_t = Color::Auto)]
+    color: Color,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum CheckFormat {
+    /// For a terminal.
+    Text,
+    /// Markdown, for a pull request comment.
+    Md,
+    /// JSON, for other programs.
+    Json,
+    /// SARIF 2.1.0, for code scanning (GitHub and others).
+    Sarif,
+}
+
+/// How severe a finding is.
+#[derive(Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum Severity {
+    Low,
+    Medium,
+    High,
+}
+
+impl From<Severity> for explainsql_core::rules::Severity {
+    fn from(severity: Severity) -> Self {
+        match severity {
+            Severity::Low => explainsql_core::rules::Severity::Low,
+            Severity::Medium => explainsql_core::rules::Severity::Medium,
+            Severity::High => explainsql_core::rules::Severity::High,
+        }
+    }
 }
 
 #[derive(Args)]
@@ -202,8 +307,10 @@ const DEMO: &str = include_str!("../demo/plan.txt");
 
 fn main() -> ExitCode {
     let cli = Cli::parse();
-    if let Some(Task::Diff(args)) = &cli.task {
-        return diff(args);
+    match &cli.task {
+        Some(Task::Diff(args)) => return diff(args),
+        Some(Task::Check(args)) => return check::run(args),
+        None => {}
     }
     if cli.query_file.is_some() || cli.command.is_some() {
         return connected::run(&cli);
@@ -260,7 +367,26 @@ fn main() -> ExitCode {
             }
         }
     }
-    emit(&report_for(&cli, &plan, &analysis))
+    with_findings(&cli, &analysis, emit(&report_for(&cli, &plan, &analysis)))
+}
+
+/// The exit code after a printed report: 1 when `--fail-on` is given and a
+/// finding is at least that severe.
+pub(crate) fn with_findings(cli: &Cli, analysis: &Analysis, code: ExitCode) -> ExitCode {
+    let Some(threshold) = cli.fail_on else {
+        return code;
+    };
+    let threshold = explainsql_core::rules::Severity::from(threshold);
+    if code == ExitCode::SUCCESS
+        && analysis
+            .findings
+            .iter()
+            .any(|finding| finding.severity >= threshold)
+    {
+        ExitCode::FAILURE
+    } else {
+        code
+    }
 }
 
 /// `explainsql diff`: reads both plans and prints how they differ.

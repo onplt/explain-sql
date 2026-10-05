@@ -149,3 +149,40 @@ Nodes are matched by the work they do, not by their position. A scan is found ag
 Each plan has a shape: 16 hexadecimal digits that stand for its nodes, what they read and how, without numbers, literal values or aliases. Two plans with the same shape are the same plan, whatever the parameters, the data, the cache, or whether they were printed as JSON or text.
 
 In connected mode, after `r` or `e` runs the statement again, the status line compares the run with the previous one in the same way.
+
+## Check plans in CI
+
+`explainsql check` makes plans a gate in continuous integration: each plan is checked against its findings and against the plan locked for it in `explainsql.lock`. It exits with 0 when every plan passed, 1 when one failed, and 2 when the check could not run.
+
+```sh
+explainsql check -d "$DATABASE_URL" queries/ --update      # lock the plans as they are; commit explainsql.lock
+explainsql check -d "$DATABASE_URL" queries/               # in CI: fail when a plan got worse
+explainsql check -d "$DATABASE_URL" queries/ --fail-on high --prove --format md > comment.md
+explainsql check plans/ --format sarif > explainsql.sarif  # captured plans, no database
+```
+
+- **What it reads.** With `-d`, SQL files, one statement each (directories are searched for `*.sql`), run as in connected mode: in a transaction that is rolled back, READ ONLY unless `--allow-dml`, with `EXPLAIN ANALYZE`, or with `EXPLAIN` alone under `--no-analyze`. Without `-d`, plan files in any form explainsql reads (directories are searched for `*.json` and `*.txt`).
+- **The lock.** `--update` writes each plan to `explainsql.lock` (`--lock FILE` for another file), under its path from the lock file's directory: its shape, its pages, its estimated cost, and the plan itself, a JSON plan as JSON so that a change reads well in a review. Plans not checked in that run stay as they are. Commit the file, and run `--update` again to accept a change.
+- **When a plan fails.**
+  - It is worse than its locked plan by pages, by temporary files, or, when neither plan was run, by the planner's estimated cost, by more than 10%. Time alone does not fail a plan: on a shared runner it changes from one run to the next for the same pages, so it is a note.
+  - With `--fail-on SEVERITY`, a finding at least that severe fails it, locked or not.
+  - With `--strict`, a plan whose shape changed fails even when it is not worse: the plan becomes a contract, changed on purpose with `--update`.
+
+  A plan not in the lock yet is new, and fails only on its findings.
+- **What it says.** For each plan that failed: why, what changed in the plan (as `explainsql diff` tells it), and the suggested fix; with `--prove` and HypoPG, each suggested index is tested and reported before and after. `--format md` is a pull request comment: the plans in a table, with what changed folded below. `--format sarif` is for code scanning: each finding and each plan worse than its lock is a result on its file, an error when it fails the plan. `--format json` is for other programs.
+
+A GitHub Actions job, against the database the tests use:
+
+```yaml
+- name: Check the plans
+  run: explainsql check -d "$DATABASE_URL" queries/ --fail-on high --format sarif > explainsql.sarif
+- name: Show them in code scanning
+  if: always()
+  uses: github/codeql-action/upload-sarif@v3
+  with:
+    sarif_file: explainsql.sarif
+```
+
+For a single plan, the main command takes `--fail-on` as well: `explainsql --print --fail-on high plan.json` exits with 1 when a finding is at least that severe.
+
+A plan from a database with a handful of rows says little: the planner reads such tables whole. Check against data shaped like production's. PostgreSQL 18 can also restore production's statistics (`pg_restore_relation_stats`, `pg_restore_attribute_stats`), although the planner still sees the size of each table on disk.

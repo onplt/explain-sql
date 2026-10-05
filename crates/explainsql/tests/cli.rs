@@ -376,3 +376,167 @@ fn compares_two_plans_in_one_input() {
     // Usage errors are told apart.
     assert_eq!(run(&["diff"], None).status.code(), Some(2));
 }
+
+const INDEXED: &str = "\
+Index Scan using orders_customer_id_idx on orders o  (cost=0.42..44.50 rows=10 width=20) (actual time=0.020..0.051 rows=10 loops=1)
+  Index Cond: (customer_id = 4242)
+  Buffers: shared hit=13
+Execution Time: 0.070 ms
+";
+
+const SCANNED: &str = "\
+Seq Scan on orders o  (cost=0.00..4917.00 rows=10 width=20) (actual time=1.053..11.865 rows=10 loops=1)
+  Filter: (customer_id = 4242)
+  Rows Removed by Filter: 199990
+  Buffers: shared hit=2031 read=386
+Execution Time: 11.899 ms
+";
+
+/// A directory of its own for a test.
+fn scratch(name: &str) -> PathBuf {
+    let dir = std::env::temp_dir().join(format!("explainsql-{name}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("plans")).unwrap();
+    dir
+}
+
+#[test]
+fn checks_plans_against_their_locked_plans() {
+    let dir = scratch("check");
+    let plans = dir.join("plans");
+    let lock = dir.join("explainsql.lock");
+    let (plans_arg, lock_arg) = (plans.to_str().unwrap(), lock.to_str().unwrap());
+    std::fs::write(plans.join("customer.txt"), INDEXED).unwrap();
+    let check = |extra: &[&str]| {
+        let mut args = vec!["check", plans_arg, "--lock", lock_arg, "--color", "never"];
+        args.extend_from_slice(extra);
+        run(&args, None)
+    };
+
+    // Nothing locked yet: new, and passing.
+    let output = check(&[]);
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    assert!(stdout(&output).starts_with("NEW   plans/customer.txt"));
+
+    // Locked, then the same plan passes.
+    assert_eq!(check(&["--update"]).status.code(), Some(0));
+    let locked = std::fs::read_to_string(&lock).unwrap();
+    assert!(locked.contains("\"plans/customer.txt\""), "{locked}");
+    let output = check(&[]);
+    assert_eq!(output.status.code(), Some(0));
+    assert!(stdout(&output).starts_with("PASS  plans/customer.txt"));
+
+    // The index is gone: worse by pages, which fails.
+    std::fs::write(plans.join("customer.txt"), SCANNED).unwrap();
+    let output = check(&[]);
+    assert_eq!(output.status.code(), Some(1), "{output:?}");
+    let text = stdout(&output);
+    assert!(text.starts_with("FAIL  plans/customer.txt"), "{text}");
+    assert!(
+        text.contains("Worse than the locked plan: pages 13 → 2,417 (186× more)"),
+        "{text}"
+    );
+    assert!(text.ends_with("1 plan: 1 failed.\n"), "{text}");
+
+    // For code scanning and for a pull request.
+    let sarif: serde_json::Value =
+        serde_json::from_str(&stdout(&check(&["--format", "sarif"]))).unwrap();
+    assert_eq!(sarif["version"], "2.1.0");
+    let results = sarif["runs"][0]["results"].as_array().unwrap();
+    assert!(results.iter().any(|result| result["ruleId"] == "plan-worse"
+        && result["level"] == "error"
+        && result["locations"][0]["physicalLocation"]["artifactLocation"]["uri"]
+            == "plans/customer.txt"));
+    // ES001 is there, but does not fail the plan without --fail-on.
+    assert!(
+        results
+            .iter()
+            .any(|result| result["ruleId"] == "ES001" && result["level"] == "warning")
+    );
+    let markdown = stdout(&check(&["--format", "md"]));
+    assert!(markdown.contains("**The plan failed.**"), "{markdown}");
+    assert!(
+        markdown.contains("| `plans/customer.txt` | **Failed** |"),
+        "{markdown}"
+    );
+    let json: serde_json::Value =
+        serde_json::from_str(&stdout(&check(&["--format", "json"]))).unwrap();
+    assert_eq!(json["passed"], false);
+    assert_eq!(json["plans"][0]["status"], "failed");
+
+    // Findings fail a plan when asked to, even a new one.
+    std::fs::remove_file(&lock).unwrap();
+    assert_eq!(check(&[]).status.code(), Some(0));
+    let output = check(&["--fail-on", "high"]);
+    assert_eq!(output.status.code(), Some(1));
+    assert!(stdout(&output).contains("ES001 Selective sequential scan"));
+
+    // Errors are not failures.
+    std::fs::write(&lock, "not a lock").unwrap();
+    assert_eq!(check(&[]).status.code(), Some(2));
+    std::fs::remove_file(&lock).unwrap();
+    std::fs::write(plans.join("notes.txt"), "not a plan").unwrap();
+    let output = check(&[]);
+    assert_eq!(output.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("plans/notes.txt"));
+    assert_eq!(run(&["check", "/nonexistent"], None).status.code(), Some(2));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn fails_on_findings_when_asked() {
+    let scanned = run(&["--print", "--fail-on", "high"], Some(SCANNED));
+    assert_eq!(scanned.status.code(), Some(1));
+    assert!(stdout(&scanned).contains("ES001"));
+    assert_eq!(
+        run(&["--print", "--fail-on", "high"], Some(INDEXED))
+            .status
+            .code(),
+        Some(0)
+    );
+    assert_eq!(run(&["--print"], Some(SCANNED)).status.code(), Some(0));
+}
+
+#[test]
+fn checks_statements_against_a_database() {
+    let Ok(url) = std::env::var("EXPLAINSQL_TEST_DATABASE_URL") else {
+        eprintln!("EXPLAINSQL_TEST_DATABASE_URL is not set; skipping");
+        return;
+    };
+    let dir = scratch("check-db");
+    std::fs::write(
+        dir.join("plans/customer.sql"),
+        "SELECT id, amount FROM orders WHERE customer_id = 4242",
+    )
+    .unwrap();
+    let lock = dir.join("explainsql.lock");
+    let check = |extra: &[&str]| {
+        let mut args = vec![
+            "check",
+            "-d",
+            &url,
+            dir.to_str().unwrap(),
+            "--lock",
+            lock.to_str().unwrap(),
+            "--color",
+            "never",
+        ];
+        args.extend_from_slice(extra);
+        run(&args, None)
+    };
+    assert_eq!(check(&["--update"]).status.code(), Some(0));
+    let output = check(&[]);
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    assert!(stdout(&output).starts_with("PASS  plans/customer.sql"));
+    // The scan of orders is a finding: it fails when asked to, and the
+    // suggested index is tested.
+    let output = check(&["--fail-on", "high", "--prove"]);
+    assert_eq!(output.status.code(), Some(1), "{output:?}");
+    let text = stdout(&output);
+    assert!(
+        text.contains("CREATE INDEX CONCURRENTLY ON public.orders (customer_id);"),
+        "{text}"
+    );
+    assert!(text.contains("HypoPG"), "{text}");
+    let _ = std::fs::remove_dir_all(&dir);
+}

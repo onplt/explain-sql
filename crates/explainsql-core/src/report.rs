@@ -5,6 +5,7 @@ use serde::Serialize;
 
 use crate::advisor::{Advice, AdviceKind, Confidence, Verification};
 use crate::analysis::Analysis;
+use crate::check::{self, Checked, Status};
 use crate::counterfactual::{Answer, Verdict};
 use crate::diff::{ChangeKind, PlanDiff};
 use crate::format;
@@ -220,6 +221,270 @@ pub fn diff_json(before: &Plan, after: &Plan, diff: &PlanDiff) -> String {
     let mut out = serde_json::to_string_pretty(&report).expect("the report serializes");
     out.push('\n');
     out
+}
+
+/// The checks of a CI run for a terminal: each plan's result, why it
+/// failed, what to do about it, and a summary. `color` adds ANSI colors.
+pub fn check_text(checked: &[Checked], color: bool) -> String {
+    let paint = Paint(color);
+    let mut out = String::new();
+    for item in checked {
+        out.push_str(&format!(
+            "{}  {}",
+            paint.status(item.status),
+            paint.bold(&item.name)
+        ));
+        out.push_str(&paint.dim(&format!("  {}", shape_note(item))));
+        out.push('\n');
+        for reason in &item.reasons {
+            out.push_str(&wrap(reason, 6));
+            out.push('\n');
+        }
+        for note in &item.notes {
+            out.push_str(&wrap(&format!("Note: {note}"), 6));
+            out.push('\n');
+        }
+        if item.status == Status::Failed {
+            for fix in fixes(item) {
+                out.push_str(&wrap(&format!("→ {fix}"), 6));
+                out.push('\n');
+            }
+        }
+    }
+    if !checked.is_empty() {
+        out.push('\n');
+    }
+    out.push_str(&paint.bold(&check::summary(checked)));
+    out.push('\n');
+    out
+}
+
+/// The checks of a CI run as Markdown, for a pull request comment: a table
+/// of the plans, then what changed in each plan that failed or changed.
+pub fn check_markdown(checked: &[Checked]) -> String {
+    let failed = checked
+        .iter()
+        .filter(|item| item.status == Status::Failed)
+        .count();
+    let mut out = String::from("### explainsql check\n\n");
+    let headline = match (failed, checked.len()) {
+        (0, _) => "No plan failed.".to_owned(),
+        (1, 1) => "The plan failed.".to_owned(),
+        (failed, total) => format!("{failed} of {total} plans failed."),
+    };
+    out.push_str(&format!("**{headline}** {}\n\n", check::summary(checked)));
+    out.push_str("| Plan | Result | Shape | Why |\n|---|---|---|---|\n");
+    for item in checked {
+        let why = item
+            .reasons
+            .first()
+            .or(item.notes.first())
+            .map(|text| escape(text))
+            .unwrap_or_default();
+        out.push_str(&format!(
+            "| `{}` | {} | {} | {} |\n",
+            item.name.replace('`', "'"),
+            match item.status {
+                Status::Failed => "**Failed**",
+                Status::New => "New",
+                Status::Passed => "Passed",
+            },
+            match &item.diff {
+                Some(diff) if !diff.shapes.same() => {
+                    format!("`{}` → `{}`", diff.shapes.before, diff.shapes.after)
+                }
+                _ => format!("`{}`", item.shape),
+            },
+            why
+        ));
+    }
+    for item in checked {
+        let changed = item
+            .diff
+            .as_ref()
+            .filter(|diff| !diff.shapes.same() || item.status == Status::Failed);
+        if item.status != Status::Failed && changed.is_none() {
+            continue;
+        }
+        out.push_str(&format!(
+            "\n<details><summary><code>{}</code>: {}</summary>\n\n",
+            escape(&item.name),
+            if item.status == Status::Failed {
+                "why it failed"
+            } else {
+                "what changed"
+            }
+        ));
+        for reason in &item.reasons {
+            out.push_str(&format!("- {}\n", escape(reason)));
+        }
+        if item.status == Status::Failed {
+            for fix in fixes(item) {
+                out.push_str(&format!("- **Fix:** {}\n", escape(&fix)));
+            }
+        }
+        if let (Some(diff), Some(baseline)) = (changed, &item.baseline) {
+            out.push('\n');
+            out.push_str(&diff_markdown(baseline, &item.plan, diff));
+        }
+        out.push_str("\n</details>\n");
+    }
+    out
+}
+
+/// The checks of a CI run as JSON.
+pub fn check_json(checked: &[Checked]) -> String {
+    #[derive(Serialize)]
+    struct Report<'a> {
+        passed: bool,
+        summary: String,
+        plans: Vec<Entry<'a>>,
+    }
+    #[derive(Serialize)]
+    struct Entry<'a> {
+        #[serde(flatten)]
+        checked: &'a Checked,
+        findings: &'a [Finding],
+        advice: &'a [Advice],
+    }
+    let report = Report {
+        passed: check::passed(checked),
+        summary: check::summary(checked),
+        plans: checked
+            .iter()
+            .map(|item| Entry {
+                checked: item,
+                findings: &item.analysis.findings,
+                advice: &item.analysis.advice,
+            })
+            .collect(),
+    };
+    let mut out = serde_json::to_string_pretty(&report).expect("the report serializes");
+    out.push('\n');
+    out
+}
+
+/// The checks of a CI run as SARIF 2.1.0, for code scanning: each finding,
+/// and each plan worse than its locked one or changed from it. What fails
+/// the run is an error; other findings are warnings or notes.
+pub fn check_sarif(checked: &[Checked]) -> String {
+    use serde_json::json;
+    let mut rules: Vec<serde_json::Value> = crate::rules::RULES
+        .iter()
+        .map(|rule| {
+            json!({
+                "id": rule.id,
+                "name": rule.name.replace(' ', ""),
+                "shortDescription": {"text": rule.name},
+                "helpUri": rule.doc_url(),
+            })
+        })
+        .collect();
+    rules.push(json!({
+        "id": "plan-worse",
+        "name": "PlanWorse",
+        "shortDescription": {"text": "The plan is worse than its locked plan"},
+    }));
+    rules.push(json!({
+        "id": "plan-changed",
+        "name": "PlanChanged",
+        "shortDescription": {"text": "The plan changed from its locked plan"},
+    }));
+    let location = |name: &str| {
+        json!([{
+            "physicalLocation": {
+                "artifactLocation": {"uri": name},
+                "region": {"startLine": 1},
+            }
+        }])
+    };
+    let mut results = Vec::new();
+    for item in checked {
+        for (index, finding) in item.analysis.findings.iter().enumerate() {
+            let level = if item.failing.contains(&index) {
+                "error"
+            } else {
+                match finding.severity {
+                    Severity::High | Severity::Medium => "warning",
+                    Severity::Low => "note",
+                }
+            };
+            results.push(json!({
+                "ruleId": finding.rule.id,
+                "level": level,
+                "message": {"text": format!("{}. {}", finding.summary, finding.action)},
+                "locations": location(&item.name),
+            }));
+        }
+        if let Some(diff) = &item.diff {
+            let worse = item
+                .reasons
+                .iter()
+                .any(|reason| reason.starts_with("Worse than the locked plan"));
+            let (rule, level) = if worse {
+                ("plan-worse", "error")
+            } else if diff.shapes.same() {
+                continue;
+            } else if item.status == Status::Failed {
+                ("plan-changed", "error")
+            } else {
+                ("plan-changed", "note")
+            };
+            results.push(json!({
+                "ruleId": rule,
+                "level": level,
+                "message": {"text": diff.verdict},
+                "locations": location(&item.name),
+            }));
+        }
+    }
+    let sarif = json!({
+        "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
+        "version": "2.1.0",
+        "runs": [{
+            "tool": {
+                "driver": {
+                    "name": "explainsql",
+                    "informationUri": "https://github.com/onplt/explain-sql",
+                    "rules": rules,
+                }
+            },
+            "results": results,
+        }],
+    });
+    let mut out = serde_json::to_string_pretty(&sarif).expect("SARIF serializes");
+    out.push('\n');
+    out
+}
+
+/// `shape 9208e2e2…, locked f155e550…`.
+fn shape_note(item: &Checked) -> String {
+    match &item.diff {
+        Some(diff) if !diff.shapes.same() => {
+            format!("shape {}, locked {}", diff.shapes.after, diff.shapes.before)
+        }
+        Some(_) => format!("shape {}, as locked", item.shape),
+        None => format!("shape {}, not locked yet", item.shape),
+    }
+}
+
+/// What the advice suggests for a plan that failed, with the test of each
+/// index when it was tested.
+fn fixes(item: &Checked) -> Vec<String> {
+    item.analysis
+        .advice
+        .iter()
+        .filter_map(|advice| match &advice.kind {
+            AdviceKind::Index { ddl, .. } => Some(match proof_line(advice) {
+                Some(proof) => format!("{ddl} {proof}"),
+                None => ddl.clone(),
+            }),
+            AdviceKind::Rewrite { .. } | AdviceKind::ForeignKey { .. } => {
+                Some(format!("{}: {}", advice.title(), advice.summary))
+            }
+            AdviceKind::AlreadyIndexed { .. } | AdviceKind::NoIndex { .. } => None,
+        })
+        .collect()
 }
 
 fn shapes_line(diff: &PlanDiff) -> String {
@@ -887,6 +1152,16 @@ impl Paint {
                 self.wrap("33", &label)
             }
             ChangeKind::Work => self.wrap("2", &label),
+        }
+    }
+
+    /// A check's result, padded to line the plans up.
+    fn status(&self, status: Status) -> String {
+        let label = format!("{:<4}", status.label());
+        match status {
+            Status::Failed => self.wrap("1;31", &label),
+            Status::New => self.wrap("33", &label),
+            Status::Passed => self.wrap("32", &label),
         }
     }
 

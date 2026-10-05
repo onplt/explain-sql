@@ -15,7 +15,7 @@ use explainsql_core::{Analysis, advisor, catalog, compare};
 use explainsql_db::{Database, Error, Mode, Safety, Settings};
 use explainsql_tui::{Command, Connection, Event};
 
-use crate::{Cli, Format, emit, interactive, report_for, viewer_options};
+use crate::{Cli, Format, emit, interactive, report_for, viewer_options, with_findings};
 
 pub fn run(cli: &Cli) -> ExitCode {
     match try_run(cli) {
@@ -72,7 +72,11 @@ fn try_run(cli: &Cli) -> Result<ExitCode, String> {
                 Err(error) => eprintln!("explainsql: cannot ask the planner: {error}"),
             }
         }
-        return Ok(emit(&report_for(cli, &plan, &analysis)));
+        return Ok(with_findings(
+            cli,
+            &analysis,
+            emit(&report_for(cli, &plan, &analysis)),
+        ));
     }
 
     // The estimated plan at once; EXPLAIN ANALYZE in the background.
@@ -190,13 +194,20 @@ fn plan_of(
         .explain(sql, mode, safety)
         .map_err(|error| error.to_string())?;
     let plan = explainsql_core::parse(&json).map_err(|error| error.to_string())?;
-    let mut analysis = explainsql_core::analyze(&plan);
-    let catalog = read_catalog(db, &plan, &analysis);
+    let (analysis, catalog) = analyzed(db, &plan);
+    Ok((plan, analysis, catalog))
+}
+
+/// The analysis of a plan, with its advice checked against the catalog
+/// when it could be read.
+pub(crate) fn analyzed(db: &Database, plan: &Plan) -> (Analysis, Option<Catalog>) {
+    let mut analysis = explainsql_core::analyze(plan);
+    let catalog = read_catalog(db, plan, &analysis);
     // Without the catalog, the advice stays as the plan alone gives it.
     if let Some(catalog) = &catalog {
         advisor::refine(&mut analysis.advice, catalog);
     }
-    Ok((plan, analysis, catalog))
+    (analysis, catalog)
 }
 
 /// What the catalog says about the tables of a plan and its advice.
@@ -364,7 +375,13 @@ fn parse_all(plans: &[String]) -> Result<Vec<Plan>, String> {
 
 /// Tests every index suggestion: with HypoPG when it is installed, else by
 /// building the index with --allow-ddl.
-fn prove_all(db: &Database, sql: &str, analysis: &mut Analysis, runs: usize, safety: Safety) {
+pub(crate) fn prove_all(
+    db: &Database,
+    sql: &str,
+    analysis: &mut Analysis,
+    runs: usize,
+    safety: Safety,
+) {
     let hypopg = has_hypopg(db);
     if !hypopg && !safety.allow_ddl {
         eprintln!(

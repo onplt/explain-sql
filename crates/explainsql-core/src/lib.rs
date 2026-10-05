@@ -18,6 +18,7 @@
 pub mod advisor;
 pub mod analysis;
 pub mod catalog;
+pub mod check;
 pub mod compare;
 pub mod counterfactual;
 pub mod diff;

@@ -33,6 +33,7 @@ explain-sql/
 │  │  ├─ src/rules/              # one file per rule
 │  │  ├─ src/advisor/            # index candidates, rewrites, and why no index
 │  │  ├─ src/catalog.rs          # what the database says about the plan's tables
+│  │  ├─ src/check.rs            # the CI gate: findings, locked plans, explainsql.lock
 │  │  ├─ src/compare.rs          # before and after a change: pages first, then time
 │  │  ├─ src/diff.rs             # two plans of a statement, node by node
 │  │  ├─ src/scenario.rs         # the planner settings explainsql may plan under
@@ -43,7 +44,7 @@ explain-sql/
 │  │  └─ tests/                  # corpus, inputs, metrics, rules, report snapshots, robustness
 │  ├─ explainsql-db/             # tokio-postgres + rustls: safe executor, catalog reader, HypoPG/rollback prover
 │  ├─ explainsql-tui/            # Ratatui app: state, views, keymap, theme
-│  └─ explainsql/                # binary: clap CLI, mode dispatch (tui | print | pager | json)
+│  └─ explainsql/                # binary: clap CLI, mode dispatch (tui | print | pager | json), diff, check
 ├─ fixtures/
 │  ├─ schema.sql                 # deterministic dataset
 │  ├─ scenarios/<name>.sql       # one statement plus expectations (rules, advice) per scenario
@@ -329,6 +330,16 @@ A plan shows what the planner chose, not what it turned down. `counterfactual.rs
 - **Order and verdict.** Structural changes come first, then the others, each by weight: the larger share of the statement's time, pages or estimated cost its nodes take in either plan. The verdict is `compare.rs`'s comparison of the totals followed by the first structural change, or "the plan is the same" when the shapes are.
 - **Reports.** Text, Markdown and JSON (`report::diff_*`): the verdict, the shapes, the changes with their evidence, and the plan after with changed nodes marked `~` and new ones `+`. The JSON report is the diff with the label of every node of both plans.
 - **Tests.** `diff.rs` covers each kind of change on small plans. `tests/diff.rs` checks that every corpus plan matches itself and its other format node for node, that scans find their relation in another version, that any two plans compare, and what changed from PostgreSQL 12 to 18 in three scenarios; `tests/report.rs` snapshots the text and Markdown reports, and `tests/cli.rs` runs `explainsql diff`.
+
+## Checks in CI
+
+`explainsql check` is a gate: it exits with 0 when every plan passed, 1 when one failed and 2 when it could not run, and says why in text, Markdown, JSON or SARIF.
+
+- **Core** (`check.rs`, pure). `check()` takes a plan, its analysis and its locked plan, if any, under a `Policy`: `fail_on`, a severity, and `strict`. A plan fails on a finding at least as severe as `fail_on`; on being worse than its locked plan as `compare.rs` judges it, when pages, temporary files or, for two estimated plans, the cost decided; and, under `strict`, on any change of shape. Time alone never fails a plan: for the same pages it changes with the cache and the runner's load, which in CI is noise; it is a note, like a plan that changed and is not worse. Without a locked plan, a plan is new.
+- **The lock** (`check::Lock`). Pretty JSON, sorted by name, versioned: for each name, the plan's shape id, pages and estimated cost, and the plan as captured, JSON as JSON and anything else as text, so that `diff.rs` can compare with it and a change reads well in a review. `--update` writes the plans checked and keeps the others. Names are paths from the lock file's directory, with `/`.
+- **Binary** (`check.rs`). It collects the files (directories are searched in order: `*.sql` with `-d`, `*.json` and `*.txt` without), reads or runs each one as connected mode does, with the advice checked against the catalog, checks it, and with `--prove` tests the suggested indexes of the plans that failed. A file it cannot read or run is reported on standard error and makes the exit code 2, after the others are checked.
+- **Reports** (`report::check_*`). Text: one line per plan with its shape, then why it failed, notes and fixes. Markdown: a table, and for each plan that failed or changed, its diff folded under `<details>`. JSON: every check with its findings and advice. SARIF 2.1.0: the twelve rules and two more, `plan-worse` and `plan-changed`; each finding is a result on its file, an error when it fails the plan and otherwise a warning or a note by severity.
+- **Tests.** `check.rs` covers the policy and the lock; `tests/report.rs` snapshots the text and Markdown reports; `tests/cli.rs` runs a plan from new to locked to worse, every format, the exit codes, and the same against the fixture database with `--prove`.
 
 ## Releases and documentation
 

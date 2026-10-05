@@ -35,6 +35,15 @@ All notable changes to ExplainSQL. The format follows
 - Reading every plan of an input: plans pasted one after the other, JSON
   arrays and documents, Markdown fences, psql results and log entries
   (`parse_all`). `explainsql diff` takes both plans from one input this way.
+- `explainsql check`, a gate for CI: plan files, or SQL files run against a
+  database (`-d`), each checked against its findings (`--fail-on`) and
+  against the plan locked for it in `explainsql.lock` (`--update` writes
+  it). A plan fails when it is worse by pages, or by the estimated cost when
+  not run; time alone, for the same pages, is a note. `--strict` fails any
+  change of plan, and `--prove` tests the suggested fixes of the plans that
+  failed. Exit codes 0, 1 and 2; text, Markdown, JSON or SARIF.
+- `--fail-on SEVERITY`: with a printed report, exit with 1 when a finding is
+  at least that severe.
 
 ### Changed
 

@@ -50,6 +50,7 @@ explainsql -d "$DATABASE_URL" -f slow.sql              # run it: estimated plan,
 explainsql -d "$DATABASE_URL" -f slow.sql --print --prove   # and test each suggested index
 explainsql -d "$DATABASE_URL" -f slow.sql --print --why-not --measure   # why the planner chose its plan
 explainsql diff before.json after.json                 # what changed between two plans, node by node
+explainsql check -d "$DATABASE_URL" queries/           # in CI: fail when a plan got worse than its locked plan
 ```
 
 The [user guide](https://github.com/onplt/explain-sql/blob/main/docs/guide.md) covers the viewer's keys, the pager mode, connected mode and its safety rules, and testing suggestions. The [rule catalog](https://github.com/onplt/explain-sql/blob/main/docs/rules.md) explains every finding, with an example from real plans. Both are also published as the [documentation site](https://onplt.github.io/explain-sql/).
