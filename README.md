@@ -4,8 +4,6 @@
 
 ![ExplainSQL showing a plan, its findings and a suggested index](docs/demo.svg)
 
-> **Version 0.1.0, not released yet.** The release pipeline is ready; binaries appear on the [releases page](https://github.com/onplt/explain-sql/releases) once the first version is tagged. Until then, build from source (below).
-
 ExplainSQL reads `EXPLAIN (ANALYZE, BUFFERS)` output from PostgreSQL. Instead of only drawing the plan tree, it closes the loop:
 
 1. **Diagnose.** It computes exclusive time and buffers for every node, including the parallel-query, CTE and trigger cases where simple subtraction gives the wrong answer. It opens on a one-line verdict: where the time went and why.
