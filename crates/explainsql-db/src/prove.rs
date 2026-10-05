@@ -7,20 +7,25 @@
 //!   that is rolled back, and the statement measured with EXPLAIN ANALYZE.
 //!   Building blocks writes to the table, so `lock_timeout` gives up rather
 //!   than wait behind other sessions, and the viewer asks first.
+//!
+//! Measured runs on both sides follow one run that only warms the cache. A
+//! run before the index would otherwise often meet a colder cache than the
+//! runs after it, which follow the build that read the whole table.
 
 use tokio_postgres::Client;
 
-use crate::exec::{self, Mode, Writes, options, statement};
+use crate::exec::{self, Mode, options, statement};
 use crate::{Error, Safety, describe};
 
 /// How long building an index may wait for its lock.
 const LOCK_TIMEOUT: &str = "2s";
 
-/// The plans without and with the index, as JSON.
+/// The plans without and with the index, as JSON: one estimated plan on
+/// each side, or every measured run.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Proof {
-    pub before: String,
-    pub after: String,
+    pub before: Vec<String>,
+    pub after: Vec<String>,
     /// Measured with EXPLAIN ANALYZE rather than estimated.
     pub measured: bool,
 }
@@ -51,7 +56,7 @@ pub(crate) async fn hypothetical(
         "EXPLAIN ({}) {sql}",
         options(Mode::Estimate, server_version)
     );
-    let before = exec::explain(client, sql, Mode::Estimate, safety, server_version).await?;
+    let before = exec::explain(client, sql, Mode::Estimate, &[], safety, server_version).await?;
     client
         .batch_execute("BEGIN READ ONLY")
         .await
@@ -77,8 +82,8 @@ pub(crate) async fn hypothetical(
     rollback.map_err(server)?;
     let after: serde_json::Value = row.try_get(0).map_err(server)?;
     Ok(Proof {
-        before,
-        after: after.to_string(),
+        before: vec![before],
+        after: vec![after.to_string()],
         measured: false,
     })
 }
@@ -87,6 +92,7 @@ pub(crate) async fn measured(
     client: &Client,
     sql: &str,
     ddl: &str,
+    runs: usize,
     safety: Safety,
     server_version: u32,
 ) -> Result<Proof, Error> {
@@ -98,13 +104,9 @@ pub(crate) async fn measured(
     }
     let sql = statement(sql)?;
     let ddl = plain(ddl)?;
-    let writes = exec::writes(client, sql, safety, server_version).await?;
-    if writes != Writes::No && !safety.allow_dml {
-        return Err(Error::NeedsAllowDml(
-            "modifies data or locks rows".to_owned(),
-        ));
-    }
-    let before = exec::explain(client, sql, Mode::Analyze, safety, server_version).await?;
+    // Refuses a statement that writes without --allow-dml, before anything
+    // is built.
+    let before = exec::measure(client, sql, &[], runs, safety, server_version).await?;
     let server = |error: tokio_postgres::Error| Error::Server(describe(&error));
     let explain = format!("EXPLAIN ({}) {sql}", options(Mode::Analyze, server_version));
     client.batch_execute("BEGIN").await.map_err(server)?;
@@ -116,12 +118,21 @@ pub(crate) async fn measured(
             ))
             .await?;
         client.batch_execute(&ddl).await?;
-        client.query_one(explain.as_str(), &[]).await
+        // The first run warms the cache with the pages the statement reads
+        // through the index, as the first run before did without it.
+        let mut rows = Vec::with_capacity(runs.max(1));
+        for warm_up in std::iter::once(true).chain(std::iter::repeat_n(false, runs.max(1))) {
+            let row = client.query_one(explain.as_str(), &[]).await?;
+            if !warm_up {
+                rows.push(row);
+            }
+        }
+        Ok::<_, tokio_postgres::Error>(rows)
     }
     .await;
     // Always, whatever happened above: the index goes away with it.
     let rollback = client.batch_execute("ROLLBACK").await;
-    let row = result.map_err(|error| {
+    let rows = result.map_err(|error: tokio_postgres::Error| {
         let text = describe(&error);
         if text.contains("55P03") {
             Error::Server(format!(
@@ -132,10 +143,17 @@ pub(crate) async fn measured(
         }
     })?;
     rollback.map_err(server)?;
-    let after: serde_json::Value = row.try_get(0).map_err(server)?;
+    let after = rows
+        .iter()
+        .map(|row| {
+            row.try_get::<_, serde_json::Value>(0)
+                .map(|plan| plan.to_string())
+        })
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(server)?;
     Ok(Proof {
         before,
-        after: after.to_string(),
+        after,
         measured: true,
     })
 }

@@ -5,6 +5,7 @@ use serde::Serialize;
 
 use crate::advisor::{Advice, AdviceKind, Confidence, Verification};
 use crate::analysis::Analysis;
+use crate::counterfactual::{Answer, Verdict};
 use crate::format;
 use crate::ir::{NodeId, Plan};
 use crate::metrics;
@@ -118,6 +119,7 @@ pub fn text(plan: &Plan, analysis: &Analysis, color: bool) -> String {
     }
 
     text_advice(&mut out, plan, analysis, &paint);
+    text_counterfactuals(&mut out, analysis, &paint);
 
     if !plan.warnings.is_empty() {
         out.push('\n');
@@ -187,6 +189,7 @@ pub fn markdown(plan: &Plan, analysis: &Analysis) -> String {
         }
     }
     markdown_advice(&mut out, plan, analysis);
+    markdown_counterfactuals(&mut out, analysis);
     if !plan.warnings.is_empty() {
         out.push_str("\n### Parser warnings\n\n");
         for warning in &plan.warnings {
@@ -203,6 +206,8 @@ pub fn json(plan: &Plan, analysis: &Analysis) -> String {
         verdict: &'a str,
         findings: &'a [Finding],
         advice: &'a [Advice],
+        #[serde(skip_serializing_if = "<[_]>::is_empty")]
+        counterfactuals: &'a [Answer],
         metrics: &'a metrics::Metrics,
         plan: &'a Plan,
     }
@@ -210,6 +215,7 @@ pub fn json(plan: &Plan, analysis: &Analysis) -> String {
         verdict: &analysis.verdict,
         findings: &analysis.findings,
         advice: &analysis.advice,
+        counterfactuals: &analysis.counterfactuals,
         metrics: &analysis.metrics,
         plan,
     };
@@ -295,6 +301,86 @@ fn markdown_advice(out: &mut String, plan: &Plan, analysis: &Analysis) {
     }
 }
 
+/// What the database said when asked why the planner chose its plan.
+fn text_counterfactuals(out: &mut String, analysis: &Analysis, paint: &Paint) {
+    if analysis.counterfactuals.is_empty() {
+        return;
+    }
+    out.push('\n');
+    out.push_str(&paint.bold(&format!(
+        "Why not: the planner asked again ({})",
+        analysis.counterfactuals.len()
+    )));
+    out.push('\n');
+    for answer in &analysis.counterfactuals {
+        out.push('\n');
+        out.push_str(&format!(
+            "  {}  {}\n",
+            paint.verdict(answer.verdict),
+            answer.question
+        ));
+        out.push_str(&wrap(&answer.summary, 15));
+        out.push('\n');
+        for evidence in &answer.evidence {
+            out.push_str(&wrap(
+                &format!("{}: {}", evidence.label, evidence.value),
+                15,
+            ));
+            out.push('\n');
+        }
+        if let Some(action) = &answer.action {
+            out.push_str(&wrap(&format!("→ {action}"), 15));
+            out.push('\n');
+        }
+        out.push_str(&paint.dim(&wrap(&planned_with(answer), 15)));
+        out.push('\n');
+    }
+}
+
+fn markdown_counterfactuals(out: &mut String, analysis: &Analysis) {
+    if analysis.counterfactuals.is_empty() {
+        return;
+    }
+    out.push_str("\n### Why not: the planner asked again\n\n");
+    for answer in &analysis.counterfactuals {
+        out.push_str(&format!(
+            "- **{} · {}** {}\n",
+            answer.verdict.label(),
+            escape(&answer.question),
+            escape(&answer.summary)
+        ));
+        for evidence in &answer.evidence {
+            out.push_str(&format!(
+                "  - {}: `{}`\n",
+                evidence.label,
+                evidence.value.replace('`', "'")
+            ));
+        }
+        if let Some(action) = &answer.action {
+            out.push_str(&format!("  - **Action:** {}\n", escape(action)));
+        }
+        out.push_str(&format!("  - {}\n", escape(&planned_with(answer))));
+    }
+}
+
+/// `Planned again with enable_seqscan = off; measured, 3 runs each.`
+pub fn planned_with(answer: &Answer) -> String {
+    let settings: Vec<String> = answer.settings.iter().map(ToString::to_string).collect();
+    let how = match &answer.comparison {
+        Some(comparison) if answer.measured && comparison.after.runs > 1 => {
+            format!("measured, {} runs each", comparison.after.runs)
+        }
+        _ if answer.measured => "measured".to_owned(),
+        _ => "estimated".to_owned(),
+    };
+    let mut text = format!("Planned again with {}; {how}", settings.join(", "));
+    if answer.approximate {
+        text.push_str("; the settings changed other parts of the plan too");
+    }
+    text.push('.');
+    text
+}
+
 /// `Tested with HypoPG: Estimated cost 4917 → 46 (107× cheaper)`.
 fn proof_line(advice: &Advice) -> Option<String> {
     let proof = advice.proof.as_ref()?;
@@ -302,7 +388,7 @@ fn proof_line(advice: &Advice) -> Option<String> {
         Verification::Measured => "Measured with the index built and rolled back",
         _ => "Estimated with a hypothetical index (HypoPG)",
     };
-    Some(format!("{how}: {}.", proof.summary()))
+    Some(format!("{how}: {}.", proof.details()))
 }
 
 /// Suggestions, and explanations of why no index would help.
@@ -565,6 +651,21 @@ impl Paint {
             Confidence::High => self.wrap("1;32", "SURE  "),
             Confidence::Medium => self.wrap("32", "LIKELY"),
             Confidence::Low => self.wrap("2", "MAYBE "),
+        }
+    }
+
+    /// The verdict's tag, padded to line the questions up.
+    fn verdict(&self, verdict: Verdict) -> String {
+        let tag = format!("{:<11}", verdict.label());
+        match verdict {
+            Verdict::Misestimate | Verdict::CostSettings | Verdict::PlannerWrong => {
+                self.wrap("1;31", &tag)
+            }
+            Verdict::Unusable => self.wrap("33", &tag),
+            Verdict::PlannerRight | Verdict::MoreMemoryHelps => self.wrap("32", &tag),
+            Verdict::Costlier | Verdict::MoreMemoryDoesNotHelp | Verdict::Inconclusive => {
+                self.wrap("2", &tag)
+            }
         }
     }
 

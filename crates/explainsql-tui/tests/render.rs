@@ -102,6 +102,40 @@ fn view_modes() {
     insta::assert_snapshot!("inclusive_buffers", frame(&mut app, 120, 30));
 }
 
+/// The decision card: what the planner said when asked why, in the
+/// details of the node.
+#[test]
+fn why_not_card() {
+    use explainsql_core::counterfactual::{self, Evaluation, Target};
+    let mut app = plan("seq_scan_function_on_column");
+    let question = counterfactual::questions(
+        &app.plan,
+        &app.analysis,
+        None,
+        &Target::Node(explainsql_core::ir::NodeId(0)),
+        false,
+    )
+    .remove(0);
+    let alternative = explainsql_core::parse(
+        "Seq Scan on public.orders  (cost=10000000000.00..10000005417.00 rows=1000 width=64)\n  Filter: (date_trunc('day'::text, orders.created_at) = '2024-06-01 00:00:00+00'::timestamp with time zone)",
+    )
+    .unwrap();
+    let answer = counterfactual::answer(
+        &app.plan,
+        &app.analysis,
+        &question,
+        &Evaluation {
+            chosen: &[],
+            alternative: std::slice::from_ref(&alternative),
+            with_cost_settings: None,
+            cost_settings_runs: &[],
+            catalog: None,
+        },
+    );
+    app.analysis.record(vec![answer]);
+    insta::assert_snapshot!("why_not_120x50", frame(&mut app, 120, 50));
+}
+
 /// A plan of 5,000 nodes that cannot be folded into groups: building the
 /// viewer and drawing a frame stay fast enough for typing.
 #[test]

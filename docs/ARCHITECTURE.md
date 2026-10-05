@@ -33,7 +33,10 @@ explain-sql/
 │  │  ├─ src/rules/              # one file per rule
 │  │  ├─ src/advisor/            # index candidates, rewrites, and why no index
 │  │  ├─ src/catalog.rs          # what the database says about the plan's tables
-│  │  ├─ src/compare.rs          # before and after a change
+│  │  ├─ src/compare.rs          # before and after a change: pages first, then time
+│  │  ├─ src/scenario.rs         # the planner settings explainsql may plan under
+│  │  ├─ src/fingerprint.rs      # the same scan or join in another plan of the statement
+│  │  ├─ src/counterfactual.rs   # why the planner chose its plan: questions and answers
 │  │  ├─ src/analysis.rs         # metrics + findings + the one-sentence verdict
 │  │  ├─ src/report.rs           # static reports: text, Markdown, JSON
 │  │  └─ tests/                  # corpus, inputs, metrics, rules, report snapshots, robustness
@@ -283,12 +286,31 @@ Related work: Microsoft's AutoAdmin "what-if" indexes (Chaudhuri and Narasayya),
 - **The proof loop** (`prove.rs`) tests a suggested index before anyone creates it. It uses `t` in the viewer, or `--prove` with `--print`:
   - With HypoPG installed, explainsql creates a hypothetical index inside a read-only transaction and gets the estimated plan with it. `hypopg_reset()` follows unconditionally, since hypothetical indexes outlive transactions. Nothing is built and nothing is locked.
   - Without HypoPG, `--allow-ddl` builds the index for real, without `CONCURRENTLY`, inside a transaction that is rolled back. `SET LOCAL lock_timeout = '2s'` keeps it from waiting behind other sessions, and EXPLAIN ANALYZE measures the statement with it. Building blocks writes to the table, so the viewer first shows the table's size and asks. Only a single `CREATE INDEX` is accepted.
-  - `compare.rs` sets the plans side by side: execution time or estimated cost, pages, and the indexes the second plan uses. `advisor::verify` records the result: estimated or measured, with the before/after line. A suggestion the planner would not use, or that is not faster, drops to low confidence and says so.
+  - `compare.rs` sets the plans side by side: pages read, pages written to temporary files, execution time or estimated cost, and the indexes the second plan uses. Pages decide first, as the vision asks: unlike times, they do not depend on what the cache holds. Temporary files come next, then time, and only changes over 10% (and 0.1 ms for times) count; fewer pages but a slower run is mixed. Measured sides run once first only to warm the cache: without that, the run before the index often met a colder cache than the run after it, which followed the build that had just read the whole table. `--runs N` measures each side N times and compares medians. `advisor::verify` records the result: estimated or measured, with the before/after line. A suggestion the planner would not use, or that is not better by more than the noise, drops to low confidence and says so.
 
   After a run, `r` or an edit with `e` compares the new measured plan with the previous one in the status line.
 
   A rolled-back `INSERT` or `UPDATE` still leaves dead rows until the next `VACUUM`, as any rolled-back transaction does; `--allow-dml`'s help says that effects outside the table data are not undone.
 - **Not yet:** a full tree diff between plans (v0.2), partial indexes from `pg_stats.most_common_freqs`, and `INCLUDE` columns.
+
+## Why not: asking the planner again
+
+A plan shows what the planner chose, not what it turned down. `counterfactual.rs` asks: it plans the statement again with the choice taken away and compares. It is pure: it picks the questions and reads the plans the database returns; `connected.rs` in the binary runs them through `explainsql-db`.
+
+- **Questions.** With `--why-not` and no name, the hot nodes, at most three: sequential scans with a condition that take 10% or more of the runtime, nested loops that ES005 flags or that follow an underestimated outer side, and, with `--measure`, sorts and hashes that spilled. `--why-not TABLE` asks about the sequential scans of a table, or of the table an index belongs to; `y` in the viewer about the selected node.
+  - A sequential scan: `enable_seqscan = off`, and `random_page_cost = 1.1` to see whether the planner would take an index by itself.
+  - A nested loop: `enable_nestloop = off`.
+  - A spill: `work_mem` large enough to stay in memory, a power of two megabytes up to 1 GB, from what the plan shows (three times the sort's disk space, the hash's peak memory times its batches).
+- **Settings** (`scenario.rs`). Only planner settings on a fixed list (`enable_*`, the cost constants, `work_mem`, `hash_mem_multiplier`, `effective_cache_size`, the collapse limits, `plan_cache_mode`, `jit`), each with a value of its type, and memory with an explicit unit. `explainsql-db` checks them again and applies them with `set_config(name, value, true)`, names and values bound as parameters, inside the transaction that is rolled back.
+- **Matching** (`fingerprint.rs`). Another plan of the statement has other node ids and often another shape. A scan is found again by its relation and alias, a join by the set of relations below it. An index scan counts as using an index only with an index condition: with sequential scans off, the planner may read a whole index without one, in its order, just to avoid the disabled scan.
+- **Answers.** Estimated first, which is enough when no alternative exists:
+  - *Unusable*: even with sequential scans off, no index serves the condition. The condition and the catalog say why: a cast or a function of the column (with its type), ORs across columns, `<>`, a pattern starting with a wildcard, `LIKE` with a collation other than C and no `text_pattern_ops`, an operator that needs GIN, or indexes that start with another column, are invalid or partial.
+  - *Costlier*: the planner can use the alternative and estimates it more expensive, by how much; within 10% is a close call that a small change can flip. Before PostgreSQL 18, the cost of a plan with a disabled node includes 10¹⁰ per node; it is taken out.
+  - With `--measure`, the planner's choice and the alternative run the same number of times, after a warm-up run, and compare as above. Not better: *the planner is right*. Better, and the scan's rows were overestimated tenfold or more (or, for a nested loop, its input underestimated): *a misestimate*. Better, with close estimates, and with `random_page_cost = 1.1` the planner picks an index by itself: that plan runs too, and only if it is better as well is the setting suggested (*cost settings*). Otherwise *the planner is wrong* for a reason not found. A spill asks about time: staying in memory but running slower does not help.
+  - An alternative that runs past the statement timeout while the planner's choice finished makes the planner right.
+- **Approximation.** `enable_*` settings hold for the whole statement, so other scans and joins can change too. The answer lists them and is marked approximate.
+- **Advice.** `Analysis::record` keeps the answers and puts them into the advice: an existing index that the planner did not use gets the reason found instead of the likely ones.
+- **Tests.** `counterfactual.rs` covers every answer on small plans. `crates/explainsql-db/tests/live.rs` checks that settings hold only inside their transaction and that others are refused; `crates/explainsql/tests/cli.rs` asks about a function of a column, a broad range and a sort that spills, against the fixture database.
 
 ## Releases and documentation
 

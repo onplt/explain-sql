@@ -1,0 +1,14 @@
+---
+source: crates/explainsql-core/tests/report.rs
+expression: section
+---
+Why not: the planner asked again (1)
+
+  UNUSABLE     Why does Seq Scan on orders not use an index?
+               No index can serve the condition of Seq Scan on orders: even with sequential scans
+               off, the planner still reads all of orders.
+               Why: the condition applies date_trunc() to created_at, so an index on created_at
+               cannot serve it
+               → Rewrite the condition so that the column stands alone, such as a range of values
+               instead of a function of the column, or index the expression itself.
+               Planned again with enable_seqscan = off; estimated.

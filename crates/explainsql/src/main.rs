@@ -97,6 +97,26 @@ struct Cli {
     #[arg(long)]
     prove: bool,
 
+    /// Connected mode, with --print: ask the database why the planner
+    /// chose its plan for the slowest nodes, or for the scans of TABLE (a
+    /// table or index name). It plans the statement again with the choice
+    /// taken away (enable_seqscan = off, enable_nestloop = off) or with more
+    /// work_mem, and compares. In the viewer, press y on a node instead.
+    #[arg(long, value_name = "TABLE", num_args = 0..=1, default_missing_value = "")]
+    why_not: Option<String>,
+
+    /// Connected mode: measure the alternatives of --why-not (and of y in
+    /// the viewer) with EXPLAIN ANALYZE rather than only estimating them.
+    /// Every run is rolled back.
+    #[arg(long)]
+    measure: bool,
+
+    /// Connected mode: how many measured runs to compare for --prove and
+    /// --measure, each side after one run that only warms the cache. The
+    /// median counts.
+    #[arg(long, value_name = "N", default_value_t = 1, value_parser = clap::value_parser!(u16).range(1..=20))]
+    runs: u16,
+
     /// Connected mode: stop a run after this many seconds.
     #[arg(long, value_name = "SECONDS", default_value_t = 30)]
     timeout: u64,
@@ -150,6 +170,12 @@ fn main() -> ExitCode {
     }
     if cli.dbname.is_some() {
         eprintln!("error: give the query to run with -f FILE or -c SQL");
+        return ExitCode::FAILURE;
+    }
+    if cli.why_not.is_some() || cli.measure {
+        eprintln!(
+            "error: --why-not and --measure ask the database: give the query to run with -d DATABASE and -f FILE or -c SQL"
+        );
         return ExitCode::FAILURE;
     }
     let input = if cli.demo {
