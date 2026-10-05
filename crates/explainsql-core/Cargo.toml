@@ -4,9 +4,13 @@ description = "Plan IR, plan parsers, metrics, rules and index advisor for Expla
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
-publish.workspace = true
 repository.workspace = true
 license.workspace = true
+homepage.workspace = true
+readme = "README.md"
+keywords = ["postgresql", "explain", "query-plan", "performance", "index"]
+categories = ["database", "parser-implementations", "development-tools"]
+include = ["/src/**", "/README.md", "/LICENSE-*"]
 
 [dependencies]
 serde.workspace = true

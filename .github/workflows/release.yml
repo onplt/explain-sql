@@ -4,7 +4,8 @@ name: Release
 # clean runner, and publishes a GitHub release.
 #
 # - A `v*` tag (matching the version in Cargo.toml) builds, tests and
-#   publishes.
+#   publishes: a GitHub release, and the crates on crates.io through
+#   Trusted Publishing (no stored token).
 # - Run by hand (workflow_dispatch), or on a branch push that changes the
 #   pipeline itself, it is a dry run: it builds and tests, and leaves the
 #   archives as workflow artifacts; nothing is published.
@@ -194,3 +195,31 @@ jobs:
             --title "ExplainSQL ${GITHUB_REF_NAME#v}" \
             --notes-file notes.md \
             --verify-tag
+
+  crates-io:
+    name: crates.io
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [build, smoke]
+    runs-on: ubuntu-24.04
+    permissions:
+      # Trusted Publishing: crates.io trusts this workflow's OIDC token.
+      id-token: write
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: rust-lang/crates-io-auth-action@v1
+        id: auth
+      - name: Publish the crates in dependency order
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          for crate in explainsql-core explainsql-db explainsql-tui explainsql; do
+            # A version published by hand already (the first release) is skipped.
+            if curl -fsS -o /dev/null -A "explainsql-release (https://github.com/onplt/explain-sql)" \
+                "https://crates.io/api/v1/crates/$crate/$version"; then
+              echo "$crate $version is already on crates.io"
+              continue
+            fi
+            cargo publish --locked -p "$crate"
+          done

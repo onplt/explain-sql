@@ -143,7 +143,11 @@ fn lowercase_first(text: &str) -> String {
 /// `docs/`, which the site does not contain.
 pub fn check_links() -> Result<(), String> {
     let root = workspace_root();
-    let mut files = vec![root.join("README.md"), root.join("CHANGELOG.md")];
+    let mut files = vec![
+        root.join("README.md"),
+        root.join("CHANGELOG.md"),
+        root.join("RELEASING.md"),
+    ];
     collect_markdown(&root.join("docs"), &mut files);
     let docs = root.join("docs");
     let mut problems = Vec::new();

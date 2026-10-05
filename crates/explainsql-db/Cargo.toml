@@ -4,9 +4,13 @@ description = "Connected mode for ExplainSQL: safe EXPLAIN execution, catalog re
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
-publish.workspace = true
 repository.workspace = true
 license.workspace = true
+homepage.workspace = true
+readme = "README.md"
+keywords = ["postgresql", "explain", "hypopg", "index", "performance"]
+categories = ["database", "development-tools"]
+include = ["/src/**", "/README.md", "/LICENSE-*"]
 
 [dependencies]
 explainsql-core.workspace = true

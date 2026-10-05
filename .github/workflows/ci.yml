@@ -68,3 +68,19 @@ jobs:
       # One test at a time: building an index in one test waits for the
       # locks of another's rolled-back UPDATE.
       - run: cargo test --locked -p explainsql-db -p explainsql -- --test-threads=1
+
+  package:
+    name: crates.io packages
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Each crate carries the licenses
+        run: |
+          for crate in crates/*/; do
+            cmp LICENSE-MIT "$crate/LICENSE-MIT"
+            cmp LICENSE-APACHE "$crate/LICENSE-APACHE"
+          done
+      # Packages and builds every crate as crates.io would, without uploading.
+      - run: cargo publish --workspace --dry-run --locked

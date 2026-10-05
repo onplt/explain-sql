@@ -2,7 +2,7 @@
 
 **Find out why your PostgreSQL query is slow, get a fix, and prove it works, without leaving the terminal.**
 
-![ExplainSQL showing a plan, its findings and a suggested index](docs/demo.svg)
+![ExplainSQL showing a plan, its findings and a suggested index](https://raw.githubusercontent.com/onplt/explain-sql/main/docs/demo.svg)
 
 ExplainSQL reads `EXPLAIN (ANALYZE, BUFFERS)` output from PostgreSQL. Instead of only drawing the plan tree, it closes the loop:
 
@@ -20,7 +20,7 @@ PostgreSQL 12 to 18 are supported. MySQL is on the roadmap but out of scope for 
 
 ## Install
 
-Once released, the install scripts download the binary for your platform, check its SHA-256 checksum, and put it in `~/.local/bin`:
+The install scripts download the binary for your platform from the [latest release](https://github.com/onplt/explain-sql/releases/latest), check its SHA-256 checksum, and put it in `~/.local/bin`:
 
 ```sh
 curl -fsSL https://github.com/onplt/explain-sql/releases/latest/download/install.sh | sh
@@ -30,9 +30,10 @@ curl -fsSL https://github.com/onplt/explain-sql/releases/latest/download/install
 irm https://github.com/onplt/explain-sql/releases/latest/download/install.ps1 | iex
 ```
 
-Binaries are built for Linux (x86_64 and aarch64, static), macOS (Intel and Apple silicon) and Windows (x86_64). From source, with Rust 1.85 or later:
+Binaries are built for Linux (x86_64 and aarch64, static), macOS (Intel and Apple silicon) and Windows (x86_64). With Rust 1.85 or later, Cargo builds it from [crates.io](https://crates.io/crates/explainsql), or from the latest commit:
 
 ```sh
+cargo install explainsql --locked
 cargo install --git https://github.com/onplt/explain-sql explainsql --locked
 ```
 
@@ -48,14 +49,14 @@ explainsql -d "$DATABASE_URL" -f slow.sql              # run it: estimated plan,
 explainsql -d "$DATABASE_URL" -f slow.sql --print --prove   # and test each suggested index
 ```
 
-The [user guide](docs/guide.md) covers the viewer's keys, the pager mode, connected mode and its safety rules, and testing suggestions. The [rule catalog](docs/rules.md) explains every finding, with an example from real plans. Both are also published as the [documentation site](https://onplt.github.io/explain-sql/).
+The [user guide](https://github.com/onplt/explain-sql/blob/main/docs/guide.md) covers the viewer's keys, the pager mode, connected mode and its safety rules, and testing suggestions. The [rule catalog](https://github.com/onplt/explain-sql/blob/main/docs/rules.md) explains every finding, with an example from real plans. Both are also published as the [documentation site](https://onplt.github.io/explain-sql/).
 
 ## Design documents
 
-- [Vision](docs/VISION.md): the problem, positioning, how this differs from existing tools, risks and non-goals.
-- [Architecture](docs/ARCHITECTURE.md): technology choice, crate layout, plan IR, parsing pipeline, metrics, the index advisor, connected mode and the release pipeline.
-- [Roadmap](docs/ROADMAP.md): v0.1 scope, development phases with exit criteria, and what comes after.
-- [Changelog](CHANGELOG.md).
+- [Vision](https://github.com/onplt/explain-sql/blob/main/docs/VISION.md): the problem, positioning, how this differs from existing tools, risks and non-goals.
+- [Architecture](https://github.com/onplt/explain-sql/blob/main/docs/ARCHITECTURE.md): technology choice, crate layout, plan IR, parsing pipeline, metrics, the index advisor, connected mode and the release pipeline.
+- [Roadmap](https://github.com/onplt/explain-sql/blob/main/docs/ROADMAP.md): v0.1 scope, development phases with exit criteria, and what comes after.
+- [Changelog](https://github.com/onplt/explain-sql/blob/main/CHANGELOG.md).
 
 ## Development
 
@@ -68,19 +69,19 @@ cargo xtask demo                  # redraw docs/demo.svg
 mdbook build docs                 # the documentation site, in target/book
 ```
 
-Tests of connected mode run against a database with the fixture schema, named by `EXPLAINSQL_TEST_DATABASE_URL`; without it they are skipped. The plan corpus and its scenario format are described in [fixtures/README.md](fixtures/README.md). The parsers are fuzzed with [cargo-fuzz](https://github.com/rust-fuzz/cargo-fuzz), which needs a nightly toolchain:
+Tests of connected mode run against a database with the fixture schema, named by `EXPLAINSQL_TEST_DATABASE_URL`; without it they are skipped. The plan corpus and its scenario format are described in [fixtures/README.md](https://github.com/onplt/explain-sql/blob/main/fixtures/README.md). The parsers are fuzzed with [cargo-fuzz](https://github.com/rust-fuzz/cargo-fuzz), which needs a nightly toolchain:
 
 ```sh
 mkdir -p fuzz/corpus/parse
 cargo +nightly fuzz run parse fuzz/corpus/parse fixtures/pg/* fixtures/inputs
 ```
 
-To release, push a tag that matches the version in `Cargo.toml` (`git tag v0.1.0 && git push origin v0.1.0`). The release workflow builds every target, smoke-tests each archive on a clean runner, and publishes the GitHub release.
+Releases are made by pushing a version tag. The release workflow builds every target, smoke-tests each archive on a clean runner, and publishes the GitHub release and the crates on crates.io. [RELEASING.md](https://github.com/onplt/explain-sql/blob/main/RELEASING.md) walks through the first release and every one after it.
 
 ## Status
 
-Pre-alpha. Phases 0 to 4 are done: the fixture corpus, the parsers, the metrics engine and rules, the viewer, the index advisor, connected mode and the proof loop. Phase 5, release hardening, has its pipeline, install scripts, documentation site and demo; the first tagged release is next. Feedback is welcome in the issues.
+Pre-alpha. Phases 0 to 4 are done: the fixture corpus, the parsers, the metrics engine and rules, the viewer, the index advisor, connected mode and the proof loop. Phase 5, release hardening, is done: version 0.1.0 is released with binaries for Linux, macOS and Windows. Feedback is welcome in the issues.
 
 ## License
 
-Licensed under either of [Apache License, Version 2.0](LICENSE-APACHE) or [MIT license](LICENSE-MIT), at your option. Unless you explicitly state otherwise, any contribution intentionally submitted for inclusion in ExplainSQL by you, as defined in the Apache-2.0 license, shall be dual licensed as above, without any additional terms or conditions.
+Licensed under either of [Apache License, Version 2.0](https://github.com/onplt/explain-sql/blob/main/LICENSE-APACHE) or [MIT license](https://github.com/onplt/explain-sql/blob/main/LICENSE-MIT), at your option. Unless you explicitly state otherwise, any contribution intentionally submitted for inclusion in ExplainSQL by you, as defined in the Apache-2.0 license, shall be dual licensed as above, without any additional terms or conditions.

@@ -7,14 +7,14 @@ exclude = ["fuzz"]
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.85"
-publish = false
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/onplt/explain-sql"
+homepage = "https://onplt.github.io/explain-sql/"
 
 [workspace.dependencies]
-explainsql-core = { path = "crates/explainsql-core" }
-explainsql-db = { path = "crates/explainsql-db" }
-explainsql-tui = { path = "crates/explainsql-tui" }
+explainsql-core = { path = "crates/explainsql-core", version = "0.1.0" }
+explainsql-db = { path = "crates/explainsql-db", version = "0.1.0" }
+explainsql-tui = { path = "crates/explainsql-tui", version = "0.1.0" }
 clap = { version = "4.5", features = ["derive"] }
 insta = "1"
 # 0.30 needs Rust 1.86; the workspace supports 1.85.

@@ -4,9 +4,13 @@ description = "Terminal user interface for ExplainSQL."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
-publish.workspace = true
 repository.workspace = true
 license.workspace = true
+homepage.workspace = true
+readme = "README.md"
+keywords = ["postgresql", "explain", "query-plan", "tui", "ratatui"]
+categories = ["command-line-interface", "database", "visualization"]
+include = ["/src/**", "/README.md", "/LICENSE-*"]
 
 [dependencies]
 explainsql-core.workspace = true

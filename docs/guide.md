@@ -12,9 +12,10 @@ curl -fsSL https://github.com/onplt/explain-sql/releases/latest/download/install
 irm https://github.com/onplt/explain-sql/releases/latest/download/install.ps1 | iex
 ```
 
-`install.sh --version 0.1.0` installs a given version and `--to DIR` installs elsewhere. Both scripts download from GitHub, so while the repository is private they need a token; download the archive from the release page instead. With Rust 1.85 or later, Cargo builds it from source:
+`install.sh --version 0.1.0` installs a given version and `--to DIR` installs elsewhere. Both scripts download from GitHub, so while the repository is private they need a token; download the archive from the release page instead. With Rust 1.85 or later, Cargo builds it from [crates.io](https://crates.io/crates/explainsql), or from the latest commit:
 
 ```sh
+cargo install explainsql --locked
 cargo install --git https://github.com/onplt/explain-sql explainsql --locked
 ```
 

@@ -4,7 +4,7 @@ All notable changes to ExplainSQL. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow
 [Semantic Versioning](https://semver.org/).
 
-## [0.1.0] - Unreleased
+## [0.1.0] - 2026-10-05
 
 The first release: find out why a PostgreSQL query is slow, get a fix, and
 prove it works, without leaving the terminal.
@@ -31,3 +31,5 @@ prove it works, without leaving the terminal.
 - A proof loop: test a suggested index with HypoPG, or build it in a
   rolled-back transaction with `--allow-ddl`, and compare before and after.
 - `--demo`, a bundled example plan.
+- Prebuilt binaries for Linux, macOS and Windows with install scripts, and
+  the crates on crates.io (`cargo install explainsql`).
