@@ -1,0 +1,191 @@
+name: Release
+
+# Builds explainsql for every supported target, smoke-tests each archive on a
+# clean runner, and publishes a GitHub release.
+#
+# - A `v*` tag (matching the version in Cargo.toml) builds, tests and
+#   publishes.
+# - Run by hand (workflow_dispatch), it is a dry run: it builds and tests,
+#   and leaves the archives as workflow artifacts; nothing is published.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: build (${{ matrix.target }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { target: x86_64-unknown-linux-musl, os: ubuntu-24.04 }
+          - { target: aarch64-unknown-linux-musl, os: ubuntu-24.04, zig: true }
+          - { target: x86_64-apple-darwin, os: macos-latest }
+          - { target: aarch64-apple-darwin, os: macos-latest }
+          - { target: x86_64-pc-windows-msvc, os: windows-latest }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+      - name: Install musl tools
+        if: matrix.target == 'x86_64-unknown-linux-musl'
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+      - name: Install Zig
+        if: matrix.zig
+        uses: mlugg/setup-zig@v2
+        with:
+          version: 0.14.1
+      - name: Install cargo-zigbuild
+        if: matrix.zig
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-zigbuild
+      - name: Build
+        shell: bash
+        run: |
+          if [ "${{ matrix.zig }}" = "true" ]; then
+            cargo zigbuild --release --locked --target ${{ matrix.target }} -p explainsql
+          else
+            cargo build --release --locked --target ${{ matrix.target }} -p explainsql
+          fi
+      - name: Package
+        shell: bash
+        run: bash install/package.sh ${{ matrix.target }} dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: explainsql-${{ matrix.target }}
+          path: dist/*
+          if-no-files-found: error
+
+  smoke:
+    name: smoke (${{ matrix.target }})
+    needs: build
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { target: x86_64-unknown-linux-musl, os: ubuntu-24.04 }
+          - { target: aarch64-unknown-linux-musl, os: ubuntu-24.04, qemu: true }
+          # Apple silicon runs the x86_64 build through Rosetta 2.
+          - { target: x86_64-apple-darwin, os: macos-latest }
+          - { target: aarch64-apple-darwin, os: macos-latest }
+          - { target: x86_64-pc-windows-msvc, os: windows-latest }
+    runs-on: ${{ matrix.os }}
+    steps:
+      # Only for the install and smoke scripts and the sample plans: nothing
+      # is built here.
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v4
+        with:
+          name: explainsql-${{ matrix.target }}
+          path: artifacts
+      - name: Run aarch64 binaries with QEMU
+        if: matrix.qemu
+        run: sudo apt-get update && sudo apt-get install -y qemu-user-static binfmt-support
+      - name: Install and smoke-test
+        if: runner.os != 'Windows'
+        run: |
+          sh install/install.sh --from artifacts --target ${{ matrix.target }} --to "$RUNNER_TEMP/bin"
+          sh install/smoke.sh "$RUNNER_TEMP/bin/explainsql"
+      - name: A tampered download is refused
+        if: runner.os != 'Windows'
+        run: |
+          cp -r artifacts "$RUNNER_TEMP/tampered"
+          name="explainsql-${{ matrix.target }}.tar.gz"
+          echo "0000  $name" > "$RUNNER_TEMP/tampered/$name.sha256"
+          if sh install/install.sh --from "$RUNNER_TEMP/tampered" --target ${{ matrix.target }} --to "$RUNNER_TEMP/never"; then
+            echo "install.sh accepted a bad checksum"
+            exit 1
+          fi
+          test ! -e "$RUNNER_TEMP/never/explainsql"
+      - name: Statically linked
+        if: runner.os == 'Linux'
+        run: |
+          file "$RUNNER_TEMP/bin/explainsql"
+          file "$RUNNER_TEMP/bin/explainsql" | grep -q "static"
+      - name: From a clean machine to --demo in under a minute
+        if: matrix.target == 'x86_64-unknown-linux-musl'
+        run: |
+          for image in alpine:3 ubuntu:24.04; do
+            echo "== $image"
+            docker run --rm -v "$PWD:/src:ro" -w /src "$image" sh -c '
+              start=$(date +%s)
+              sh install/install.sh --from artifacts --to /usr/local/bin
+              explainsql --demo --print > /dev/null
+              elapsed=$(( $(date +%s) - start ))
+              echo "installed and ran --demo in ${elapsed} s"
+              test "$elapsed" -lt 60
+            '
+          done
+      - name: Install and smoke-test (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          ./install/install.ps1 -From artifacts -To "$env:RUNNER_TEMP\bin"
+          ./install/smoke.ps1 -Binary "$env:RUNNER_TEMP\bin\explainsql.exe"
+      - name: A tampered download is refused (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Copy-Item -Recurse artifacts "$env:RUNNER_TEMP\tampered"
+          $name = "explainsql-${{ matrix.target }}.zip"
+          Set-Content "$env:RUNNER_TEMP\tampered\$name.sha256" "0000  $name"
+          $refused = $false
+          try { ./install/install.ps1 -From "$env:RUNNER_TEMP\tampered" -To "$env:RUNNER_TEMP\never" } catch { $refused = $true }
+          if (-not $refused -or (Test-Path "$env:RUNNER_TEMP\never\explainsql.exe")) {
+            throw "install.ps1 accepted a bad checksum"
+          }
+
+  publish:
+    name: publish
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [build, smoke]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+      - name: The tag matches the version
+        run: |
+          version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n 1)
+          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "tag $GITHUB_REF_NAME does not match version $version in Cargo.toml"
+            exit 1
+          fi
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: explainsql-*
+          path: dist
+          merge-multiple: true
+      - name: Checksums, install scripts and notes
+        run: |
+          cat dist/*.sha256 > dist/SHA256SUMS
+          cp install/install.sh install/install.ps1 dist/
+          version="${GITHUB_REF_NAME#v}"
+          awk -v version="$version" '
+            $0 ~ "^## \\[" version "\\]" { found = 1; next }
+            found && /^## \[/ { exit }
+            found { print }
+          ' CHANGELOG.md > notes.md
+          test -s notes.md
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/* \
+            --title "ExplainSQL ${GITHUB_REF_NAME#v}" \
+            --notes-file notes.md \
+            --verify-tag
