@@ -1,6 +1,6 @@
 # Roadmap
 
-Status: Phases 0 and 1 are complete, and Phases 2, 3 and 4 are code-complete (see [Development phases](#development-phases)). Time estimates assume a single developer working part-time.
+Status: Phases 0 to 4 are done, and Phase 5 is code-complete; the first tagged release is next (see [Development phases](#development-phases)). Time estimates assume a single developer working part-time.
 
 ## v0.1 scope
 
@@ -53,9 +53,9 @@ Screen principles:
 
 ## Development phases
 
-Phase 0 is complete: the workspace skeleton, CI, and 65 scenarios captured on PostgreSQL 12–18 (see [fixtures/README.md](../fixtures/README.md)). Phase 1 is complete: the plan IR and the JSON and text parsers meet all four exit criteria (see [Testing the parsers](ARCHITECTURE.md#testing-the-parsers)).
+Phase 0 is complete: the workspace skeleton, CI, and 65 scenarios captured on PostgreSQL 12–18 (see [fixtures/README.md](https://github.com/onplt/explain-sql/blob/HEAD/fixtures/README.md)). Phase 1 is complete: the plan IR and the JSON and text parsers meet all four exit criteria (see [Testing the parsers](ARCHITECTURE.md#testing-the-parsers)).
 
-Phase 2 is code-complete. The metrics engine, the twelve rules and the static report are in place. Exclusive times agree with pev2 and explain.depesz.com within 5% on every node of 24 reference plans, except one deliberate difference in rounding (see [tools/cross-check](../tools/cross-check/README.md)). The report snapshots are stable. The remaining exit criterion is a quiet alpha with a few DBAs.
+Phase 2 is code-complete. The metrics engine, the twelve rules and the static report are in place. Exclusive times agree with pev2 and explain.depesz.com within 5% on every node of 24 reference plans, except one deliberate difference in rounding (see [tools/cross-check](https://github.com/onplt/explain-sql/blob/HEAD/tools/cross-check/README.md)). The report snapshots are stable. The remaining exit criterion is a quiet alpha with a few DBAs.
 
 Phase 3 is code-complete. The viewer has the layout, the virtualized tree, details, findings, search, folding (including similar siblings), view modes, colors, pager mode and `--demo`. A frame of a 5,000-node plan takes about 0.3 ms. `TestBackend` snapshots cover 120×40 and 80×24. The keys for the connected mode come with Phase 4.
 
@@ -70,7 +70,15 @@ Phase 4 is code-complete, in three steps:
   Integration tests against PostgreSQL 16 show that data-modifying statements are never committed.
 - 4c, the proof loop, is done. `t` in the viewer, or `--prove`, tests a suggestion two ways: with a HypoPG hypothetical index (estimated, nothing built), or with `--allow-ddl` by building the index in a rolled-back transaction under `lock_timeout` (measured, after confirming). Each test ends with a before/after comparison, and re-runs are compared with the previous run.
 
-Both exit criteria are met: no suggestion on the `advice: none` scenarios, and an integration test showing that data-modifying statements are never committed. Phase 5 is next.
+Both exit criteria are met: no suggestion on the `advice: none` scenarios, and an integration test showing that data-modifying statements are never committed.
+
+Phase 5 is code-complete:
+- the release pipeline for five targets, with install scripts that check checksums and smoke tests on clean runners, Windows included;
+- the dual MIT/Apache-2.0 license;
+- the documentation site, with a page and a real example for each rule;
+- the animated demo in the README.
+
+On fresh containers, installing and running `explainsql --demo` takes seconds. The Homebrew tap and the browser playground are left for later; the tap needs its own repository. The first release is published by pushing the `v0.1.0` tag.
 
 | Phase | Estimate | Scope | Exit criteria |
 |---|---|---|---|

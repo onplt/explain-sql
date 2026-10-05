@@ -21,7 +21,7 @@ Table size: 1,911 pages (14.9 MB)
 Loops: 10
 Time in the node: 189.3 ms (51% of the runtime)
 → An index on order_items (order_id) would turn each loop's scan into an index lookup.
-
+Docs: https://onplt.github.io/explain-sql/rules/ES001.html
 
 
 

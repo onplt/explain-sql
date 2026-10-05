@@ -26,11 +26,32 @@ use crate::ir::{Node, Plan, Relationship};
 use crate::metrics::{self, Metrics, NodeMetrics};
 
 /// A rule's identity.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Rule {
     /// A stable ID such as `ES001`.
     pub id: &'static str,
     pub name: &'static str,
+}
+
+/// Where the rule pages are published.
+pub const DOCS: &str = "https://onplt.github.io/explain-sql/rules/";
+
+impl Rule {
+    /// The rule's documentation page.
+    pub fn doc_url(&self) -> String {
+        format!("{DOCS}{}.html", self.id)
+    }
+}
+
+impl Serialize for Rule {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeStruct;
+        let mut rule = serializer.serialize_struct("Rule", 3)?;
+        rule.serialize_field("id", self.id)?;
+        rule.serialize_field("name", self.name)?;
+        rule.serialize_field("docs", &self.doc_url())?;
+        rule.end()
+    }
 }
 
 /// Every rule, in ID order.

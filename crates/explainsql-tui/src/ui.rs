@@ -759,6 +759,7 @@ fn finding_lines<'a>(app: &App, theme: &Theme, finding: &Finding) -> Vec<Line<'a
         Span::styled("→ ", theme.key),
         Span::raw(finding.action.clone()),
     ]));
+    lines.push(field(theme, "Docs", finding.rule.doc_url()));
     lines
 }
 

@@ -1,5 +1,7 @@
 //! Development tasks for the ExplainSQL workspace: `cargo xtask <task>`.
 
+mod demo;
+mod docs;
 mod fixtures;
 mod scenario;
 
@@ -21,6 +23,11 @@ Tasks:
       --keep-containers   Leave the containers running for debugging
   check-fixtures    Check that the committed corpus matches fixtures/scenarios
   sync-manifests    Copy scenario descriptions, rules, advice and indexes into the manifests
+  rule-docs         Write the corpus examples into the rule pages (docs/rules/)
+      --check             Fail instead if a page is out of date
+  check-links       Check the relative links in the README and docs/
+  demo              Draw the README's animated demo (docs/demo.svg)
+      --check             Fail instead if it is out of date
   help              Show this message
 ",
         versions.join(",")
@@ -35,6 +42,9 @@ fn main() -> ExitCode {
         }
         Some("check-fixtures") => fixtures::check(),
         Some("sync-manifests") => fixtures::sync_manifests(),
+        Some("rule-docs") => docs::rule_docs(args.get(1).is_some_and(|arg| arg == "--check")),
+        Some("check-links") => docs::check_links(),
+        Some("demo") => demo::demo(args.get(1).is_some_and(|arg| arg == "--check")),
         Some("help" | "--help" | "-h") | None => {
             print!("{}", usage());
             Ok(())

@@ -8,6 +8,9 @@ publish = false
 license = "MIT OR Apache-2.0"
 
 [dependencies]
+explainsql-core.workspace = true
+explainsql-tui.workspace = true
+ratatui.workspace = true
 serde_json.workspace = true
 
 [lints]

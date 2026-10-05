@@ -1,0 +1,15 @@
+[book]
+title = "ExplainSQL"
+description = "Find out why a PostgreSQL query is slow, get a fix, and prove it works, without leaving the terminal."
+authors = ["The ExplainSQL contributors"]
+language = "en"
+src = "."
+
+[build]
+# Outside the source directory, so that the site never includes itself.
+build-dir = "../target/book"
+create-missing = false
+
+[output.html]
+git-repository-url = "https://github.com/onplt/explain-sql"
+site-url = "/explain-sql/"

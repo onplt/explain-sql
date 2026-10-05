@@ -47,12 +47,15 @@ explain-sql/
 │  └─ inputs/                    # one plan in each form it arrives in: psql output, server logs
 ├─ fuzz/                         # cargo-fuzz target for the parsers (its own workspace; needs nightly)
 ├─ tools/cross-check/            # compares exclusive times with pev2 and explain.depesz.com
-├─ docs/rules/                   # one page per rule
-├─ xtask/                        # gen-fixtures and check-fixtures; later an anonymizer and release helpers
-└─ .github/workflows/            # ci, fixtures, release
+├─ docs/                         # the documentation site (mdBook): guide, rule catalog, design documents
+│  ├─ rules/ES001.md …           # one page per rule, with an example from the corpus
+│  └─ demo.svg                   # the README's demo, drawn by cargo xtask demo
+├─ install/                      # install.sh, install.ps1, packaging and smoke tests for releases
+├─ xtask/                        # fixtures, rule pages, link check, demo
+└─ .github/workflows/            # ci, docs, release, fixtures
 ```
 
-Not there yet: `docs/rules/` and the release workflow. In a terminal the binary opens the viewer; elsewhere, or with `--print`, it prints a report (`--format text|md|json`). `--debug-parse` shows what the parsers made of an input.
+In a terminal the binary opens the viewer; elsewhere, or with `--print`, it prints a report (`--format text|md|json`). `--debug-parse` shows what the parsers made of an input.
 
 We use four crates and no more. Keeping `core` free of I/O is required for WebAssembly and for fast, deterministic tests; finer splits would slow down early development.
 
@@ -124,8 +127,8 @@ The parsers handle all of the above for PostgreSQL 12–18, and the corpus cover
 
 ### Testing the parsers
 
-- **Fixture corpus** (`tests/corpus.rs`): all 882 generated plans parse without a single warning, and for each of the 441 scenario–version pairs the JSON and text forms lower to the same IR: tree shape, node types and relationships, every typed property, estimates, actual rows and loops, and everything in `extra`. The two forms come from separate executions (see [fixtures/README.md](../fixtures/README.md)), so timings, buffer counts and per-worker figures are not compared, and two kinds of values are excluded on principle: memory figures of nodes below a `Gather`, which depend on how much of the work the leader did, and estimates of data-modifying statements, because rolled-back writes still grow the table and the planner scales its estimates by the table's current size. A guard test checks that the comparison does notice changed values.
-- **Captured inputs** (`tests/inputs.rs`, [`fixtures/inputs/`](../fixtures/inputs)): one query's plan, captured from a real server in every form it arrives in (psql's aligned, Unicode, bordered, wrapped, expanded and CSV output, in text and JSON; `auto_explain` entries in stderr, `jsonlog` and `csvlog` logs), must yield the same tree as the plain text plan. Generated variants add cells copied from GUI clients, Markdown fences, CRLF, prompts, indentation, non-breaking spaces, truncation, several plans in one input, and inputs that must be rejected.
+- **Fixture corpus** (`tests/corpus.rs`): all 882 generated plans parse without a single warning, and for each of the 441 scenario–version pairs the JSON and text forms lower to the same IR: tree shape, node types and relationships, every typed property, estimates, actual rows and loops, and everything in `extra`. The two forms come from separate executions (see [fixtures/README.md](https://github.com/onplt/explain-sql/blob/HEAD/fixtures/README.md)), so timings, buffer counts and per-worker figures are not compared, and two kinds of values are excluded on principle: memory figures of nodes below a `Gather`, which depend on how much of the work the leader did, and estimates of data-modifying statements, because rolled-back writes still grow the table and the planner scales its estimates by the table's current size. A guard test checks that the comparison does notice changed values.
+- **Captured inputs** (`tests/inputs.rs`, [`fixtures/inputs/`](https://github.com/onplt/explain-sql/tree/HEAD/fixtures/inputs)): one query's plan, captured from a real server in every form it arrives in (psql's aligned, Unicode, bordered, wrapped, expanded and CSV output, in text and JSON; `auto_explain` entries in stderr, `jsonlog` and `csvlog` logs), must yield the same tree as the plain text plan. Generated variants add cells copied from GUI clients, Markdown fences, CRLF, prompts, indentation, non-breaking spaces, truncation, several plans in one input, and inputs that must be rejected.
 - **Constructs the corpus does not reach** (`tests/text_format.rs`, `tests/unknown_properties.rs`): other join, aggregate and set-operation variants, quoted identifiers, foreign and custom scans, compound property lines, the statement summary, and unfamiliar properties at every level of both formats.
 - **Robustness** (`tests/robustness.rs`): thousands of truncated and mutated corpus plans, and pathological input (1,500 levels of indentation, a 20,000-child `Append`, JSON nested 100,000 levels deep, malformed fragments of every construct), must never cause a panic in the parsers, the analysis or the reports.
 - **Fuzzing** (`fuzz/`): `cargo +nightly fuzz run parse`, seeded with the corpus and the captured inputs; a second target, `analyze`, also runs the analysis and the reports. The Phase 1 exit run of `parse` lasted one hour on three workers: 2.9 million inputs and no crash, timeout or memory blow-up.
@@ -145,7 +148,7 @@ Getting per-node numbers right is harder than it looks, and everything else is b
 - **Misestimates** compare actual and estimated rows per loop, each counted as at least one row. A node that a `Limit`, a semi or anti join, a merge join or a subquery can stop early is marked, so that returning fewer rows than estimated is not mistaken for a bad estimate.
 - **Never-executed nodes** count as zero; with `TIMING OFF` or without `ANALYZE`, times are `None` and hotspots are ranked by buffers.
 
-The results agree with pev2 and explain.depesz.com, compared node by node on 24 reference plans from PostgreSQL 13, 16 and 18 (see [tools/cross-check](../tools/cross-check/README.md)). Every node is within 5%, except in the Memoize plan above. There, both tools clamp the negative rounding gap to zero, so their exclusive times add up to more than the statement took.
+The results agree with pev2 and explain.depesz.com, compared node by node on 24 reference plans from PostgreSQL 13, 16 and 18 (see [tools/cross-check](https://github.com/onplt/explain-sql/blob/HEAD/tools/cross-check/README.md)). Every node is within 5%, except in the Memoize plan above. There, both tools clamp the negative rounding gap to zero, so their exclusive times add up to more than the statement took.
 
 ## Rules and reports
 
@@ -286,3 +289,32 @@ Related work: Microsoft's AutoAdmin "what-if" indexes (Chaudhuri and Narasayya),
 
   A rolled-back `INSERT` or `UPDATE` still leaves dead rows until the next `VACUUM`, as any rolled-back transaction does; `--allow-dml`'s help says that effects outside the table data are not undone.
 - **Not yet:** a full tree diff between plans (v0.2), partial indexes from `pg_stats.most_common_freqs`, and `INCLUDE` columns.
+
+## Releases and documentation
+
+- **Release pipeline** (`.github/workflows/release.yml`). We chose a hand-written workflow over cargo-dist, for three reasons: the smoke tests and dry runs stay fully under our control, development needs no extra tool, and without a Homebrew tap cargo-dist's main extra is not needed. The workflow builds:
+  - x86_64 and aarch64 Linux, static with musl (aarch64 through cargo-zigbuild);
+  - x86_64 and aarch64 macOS;
+  - x86_64 Windows.
+
+  `install/package.sh` puts each binary in an archive with the README, the changelog, the licenses and a SHA-256 checksum. Archive names carry no version, so `releases/latest/download/…` links always work.
+- **Smoke tests.** Each archive is installed on a clean runner with `install.sh` or `install.ps1`, from the downloaded artifacts only. Then `install/smoke.sh` or `smoke.ps1` runs:
+  - `--version`;
+  - `--demo`;
+  - a JSON report of a plan file;
+  - a psql table on standard input;
+  - `--pager` pass-through;
+  - the exit code for input that is not a plan.
+
+  Further checks:
+  - a tampered checksum is refused;
+  - Linux binaries are static, and the aarch64 one runs under QEMU;
+  - on fresh Alpine and Ubuntu containers, installing and running `--demo` takes under a minute, the roadmap's exit criterion (download time aside).
+- **When it runs.** A `v*` tag that matches the version in `Cargo.toml` publishes a GitHub release: the archives, `SHA256SUMS`, both install scripts and the changelog's section as notes. A manual run, or a branch push that changes the pipeline, is a dry run that publishes nothing. While the repository is private, the install scripts' downloads need authentication.
+- **Documentation site** (`docs/`, mdBook): the guide, the rule catalog with one page per rule, and the design documents. Findings link to their rule's page (`Rule::doc_url`):
+  - in the viewer's details;
+  - in Markdown reports;
+  - as `rule.docs` in JSON.
+
+  `cargo xtask rule-docs` writes each rule page's example: the scenario that shows the rule best, its plan and explainsql's finding. `cargo xtask check-links` checks every relative link and anchor, and keeps site pages from linking outside `docs/`. The `docs` workflow runs both checks and builds the site on every push. It deploys to GitHub Pages only when run by hand or on a release tag, once Pages is enabled in the repository settings.
+- **Demo.** `cargo xtask demo` drives the viewer over the demo plan with a scripted sequence of keys. It draws each frame with the same renderer as the tests and writes an animated SVG (`docs/demo.svg`). The recording is deterministic, needs no terminal recorder, and CI checks it is current.

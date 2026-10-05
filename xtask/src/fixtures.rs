@@ -476,7 +476,7 @@ fn remove_stale_files(dir: &Path, scenarios: &[Scenario]) -> Result<(), String> 
     Ok(())
 }
 
-fn workspace_root() -> PathBuf {
+pub fn workspace_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .expect("xtask lives inside the workspace")

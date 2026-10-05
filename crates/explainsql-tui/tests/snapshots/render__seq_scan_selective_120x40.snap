@@ -32,9 +32,9 @@ Planning 0.411 ms · Execution 11.9 ms · Buffers 2,417 pages, 84% from cache
                                                                               │→ An index on orders (customer_id) would
                                                                               │let PostgreSQL read only the matching
                                                                               │rows.
-                                                                              │
-                                                                              │
-                                                                              │
+                                                                              │Docs:
+                                                                              │https://onplt.github.io/explain-sql/rules
+                                                                              │/ES001.html
                                                                               │
                                                                               │
                                                                               │

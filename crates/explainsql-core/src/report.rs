@@ -169,9 +169,10 @@ pub fn markdown(plan: &Plan, analysis: &Analysis) -> String {
         out.push_str("### Findings\n\n");
         for finding in &analysis.findings {
             out.push_str(&format!(
-                "- **{} · {} {}:** {}.\n",
+                "- **{} · [{}]({}) {}:** {}.\n",
                 severity_name(finding.severity),
                 finding.rule.id,
+                finding.rule.doc_url(),
                 finding.rule.name,
                 escape(&finding.summary)
             ));

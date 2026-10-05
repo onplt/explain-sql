@@ -15,13 +15,13 @@ Planning 0.619 ms · Execution 312.6 ms · Buffers 1,109,606 pages, 100% from ca
 
 ### Findings
 
-- **High · ES005 Expensive nested-loop inner side:** Nested Loop repeats Index Scan using orders\_created\_at\_idx on orders 20 times; that takes 100% of the loop's time.
+- **High · [ES005](https://onplt.github.io/explain-sql/rules/ES005.html) Expensive nested-loop inner side:** Nested Loop repeats Index Scan using orders\_created\_at\_idx on orders 20 times; that takes 100% of the loop's time.
   - Inner loops: `20`
   - Inner side per loop: `15.6 ms`
   - Repeated work: `312.5 ms of the loop's 312.6 ms, 312.3 ms of it in the inner scans`
   - Rows removed per loop: `55,201 by the filter of Index Scan using orders_created_at_idx on orders`
   - **Action:** An index on orders (customer\_id) would turn each of the 20 inner scans into an index lookup.
-- **High · ES006 Index scan that filters most rows:** Index Scan using orders\_created\_at\_idx on orders finds 1,104,080 rows through orders\_created\_at\_idx and its filter throws away 1,104,020.
+- **High · [ES006](https://onplt.github.io/explain-sql/rules/ES006.html) Index scan that filters most rows:** Index Scan using orders\_created\_at\_idx on orders finds 1,104,080 rows through orders\_created\_at\_idx and its filter throws away 1,104,020.
   - Index: `orders_created_at_idx`
   - Filter: `(orders.customer_id = c.id)`
   - Rows removed by the filter: `55,201 of 55,204 found per loop`

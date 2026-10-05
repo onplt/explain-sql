@@ -1,0 +1,54 @@
+name: Docs
+
+# Builds the documentation site (mdBook) and checks that the rule pages,
+# the README's demo and the links between pages are up to date.
+#
+# Deploys to GitHub Pages only when run by hand or on a release tag. Pages
+# must first be enabled once: Settings → Pages → Source: GitHub Actions.
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: mdbook@0.5.4
+      - name: Rule pages are up to date
+        run: cargo xtask rule-docs --check
+      - name: The demo is up to date
+        run: cargo xtask demo --check
+      - name: Links resolve
+        run: cargo xtask check-links
+      - name: Build the site
+        run: mdbook build docs
+      - uses: actions/upload-pages-artifact@v4
+        with:
+          path: target/book
+
+  deploy:
+    if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
