@@ -23,9 +23,23 @@ All notable changes to ExplainSQL. The format follows
   only warms the cache, and compare the medians.
 - Comparisons report pages written to temporary files, and the JSON report
   says how two plans compare (`change`, `basis`).
+- `explainsql diff BEFORE AFTER` compares two plans of the same statement,
+  node by node: scans that read their relation another way, joins with
+  another method or order, other strategies, nodes that came or went,
+  spills, misestimates, and nodes whose work changed beyond the noise, the
+  most significant first, then the plan after with its changes marked. It
+  matches nodes by the work they do, so partitions renamed by pruning or by
+  another PostgreSQL version still match. Text, Markdown or JSON.
+- Plan shapes: an id for what makes a plan that plan, without its numbers,
+  literal values or aliases, the same in JSON and text.
+- Reading every plan of an input: plans pasted one after the other, JSON
+  arrays and documents, Markdown fences, psql results and log entries
+  (`parse_all`). `explainsql diff` takes both plans from one input this way.
 
 ### Changed
 
+- In connected mode, a run compared with the previous one says what changed
+  in the plan, or that it is the same plan.
 - Before and after comparisons lead with pages, then temporary files, then
   time, and ignore differences under 10% (and 0.1 ms). Fewer pages but a
   slower run is a mixed result.

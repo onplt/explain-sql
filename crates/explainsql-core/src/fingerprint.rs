@@ -3,7 +3,8 @@
 //! ids and often another shape, but a scan still reads the same relation,
 //! under the same alias, and a join still combines the same relations.
 //! These functions find the node that does the same work in another plan,
-//! and tell nodes that look alike but for numbers.
+//! tell nodes that look alike but for numbers, and sum up what makes a
+//! plan that plan: its shape.
 
 use std::collections::BTreeSet;
 
@@ -125,6 +126,73 @@ pub fn leaf_key(plan: &Plan, id: NodeId) -> Option<String> {
     Some(blank_numbers(&key))
 }
 
+/// The shape of a plan: what tells it apart from another plan of the same
+/// statement. One line per node, in plan order: its operation (type, join
+/// type, strategy, parallelism), what it reads (relation, index, CTE or
+/// function, numbers blanked out, as in partition names) and the kinds of
+/// its conditions. Costs, row counts, times, buffers and literal values are
+/// left out, so the same plan has the same shape whatever the statement's
+/// parameters, the data or the cache, and whether the plan was printed as
+/// JSON or text. Aliases are left out too: PostgreSQL names partitions
+/// differently from one version to the next (`events_2025_01`, then
+/// `events_1`), and renaming an alias does not change a plan.
+pub fn shape(plan: &Plan) -> String {
+    let mut out = String::new();
+    for (depth, node) in plan.walk() {
+        out.push_str(&"  ".repeat(depth));
+        out.push_str(&node.node_type);
+        let mut field = |name: &str, value: Option<&str>| {
+            if let Some(value) = value {
+                out.push_str(&format!(" {name}={}", blank_numbers(value)));
+            }
+        };
+        field("parallel", node.parallel_aware.then_some("yes"));
+        field("join", node.join_type.as_deref());
+        field("strategy", node.strategy.as_deref());
+        field("partial", node.partial_mode.as_deref());
+        field("operation", node.operation.as_deref());
+        field("command", node.command.as_deref());
+        field("direction", node.scan_direction.as_deref());
+        field(
+            "relationship",
+            node.relationship.map(|relationship| match relationship {
+                Relationship::Outer => "outer",
+                Relationship::Inner => "inner",
+                Relationship::Member => "member",
+                Relationship::InitPlan => "initplan",
+                Relationship::SubPlan => "subplan",
+                Relationship::Subquery => "subquery",
+            }),
+        );
+        field("relation", node.relation_name.as_deref());
+        field("index", node.index_name.as_deref());
+        field("cte", node.cte_name.as_deref());
+        field("function", node.function_name.as_deref());
+        field("provider", node.custom_plan_provider.as_deref());
+        let kinds: BTreeSet<&str> = node
+            .predicates
+            .iter()
+            .map(|predicate| predicate.kind.key())
+            .collect();
+        for kind in kinds {
+            out.push_str(&format!(" [{kind}]"));
+        }
+        out.push('\n');
+    }
+    out
+}
+
+/// The [shape](shape) of a plan as 16 hexadecimal digits (64-bit FNV-1a),
+/// to tell at a glance whether two plans are the same.
+pub fn id(plan: &Plan) -> String {
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for byte in shape(plan).bytes() {
+        hash ^= u64::from(byte);
+        hash = hash.wrapping_mul(0x0100_0000_01b3);
+    }
+    format!("{hash:016x}")
+}
+
 /// Each run of digits as a single `#`.
 pub fn blank_numbers(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
@@ -202,6 +270,45 @@ Nested Loop  (cost=0.29..20.00 rows=10 width=8)
         .unwrap();
         assert!(reads_whole_index(whole.root()));
         assert!(indexes_with_condition(&whole, whole.root()).is_empty());
+    }
+
+    #[test]
+    fn the_same_plan_has_the_same_shape_whatever_its_numbers() {
+        let plan = crate::parse(JOIN).unwrap();
+        // Other costs, row counts, times and literal values.
+        let measured = crate::parse(
+            "\
+Hash Join  (cost=3.00..30.00 rows=99 width=8) (actual time=0.100..0.900 rows=12 loops=1)
+  Hash Cond: (o.customer_id = c.id)
+  ->  Seq Scan on orders o  (cost=0.00..5.00 rows=100 width=4) (actual time=0.010..0.500 rows=80 loops=1)
+        Filter: (status = 'shipped'::text)
+        Rows Removed by Filter: 20
+  ->  Hash  (cost=1.00..1.00 rows=10 width=4) (actual time=0.050..0.050 rows=10 loops=1)
+        Buckets: 1024  Batches: 1  Memory Usage: 9kB
+        ->  Bitmap Heap Scan on customers c  (cost=0.00..1.00 rows=10 width=4) (actual time=0.010..0.040 rows=10 loops=1)
+              Recheck Cond: (country = 'DE'::text)
+              ->  Bitmap Index Scan on customers_country_idx  (cost=0.00..1.00 rows=10 width=0) (actual time=0.005..0.005 rows=10 loops=1)
+                    Index Cond: (country = 'DE'::text)",
+        )
+        .unwrap();
+        assert_eq!(shape(&plan), shape(&measured));
+        assert_eq!(id(&plan), id(&measured));
+        assert_eq!(id(&plan).len(), 16);
+        assert!(shape(&plan).starts_with(
+            "Hash Join join=Inner [Hash Cond]\n  Seq Scan relationship=outer relation=orders [Filter]\n"
+        ));
+        // Another plan of the statement.
+        let other = crate::parse(
+            "\
+Nested Loop  (cost=0.29..20.00 rows=10 width=8)
+  ->  Seq Scan on customers c  (cost=0.00..1.00 rows=10 width=4)
+        Filter: (country = 'TR'::text)
+  ->  Index Scan using orders_customer_id_idx on orders o  (cost=0.29..1.50 rows=1 width=4)
+        Index Cond: (customer_id = c.id)
+        Filter: (status = 'pending'::text)",
+        )
+        .unwrap();
+        assert_ne!(id(&plan), id(&other));
     }
 
     #[test]

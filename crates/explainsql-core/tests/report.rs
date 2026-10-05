@@ -138,3 +138,26 @@ fn why_not_reports() {
     let value: serde_json::Value = serde_json::from_str(&report::json(&plan, &analysis)).unwrap();
     assert!(value.get("counterfactuals").is_none());
 }
+
+/// A diff in each format: the anti-join that PostgreSQL 18 plans another way.
+#[test]
+fn diff_reports() {
+    let before = parse(&read(&plan_path(12, "anti_join", "json"))).unwrap();
+    let after = parse(&read(&plan_path(18, "anti_join", "json"))).unwrap();
+    let diff = explainsql_core::diff::diff(&before, &after);
+    insta::assert_snapshot!(
+        "diff_text",
+        report::diff_text(&before, &after, &diff, false)
+    );
+    insta::assert_snapshot!(
+        "diff_markdown",
+        report::diff_markdown(&before, &after, &diff)
+    );
+    let json: serde_json::Value =
+        serde_json::from_str(&report::diff_json(&before, &after, &diff)).unwrap();
+    assert_eq!(
+        json["changes"].as_array().unwrap().len(),
+        diff.changes.len()
+    );
+    assert_eq!(json["matched"][0], serde_json::json!([0, 0]));
+}

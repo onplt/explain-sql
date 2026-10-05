@@ -6,6 +6,7 @@ use serde::Serialize;
 use crate::advisor::{Advice, AdviceKind, Confidence, Verification};
 use crate::analysis::Analysis;
 use crate::counterfactual::{Answer, Verdict};
+use crate::diff::{ChangeKind, PlanDiff};
 use crate::format;
 use crate::ir::{NodeId, Plan};
 use crate::metrics;
@@ -32,63 +33,7 @@ pub fn text(plan: &Plan, analysis: &Analysis, color: bool) -> String {
         out.push_str("\n\n");
     }
 
-    let rows = table_rows(plan, analysis);
-    let node_width = rows
-        .iter()
-        .map(|row| row.node.chars().count())
-        .max()
-        .unwrap_or(4)
-        .max(4);
-    let widths = [
-        column_width(&rows, "Share", |row| &row.share),
-        column_width(&rows, "Time", |row| &row.time),
-        column_width(&rows, "Rows", |row| &row.rows),
-        column_width(&rows, "Estimate", |row| &row.estimate),
-        column_width(&rows, "Buffers", |row| &row.buffers),
-    ];
-    out.push_str(&paint.dim(&format!(
-        "{:>w0$}  {:>w1$}  {:bar$}  {:node_width$}  {:>w2$}  {:>w3$}  {:>w4$}",
-        "Share",
-        "Time",
-        "",
-        "Node",
-        "Rows",
-        "Estimate",
-        "Buffers",
-        w0 = widths[0],
-        w1 = widths[1],
-        w2 = widths[2],
-        w3 = widths[3],
-        w4 = widths[4],
-        bar = BAR_WIDTH,
-    )));
-    out.push('\n');
-    for row in &rows {
-        let bar = paint.share(
-            row.fraction,
-            &format!("{:bar$}", bar(row.fraction), bar = BAR_WIDTH),
-        );
-        let padding = node_width - row.node.chars().count();
-        out.push_str(
-            format!(
-                "{:>w0$}  {:>w1$}  {bar}  {}{:padding$}  {:>w2$}  {:>w3$}  {:>w4$}",
-                row.share,
-                row.time,
-                row.node,
-                "",
-                row.rows,
-                row.estimate,
-                row.buffers,
-                w0 = widths[0],
-                w1 = widths[1],
-                w2 = widths[2],
-                w3 = widths[3],
-                w4 = widths[4],
-            )
-            .trim_end(),
-        );
-        out.push('\n');
-    }
+    write_table(&mut out, &table_rows(plan, analysis), &paint, |_| "");
     out.push('\n');
 
     if analysis.findings.is_empty() {
@@ -141,6 +86,265 @@ pub fn text(plan: &Plan, analysis: &Analysis, color: bool) -> String {
 }
 
 const LEGEND: &str = "Share and Time: time spent in each node itself, wall-clock. Rows: actual rows per loop, ×loops when it ran more than once. ▲/▼: actual rows above or below the estimate by 10× or more. Buffers: pages each node read itself.";
+
+/// How many nodes a diff report names before summing up the rest.
+const MAX_LISTED: usize = 12;
+
+/// A plan diff for a terminal: the verdict, the changes, then the second
+/// plan with its changed (`~`) and new (`+`) nodes marked. `color` adds
+/// ANSI colors.
+pub fn diff_text(before: &Plan, after: &Plan, diff: &PlanDiff, color: bool) -> String {
+    let paint = Paint(color);
+    let mut out = String::new();
+    out.push_str(&paint.bold(&wrap(&diff.verdict, 0)));
+    out.push_str("\n\n");
+    out.push_str(&paint.dim(&shapes_line(diff)));
+    out.push_str("\n\n");
+    if diff.changes.is_empty() {
+        out.push_str("No changes: the nodes of both plans did the same work, within the noise.\n");
+    } else {
+        out.push_str(&paint.bold(&format!("Changes ({})", diff.changes.len())));
+        out.push('\n');
+        for change in &diff.changes {
+            out.push('\n');
+            out.push_str(&format!("  {}  ", paint.change(change.kind)));
+            out.push_str(wrap(&change.summary, 12).trim_start());
+            out.push('\n');
+            for evidence in &change.evidence {
+                out.push_str(&wrap(
+                    &format!("{}: {}", evidence.label, evidence.value),
+                    12,
+                ));
+                out.push('\n');
+            }
+        }
+    }
+    out.push('\n');
+    out.push_str(&paint.bold("The plan after"));
+    out.push_str("\n\n");
+    let analysis = crate::analyze(after);
+    write_table(&mut out, &table_rows(after, &analysis), &paint, |id| {
+        diff_marker(diff, id)
+    });
+    let removed = removed_labels(before, diff);
+    if !removed.is_empty() {
+        out.push('\n');
+        out.push_str(&wrap(
+            &format!("Only in the plan before: {}.", removed.join("; ")),
+            0,
+        ));
+        out.push('\n');
+    }
+    out.push('\n');
+    out.push_str(&paint.dim(&wrap(
+        &format!("~: a node that changed. +: a node only the plan after has. {LEGEND}"),
+        0,
+    )));
+    out.push('\n');
+    out
+}
+
+/// A plan diff as Markdown, for an issue or a pull request.
+pub fn diff_markdown(before: &Plan, after: &Plan, diff: &PlanDiff) -> String {
+    let mut out = format!("**{}**\n\n", escape(&diff.verdict));
+    out.push_str(&format!("{}\n\n", escape(&shapes_line(diff))));
+    if diff.changes.is_empty() {
+        out.push_str("No changes: the nodes of both plans did the same work, within the noise.\n");
+    } else {
+        out.push_str("### Changes\n\n");
+        for change in &diff.changes {
+            out.push_str(&format!(
+                "- **{}:** {}.\n",
+                change_name(change.kind),
+                escape(&change.summary)
+            ));
+            for evidence in &change.evidence {
+                out.push_str(&format!(
+                    "  - {}: `{}`\n",
+                    evidence.label,
+                    evidence.value.replace('`', "'")
+                ));
+            }
+        }
+    }
+    let analysis = crate::analyze(after);
+    out.push_str("\n### The plan after\n\n");
+    out.push_str("| | Share | Time | Node | Rows | Estimate | Buffers |\n");
+    out.push_str("|---|---:|---:|---|---:|---:|---:|\n");
+    for (row, (depth, _)) in table_rows(after, &analysis).iter().zip(after.walk()) {
+        let indent = "&nbsp;&nbsp;".repeat(depth);
+        let arrow = if depth > 0 { "↳ " } else { "" };
+        out.push_str(&format!(
+            "| {} | {} | {} | {indent}{arrow}{} | {} | {} | {} |\n",
+            diff_marker(diff, row.id).trim(),
+            row.share,
+            row.time,
+            escape(&row.label),
+            row.rows,
+            row.estimate,
+            row.buffers
+        ));
+    }
+    let removed = removed_labels(before, diff);
+    if !removed.is_empty() {
+        out.push_str(&format!(
+            "\nOnly in the plan before: {}.\n",
+            escape(&removed.join("; "))
+        ));
+    }
+    out.push_str("\n`~` a node that changed, `+` a node only the plan after has.\n");
+    out
+}
+
+/// A plan diff as JSON: the diff, with the labels of the nodes it names.
+pub fn diff_json(before: &Plan, after: &Plan, diff: &PlanDiff) -> String {
+    #[derive(Serialize)]
+    struct Report<'a> {
+        #[serde(flatten)]
+        diff: &'a PlanDiff,
+        /// The label of each node of each plan, by id.
+        labels: Labels,
+    }
+    #[derive(Serialize)]
+    struct Labels {
+        before: Vec<String>,
+        after: Vec<String>,
+    }
+    let report = Report {
+        diff,
+        labels: Labels {
+            before: before.nodes.iter().map(format::node).collect(),
+            after: after.nodes.iter().map(format::node).collect(),
+        },
+    };
+    let mut out = serde_json::to_string_pretty(&report).expect("the report serializes");
+    out.push('\n');
+    out
+}
+
+fn shapes_line(diff: &PlanDiff) -> String {
+    if diff.shapes.same() {
+        format!("Plan shape {} in both: the same plan.", diff.shapes.after)
+    } else {
+        format!(
+            "Plan shape {} → {}: another plan.",
+            diff.shapes.before, diff.shapes.after
+        )
+    }
+}
+
+/// `~ ` for a node that changed, `+ ` for a new one.
+fn diff_marker(diff: &PlanDiff, id: NodeId) -> &'static str {
+    if diff.added.contains(&id) {
+        "+ "
+    } else if diff.changes.iter().any(|change| change.after == Some(id)) {
+        "~ "
+    } else {
+        "  "
+    }
+}
+
+/// The nodes only the first plan has, the first few by name.
+fn removed_labels(before: &Plan, diff: &PlanDiff) -> Vec<String> {
+    let mut labels: Vec<String> = diff
+        .removed
+        .iter()
+        .take(MAX_LISTED)
+        .map(|&id| format::node(before.node(id)))
+        .collect();
+    if diff.removed.len() > MAX_LISTED {
+        labels.push(format!("{} more", diff.removed.len() - MAX_LISTED));
+    }
+    labels
+}
+
+fn change_name(kind: ChangeKind) -> &'static str {
+    match kind {
+        ChangeKind::Access => "Access",
+        ChangeKind::Join => "Join",
+        ChangeKind::JoinOrder => "Join order",
+        ChangeKind::Strategy => "Strategy",
+        ChangeKind::Added => "Added",
+        ChangeKind::Removed => "Removed",
+        ChangeKind::Spill => "Spill",
+        ChangeKind::Estimate => "Estimate",
+        ChangeKind::Work => "Work",
+    }
+}
+
+/// The plan table, each row after its node's marker.
+fn write_table(
+    out: &mut String,
+    rows: &[Row],
+    paint: &Paint,
+    marker: impl Fn(NodeId) -> &'static str,
+) {
+    let node_width = rows
+        .iter()
+        .map(|row| row.node.chars().count())
+        .max()
+        .unwrap_or(4)
+        .max(4);
+    let widths = [
+        column_width(rows, "Share", |row| &row.share),
+        column_width(rows, "Time", |row| &row.time),
+        column_width(rows, "Rows", |row| &row.rows),
+        column_width(rows, "Estimate", |row| &row.estimate),
+        column_width(rows, "Buffers", |row| &row.buffers),
+    ];
+    let margin = rows
+        .iter()
+        .map(|row| marker(row.id).chars().count())
+        .max()
+        .unwrap_or(0);
+    out.push_str(&paint.dim(&format!(
+        "{:margin$}{:>w0$}  {:>w1$}  {:bar$}  {:node_width$}  {:>w2$}  {:>w3$}  {:>w4$}",
+        "",
+        "Share",
+        "Time",
+        "",
+        "Node",
+        "Rows",
+        "Estimate",
+        "Buffers",
+        w0 = widths[0],
+        w1 = widths[1],
+        w2 = widths[2],
+        w3 = widths[3],
+        w4 = widths[4],
+        bar = BAR_WIDTH,
+    )));
+    out.push('\n');
+    for row in rows {
+        let bar = paint.share(
+            row.fraction,
+            &format!("{:bar$}", bar(row.fraction), bar = BAR_WIDTH),
+        );
+        let padding = node_width - row.node.chars().count();
+        let mark = marker(row.id);
+        out.push_str(&paint.bold(mark));
+        out.push_str(&" ".repeat(margin - mark.chars().count()));
+        out.push_str(
+            format!(
+                "{:>w0$}  {:>w1$}  {bar}  {}{:padding$}  {:>w2$}  {:>w3$}  {:>w4$}",
+                row.share,
+                row.time,
+                row.node,
+                "",
+                row.rows,
+                row.estimate,
+                row.buffers,
+                w0 = widths[0],
+                w1 = widths[1],
+                w2 = widths[2],
+                w3 = widths[3],
+                w4 = widths[4],
+            )
+            .trim_end(),
+        );
+        out.push('\n');
+    }
+}
 
 /// The report as Markdown, for an issue, a pull request or a chat.
 pub fn markdown(plan: &Plan, analysis: &Analysis) -> String {
@@ -456,6 +660,7 @@ pub fn facts(plan: &Plan, analysis: &Analysis) -> Vec<String> {
 
 /// One line of the plan table.
 struct Row {
+    id: NodeId,
     share: String,
     time: String,
     /// The tree guides and the label.
@@ -510,6 +715,7 @@ fn table_rows(plan: &Plan, analysis: &Analysis) -> Vec<Row> {
                 (None, _) => String::new(),
             };
             Row {
+                id,
                 share: metrics.time_share.map(format::percent).unwrap_or_default(),
                 time: if never {
                     String::new()
@@ -666,6 +872,21 @@ impl Paint {
             Verdict::Costlier | Verdict::MoreMemoryDoesNotHelp | Verdict::Inconclusive => {
                 self.wrap("2", &tag)
             }
+        }
+    }
+
+    /// A change's label, padded to line the summaries up.
+    fn change(&self, kind: ChangeKind) -> String {
+        let label = format!("{:<8}", kind.label());
+        match kind {
+            ChangeKind::Access | ChangeKind::Join | ChangeKind::JoinOrder => {
+                self.wrap("1;33", &label)
+            }
+            ChangeKind::Spill | ChangeKind::Estimate => self.wrap("31", &label),
+            ChangeKind::Strategy | ChangeKind::Added | ChangeKind::Removed => {
+                self.wrap("33", &label)
+            }
+            ChangeKind::Work => self.wrap("2", &label),
         }
     }
 

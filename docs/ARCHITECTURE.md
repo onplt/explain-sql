@@ -34,8 +34,9 @@ explain-sql/
 │  │  ├─ src/advisor/            # index candidates, rewrites, and why no index
 │  │  ├─ src/catalog.rs          # what the database says about the plan's tables
 │  │  ├─ src/compare.rs          # before and after a change: pages first, then time
+│  │  ├─ src/diff.rs             # two plans of a statement, node by node
 │  │  ├─ src/scenario.rs         # the planner settings explainsql may plan under
-│  │  ├─ src/fingerprint.rs      # the same scan or join in another plan of the statement
+│  │  ├─ src/fingerprint.rs      # the same scan or join in another plan; plan shapes
 │  │  ├─ src/counterfactual.rs   # why the planner chose its plan: questions and answers
 │  │  ├─ src/analysis.rs         # metrics + findings + the one-sentence verdict
 │  │  ├─ src/report.rs           # static reports: text, Markdown, JSON
@@ -115,6 +116,7 @@ input ─▶ normalize() ─┬─▶ json::parse() ─┬─▶ raw tree ─▶
 - **The text parser is hand-written**, with no regular expressions and no parser generator. An indentation stack follows the layout rules of PostgreSQL's `explain.c`: a node's properties start two columns to the right of its name, a child's `->` arrow sits in its parent's property column, and an `InitPlan`, `SubPlan` or `CTE` label sits in the property column with its node two columns further in. Lines after the tree that start in column 0 belong to the statement (`Planning:`, triggers, `JIT:`, `Settings:`, `Execution Time`, ...). Text plans do not print relationships; they are inferred from the parent's type and the child's position.
 - **`lower()`** builds the typed IR, absorbing version drift (below) and the differences that only reflect how a plan was printed.
 - **Never fail hard.** Unfamiliar properties are kept in `extra`. In text plans they also produce a warning, and a line that cannot be read at all is kept verbatim in `extra["Unparsed Lines"]`. A truncated JSON plan is closed after its last complete value, and a truncated text plan keeps the nodes before the cut. Input holding several plans, such as a before-and-after pair, yields the first one and a warning. Only input with no plan in it is rejected, with one exception: serde_json parses recursively, so JSON nested deeper than 512 levels (255 plan levels) is refused rather than risking the stack. Text plans have no depth limit.
+- **Several plans.** `parse()` reads the first plan of the input and warns of others; `parse_all()` reads them all, in order. `normalize_all()` keeps every Markdown fence, every auto_explain entry of a log (each with its query text) and every psql result; then the JSON parser reads each plan of an array and each JSON value that follows, and the text parser starts a new plan at each root line in column 0. Text between two plans that belongs to neither, such as `After:`, is left out with a warning on the plan it precedes. For an input with one plan, `parse_all()` returns what `parse()` does; the corpus and the input fixtures check it.
 - **Not supported:** the YAML and XML formats.
 
 ### Version and fork drift (examples)
@@ -291,7 +293,7 @@ Related work: Microsoft's AutoAdmin "what-if" indexes (Chaudhuri and Narasayya),
   After a run, `r` or an edit with `e` compares the new measured plan with the previous one in the status line.
 
   A rolled-back `INSERT` or `UPDATE` still leaves dead rows until the next `VACUUM`, as any rolled-back transaction does; `--allow-dml`'s help says that effects outside the table data are not undone.
-- **Not yet:** a full tree diff between plans (v0.2), partial indexes from `pg_stats.most_common_freqs`, and `INCLUDE` columns.
+- **Not yet:** partial indexes from `pg_stats.most_common_freqs`, and `INCLUDE` columns.
 
 ## Why not: asking the planner again
 
@@ -311,6 +313,22 @@ A plan shows what the planner chose, not what it turned down. `counterfactual.rs
 - **Approximation.** `enable_*` settings hold for the whole statement, so other scans and joins can change too. The answer lists them and is marked approximate.
 - **Advice.** `Analysis::record` keeps the answers and puts them into the advice: an existing index that the planner did not use gets the reason found instead of the likely ones.
 - **Tests.** `counterfactual.rs` covers every answer on small plans. `crates/explainsql-db/tests/live.rs` checks that settings hold only inside their transaction and that others are refused; `crates/explainsql/tests/cli.rs` asks about a function of a column, a broad range and a sort that spills, against the fixture database.
+
+## Plan diff
+
+`diff.rs` compares two plans of the same statement: from `explainsql diff`, and for the viewer's status line after a run in connected mode. It is pure, and takes plans from any source and in any format.
+
+- **Matching.** Nodes are matched by the work they do, in three passes, each node at most once:
+  1. Within the same scope (the main query, an InitPlan, a SubPlan, a CTE): a scan by what it reads and its alias, a join by the relations below it, any other node by its family (`Gather` and `Gather Merge` are one family, as are the two sorts, the two appends, and `Aggregate` with `Group`) and the relations below it. Relation names below a node have their numbers blanked out, so that an Append over pruned partitions still matches.
+  2. Scans by their relation and scope alone: partitions get their aliases in plan order, which pruning and versions change (`events_2025_06` in one plan, `events_6` in the other).
+  3. Anything left, wherever it is in the statement.
+
+  When several nodes share a key, they match in plan order.
+- **Shapes** (`fingerprint::shape`, `fingerprint::id`). One line per node: its type, join type, strategy, partial mode, parallelism, direction and relationship, the relation, index, CTE or function it reads with numbers blanked out, and the kinds of its conditions. Costs, rows, times, buffers, literal values and aliases are left out: the same plan has the same shape whatever the parameters, the data and the cache, in JSON or text (the corpus checks it on every scenario and version), and when PostgreSQL renames partitions. The id is the shape's 64-bit FNV-1a hash.
+- **Changes.** A matched pair of scans changed its access path when its type, index, direction or parallelism differ, or, for bitmap heap scans, the indexes of the bitmaps below; a pair of joins its method, join type or outer side; any other pair its operation (type, strategy, partial mode). Unmatched joins on both sides mean another join order. Unmatched nodes are added or removed, except those their parent's change explains: bitmap index scans, and the Hash of a matched hash join. The same access change on several partitions, and partitions read or no longer read, are told once. Measured plans also compare temporary files (spills), misestimates of 10× or more where they start (not where they carry up the tree), and the work of matched nodes: a change over 10% in pages or time that moves at least 5% of the statement. Time alone, for the same pages, is reported with the pages read from disk: the cache or the load may explain it.
+- **Order and verdict.** Structural changes come first, then the others, each by weight: the larger share of the statement's time, pages or estimated cost its nodes take in either plan. The verdict is `compare.rs`'s comparison of the totals followed by the first structural change, or "the plan is the same" when the shapes are.
+- **Reports.** Text, Markdown and JSON (`report::diff_*`): the verdict, the shapes, the changes with their evidence, and the plan after with changed nodes marked `~` and new ones `+`. The JSON report is the diff with the label of every node of both plans.
+- **Tests.** `diff.rs` covers each kind of change on small plans. `tests/diff.rs` checks that every corpus plan matches itself and its other format node for node, that scans find their relation in another version, that any two plans compare, and what changed from PostgreSQL 12 to 18 in three scenarios; `tests/report.rs` snapshots the text and Markdown reports, and `tests/cli.rs` runs `explainsql diff`.
 
 ## Releases and documentation
 

@@ -23,7 +23,7 @@ Status: Phases 0 to 4 are done, and Phase 5 is code-complete; the first tagged r
 - A SQL editor, schema browser or query history. This is not a database client.
 - AI or LLM features in the core.
 - Plan hosting or sharing.
-- A full tree-diff algorithm and a flame/icicle view (v0.2).
+- A flame/icicle view (v0.2).
 - `auto_explain` log mining, a pg_stat_statements browser and a GitHub Action (v0.2–v0.3).
 - A plugin system, a theme engine, YAML/XML plan formats, and web or editor front ends.
 
@@ -91,6 +91,6 @@ On fresh containers, installing and running `explainsql --demo` takes seconds. T
 
 ## After v0.1
 
-- **v0.2: fit into team workflows.** Started: asking the planner why it chose its plan (`--why-not`, `y` in the viewer), with comparisons that lead with pages and medians of several runs. Next: real plan diffs (tree matching); `explainsql check` with exit codes and SARIF/Markdown output; a GitHub Action that comments plan regressions on pull requests; a pg_stat_statements entry screen (using `GENERIC_PLAN` on PostgreSQL 16+ for queries without parameter values); a flame/icicle view; an `anonymize` command.
+- **v0.2: fit into team workflows.** Started: asking the planner why it chose its plan (`--why-not`, `y` in the viewer), with comparisons that lead with pages and medians of several runs; plan diffs that match nodes between two plans (`explainsql diff`), plan shapes, and reading every plan of an input. Next: `explainsql check` with exit codes and SARIF/Markdown output; a GitHub Action that comments plan regressions on pull requests; a pg_stat_statements entry screen (using `GENERIC_PLAN` on PostgreSQL 16+ for queries without parameter values); a flame/icicle view; an `anonymize` command.
 - **v0.3: become a tool for AI agents.** `explainsql mcp`, which exposes the deterministic analysis engine to coding agents; `auto_explain` log mining with query fingerprinting; beta MySQL 8.x support (the `EXPLAIN ANALYZE` tree format and the 8.3+ JSON format).
 - **v0.4 and later:** MariaDB; an editor extension built on the WebAssembly core; ORM bridges (for example, turning Hibernate's `?` placeholders into `$n` and planning them with `GENERIC_PLAN`).

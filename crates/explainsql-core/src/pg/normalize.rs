@@ -82,6 +82,112 @@ pub(crate) fn normalize(input: &str) -> Normalized {
     }
 }
 
+/// Every plan-holding part of the input, unwrapped: each Markdown code
+/// fence, each auto_explain entry of a log (with its query text), and each
+/// result table psql printed. A part may still hold several plans one
+/// after the other, which the parsers read in turn.
+pub(crate) fn normalize_all(input: &str) -> Vec<Normalized> {
+    let mut parts = Vec::new();
+    unwrap_all(clean(input), Vec::new(), None, 0, &mut parts);
+    parts
+}
+
+/// Removes one wrapper and recurses into what it held, like the loop of
+/// [`normalize`], but keeps every fence, log entry and psql table.
+fn unwrap_all(
+    text: String,
+    wrappers: Vec<Wrapper>,
+    query_text: Option<String>,
+    depth: usize,
+    parts: &mut Vec<Normalized>,
+) {
+    let with = |wrapper: Wrapper| {
+        let mut wrappers = wrappers.clone();
+        wrappers.push(wrapper);
+        wrappers
+    };
+    if depth < 8 {
+        let fenced = fences(&text);
+        if !fenced.is_empty() {
+            for body in fenced {
+                unwrap_all(
+                    body,
+                    with(Wrapper::MarkdownFence),
+                    query_text.clone(),
+                    depth + 1,
+                    parts,
+                );
+            }
+            return;
+        }
+        let logged = [
+            (jsonlog_bodies(&text), Wrapper::JsonLog),
+            (csvlog_bodies(&text), Wrapper::CsvLog),
+            (log_bodies(&text), Wrapper::AutoExplainLog),
+        ]
+        .into_iter()
+        .find_map(|(bodies, wrapper)| Some((bodies?, wrapper)));
+        if let Some((bodies, wrapper)) = logged {
+            for body in bodies {
+                let (plan, query) = split_query_text(&body);
+                unwrap_all(
+                    plan,
+                    with(wrapper),
+                    query.or(query_text.clone()),
+                    depth + 1,
+                    parts,
+                );
+            }
+            return;
+        }
+        if let Some(inner) = quoted_cells(&text) {
+            unwrap_all(
+                inner,
+                with(Wrapper::QuotedCells),
+                query_text,
+                depth + 1,
+                parts,
+            );
+            return;
+        }
+        if let Some(inner) = psql_expanded(&text) {
+            unwrap_all(
+                inner,
+                with(Wrapper::PsqlExpanded),
+                query_text,
+                depth + 1,
+                parts,
+            );
+            return;
+        }
+        if let Some((inner, wrapped, rest)) = psql_table_and_rest(&text) {
+            let mut table = with(Wrapper::PsqlTable);
+            if wrapped {
+                table.push(Wrapper::PsqlWrapped);
+            }
+            unwrap_all(inner, table, query_text.clone(), depth + 1, parts);
+            // Another EXPLAIN printed after this one.
+            if psql_table(&rest).is_some() {
+                unwrap_all(rest, wrappers, query_text, depth + 1, parts);
+            }
+            return;
+        }
+    }
+    let mut warnings = Vec::new();
+    let (text, format) = if text.trim_start().starts_with(['[', '{']) {
+        (text, Format::Json)
+    } else {
+        (start_at_plan(&text, &mut warnings), Format::Text)
+    };
+    parts.push(Normalized {
+        text,
+        format,
+        wrappers,
+        query_text,
+        warnings,
+    });
+}
+
 /// Unifies line endings and removes a byte order mark, non-breaking spaces
 /// and trailing spaces. Tabs are kept: a lone tab is an empty continuation
 /// line in a server log.
@@ -114,22 +220,45 @@ fn note_extra_entries(count: usize, warnings: &mut Vec<Warning>) {
 
 /// The content of the first Markdown code fence.
 fn strip_fence(text: &str) -> Option<String> {
+    fences(text).into_iter().next()
+}
+
+/// The content of every Markdown code fence, in order. A fence left open
+/// runs to the end of the text.
+fn fences(text: &str) -> Vec<String> {
     let is_fence = |line: &&str| {
         let line = line.trim_start();
         line.starts_with("```") || line.starts_with("~~~")
     };
     let lines: Vec<&str> = text.lines().collect();
-    let open = lines.iter().position(is_fence)?;
-    let close = lines[open + 1..]
-        .iter()
-        .position(is_fence)
-        .map_or(lines.len(), |offset| open + 1 + offset);
-    Some(lines[open + 1..close].join("\n"))
+    let mut bodies = Vec::new();
+    let mut start = 0;
+    while let Some(open) = lines[start..].iter().position(is_fence).map(|i| start + i) {
+        let close = lines[open + 1..]
+            .iter()
+            .position(is_fence)
+            .map_or(lines.len(), |offset| open + 1 + offset);
+        bodies.push(lines[open + 1..close].join("\n"));
+        start = (close + 1).min(lines.len());
+    }
+    bodies
 }
 
 /// The plan part of the first auto_explain message in jsonlog records, and
 /// the number of such messages.
 fn jsonlog_body(text: &str) -> Option<(String, usize)> {
+    first_and_count(jsonlog_bodies(text)?)
+}
+
+/// The first of several bodies and how many there are.
+fn first_and_count(bodies: Vec<String>) -> Option<(String, usize)> {
+    let count = bodies.len();
+    bodies.into_iter().next().map(|body| (body, count))
+}
+
+/// The plan part of every auto_explain message in jsonlog records; `None`
+/// when the text is not such a log or holds no plan.
+fn jsonlog_bodies(text: &str) -> Option<Vec<String>> {
     let mut bodies = Vec::new();
     for line in text.lines().map(str::trim).filter(|line| !line.is_empty()) {
         if !line.starts_with('{') {
@@ -146,13 +275,17 @@ fn jsonlog_body(text: &str) -> Option<(String, usize)> {
             bodies.push(body.to_owned());
         }
     }
-    let count = bodies.len();
-    bodies.into_iter().next().map(|body| (body, count))
+    (!bodies.is_empty()).then_some(bodies)
 }
 
 /// The plan part of the first auto_explain message in csvlog records, and
 /// the number of such messages.
 fn csvlog_body(text: &str) -> Option<(String, usize)> {
+    first_and_count(csvlog_bodies(text)?)
+}
+
+/// The plan part of every auto_explain message in csvlog records.
+fn csvlog_bodies(text: &str) -> Option<Vec<String>> {
     if !starts_log_entry(text) {
         return None;
     }
@@ -166,8 +299,7 @@ fn csvlog_body(text: &str) -> Option<(String, usize)> {
             bodies.push(body.to_owned());
         }
     }
-    let count = bodies.len();
-    bodies.into_iter().next().map(|body| (body, count))
+    (!bodies.is_empty()).then_some(bodies)
 }
 
 /// CSV records: fields separated by commas, and quoted fields that may hold
@@ -262,29 +394,43 @@ fn auto_explain_body(message: &str) -> Option<&str> {
 /// The plan part of the first auto_explain entry in a stderr log, and the
 /// number of entries.
 fn log_body(text: &str) -> Option<(String, usize)> {
+    first_and_count(log_bodies(text)?)
+}
+
+/// The plan part of every auto_explain entry in a stderr log.
+fn log_bodies(text: &str) -> Option<Vec<String>> {
     let is_header = |line: &&str| line.ends_with("plan:") && line.contains("duration: ");
     let lines: Vec<&str> = text.lines().collect();
-    let first = lines.iter().position(is_header)?;
-    let count = lines.iter().filter(|line| is_header(line)).count();
-    // Continuation lines of a log message start with a tab. If the tabs were
-    // lost on the way, read until the next line that starts a log entry.
-    let tabbed = lines
-        .get(first + 1)
-        .is_some_and(|line| line.starts_with('\t'));
-    let mut body = Vec::new();
-    for line in &lines[first + 1..] {
-        if tabbed {
-            match line.strip_prefix('\t') {
-                Some(rest) => body.push(rest),
-                None => break,
-            }
-        } else if starts_log_entry(line) {
-            break;
-        } else {
-            body.push(line);
-        }
+    let headers: Vec<usize> = (0..lines.len())
+        .filter(|&index| is_header(&lines[index]))
+        .collect();
+    if headers.is_empty() {
+        return None;
     }
-    Some((body.join("\n"), count))
+    let mut bodies = Vec::new();
+    for first in headers {
+        // Continuation lines of a log message start with a tab. If the tabs
+        // were lost on the way, read until the next line that starts a log
+        // entry.
+        let tabbed = lines
+            .get(first + 1)
+            .is_some_and(|line| line.starts_with('\t'));
+        let mut body = Vec::new();
+        for line in &lines[first + 1..] {
+            if tabbed {
+                match line.strip_prefix('\t') {
+                    Some(rest) => body.push(rest),
+                    None => break,
+                }
+            } else if starts_log_entry(line) {
+                break;
+            } else {
+                body.push(line);
+            }
+        }
+        bodies.push(body.join("\n"));
+    }
+    Some(bodies)
 }
 
 /// Whether a line starts with a timestamp such as `2026-10-04 16:13:21`.
@@ -345,6 +491,11 @@ fn psql_expanded(text: &str) -> Option<String> {
 /// separator, rows, and a `(n rows)` footer. Returns the rows and whether
 /// wrapped lines were joined.
 fn psql_table(text: &str) -> Option<(String, bool)> {
+    psql_table_and_rest(text).map(|(rows, wrapped, _)| (rows, wrapped))
+}
+
+/// The first psql table, as [`psql_table`] reads it, and the text after it.
+fn psql_table_and_rest(text: &str) -> Option<(String, bool, String)> {
     let lines: Vec<&str> = text.lines().collect();
     let header = lines
         .iter()
@@ -361,8 +512,10 @@ fn psql_table(text: &str) -> Option<(String, bool)> {
 
     let mut out: Vec<String> = Vec::new();
     let mut wrapped = false;
-    for line in &lines[start..] {
+    let mut end = lines.len();
+    for (index, line) in lines.iter().enumerate().skip(start) {
         if is_row_count(line) || (bordered && is_separator(line)) {
+            end = index + 1;
             break;
         }
         let row = if bordered {
@@ -398,7 +551,11 @@ fn psql_table(text: &str) -> Option<(String, bool)> {
         };
         out.push(strip_continuation(row).to_owned());
     }
-    Some((out.join("\n"), wrapped))
+    // A bordered table ends with a separator, then its row count.
+    if bordered && lines.get(end).is_some_and(|line| is_row_count(line)) {
+        end += 1;
+    }
+    Some((out.join("\n"), wrapped, lines[end..].join("\n")))
 }
 
 fn strip_borders(line: &str) -> &str {

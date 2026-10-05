@@ -6,7 +6,7 @@ use std::{env, fs, io};
 
 mod connected;
 
-use clap::{Parser, ValueEnum};
+use clap::{Args, Parser, Subcommand, ValueEnum};
 use explainsql_core::Analysis;
 use explainsql_core::ir::{Node, Plan};
 use explainsql_core::report;
@@ -27,9 +27,19 @@ use explainsql_core::report;
 /// Connected mode runs a query itself: explainsql -d "$DATABASE_URL" -f
 /// slow.sql. It shows the estimated plan, then runs EXPLAIN ANALYZE in a
 /// transaction that is always rolled back, READ ONLY unless --allow-dml.
+///
+/// explainsql diff BEFORE AFTER compares two plans of the same statement.
 #[derive(Parser)]
-#[command(name = "explainsql", version)]
+#[command(
+    name = "explainsql",
+    version,
+    args_conflicts_with_subcommands = true,
+    disable_help_subcommand = true
+)]
 struct Cli {
+    #[command(subcommand)]
+    task: Option<Task>,
+
     /// The plan file; standard input when missing or `-`.
     file: Option<String>,
 
@@ -127,6 +137,33 @@ struct Cli {
     no_analyze: bool,
 }
 
+#[derive(Subcommand)]
+enum Task {
+    /// Compare two plans of the same statement, node by node: which scans
+    /// read their table another way, which joins changed method or order,
+    /// which nodes came or went, and how the work of each node changed.
+    Diff(DiffArgs),
+}
+
+#[derive(Args)]
+struct DiffArgs {
+    /// The plan before: a file, or `-` for standard input.
+    before: String,
+
+    /// The plan after. Without it, BEFORE must hold both plans, one after
+    /// the other: pasted text, a JSON array, Markdown code fences or log
+    /// entries.
+    after: Option<String>,
+
+    /// Report format.
+    #[arg(long, value_enum, default_value_t = Format::Text)]
+    format: Format,
+
+    /// When to color the text report.
+    #[arg(long, value_enum, default_value_t = Color::Auto)]
+    color: Color,
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, ValueEnum)]
 enum Format {
     /// For a terminal.
@@ -165,6 +202,9 @@ const DEMO: &str = include_str!("../demo/plan.txt");
 
 fn main() -> ExitCode {
     let cli = Cli::parse();
+    if let Some(Task::Diff(args)) = &cli.task {
+        return diff(args);
+    }
     if cli.query_file.is_some() || cli.command.is_some() {
         return connected::run(&cli);
     }
@@ -223,6 +263,62 @@ fn main() -> ExitCode {
     emit(&report_for(&cli, &plan, &analysis))
 }
 
+/// `explainsql diff`: reads both plans and prints how they differ.
+fn diff(args: &DiffArgs) -> ExitCode {
+    let read =
+        |path: &str| read_input(Some(path), false).map_err(|error| format!("error: {error}"));
+    let plans = match &args.after {
+        Some(after) => read(&args.before).and_then(|before| {
+            let after = read(after)?;
+            let parse = |text: &str, which: &str| {
+                explainsql_core::parse(text).map_err(|error| format!("error: {which}: {error}"))
+            };
+            Ok((parse(&before, "the plan before")?, parse(&after, "the plan after")?))
+        }),
+        None => read(&args.before).and_then(|input| {
+            let plans = explainsql_core::parse_all(&input).map_err(|error| format!("error: {error}"))?;
+            if plans.len() > 2 {
+                eprintln!(
+                    "explainsql: the input holds {} plans; comparing the first two",
+                    plans.len()
+                );
+            }
+            let mut plans = plans.into_iter();
+            match (plans.next(), plans.next()) {
+                (Some(before), Some(after)) => Ok((before, after)),
+                _ => Err(
+                    "error: the input holds one plan; give the plan after as a second file, or both plans in one input"
+                        .to_owned(),
+                ),
+            }
+        }),
+    };
+    let (before, after) = match plans {
+        Ok(plans) => plans,
+        Err(message) => {
+            eprintln!("{message}");
+            return ExitCode::FAILURE;
+        }
+    };
+    for (which, plan) in [("before", &before), ("after", &after)] {
+        for warning in &plan.warnings {
+            match warning.line {
+                Some(line) => eprintln!(
+                    "explainsql: the plan {which}: line {line}: {}",
+                    warning.message
+                ),
+                None => eprintln!("explainsql: the plan {which}: {}", warning.message),
+            }
+        }
+    }
+    let diff = explainsql_core::diff::diff(&before, &after);
+    emit(&match args.format {
+        Format::Text => report::diff_text(&before, &after, &diff, use_color(args.color)),
+        Format::Md => report::diff_markdown(&before, &after, &diff),
+        Format::Json => report::diff_json(&before, &after, &diff),
+    })
+}
+
 fn viewer_options(cli: &Cli) -> explainsql_tui::Options {
     explainsql_tui::Options {
         background: match cli.theme {
@@ -236,20 +332,22 @@ fn viewer_options(cli: &Cli) -> explainsql_tui::Options {
 /// The report in the format asked for.
 fn report_for(cli: &Cli, plan: &Plan, analysis: &Analysis) -> String {
     match cli.format {
-        Format::Text => {
-            let color = match cli.color {
-                Color::Always => true,
-                Color::Never => false,
-                Color::Auto => {
-                    io::stdout().is_terminal()
-                        && env::var_os("NO_COLOR").is_none_or(|value| value.is_empty())
-                        && env::var("TERM").map_or(true, |term| term != "dumb")
-                }
-            };
-            report::text(plan, analysis, color)
-        }
+        Format::Text => report::text(plan, analysis, use_color(cli.color)),
         Format::Md => report::markdown(plan, analysis),
         Format::Json => report::json(plan, analysis),
+    }
+}
+
+/// Whether to color a text report.
+fn use_color(color: Color) -> bool {
+    match color {
+        Color::Always => true,
+        Color::Never => false,
+        Color::Auto => {
+            io::stdout().is_terminal()
+                && env::var_os("NO_COLOR").is_none_or(|value| value.is_empty())
+                && env::var("TERM").map_or(true, |term| term != "dumb")
+        }
     }
 }
 

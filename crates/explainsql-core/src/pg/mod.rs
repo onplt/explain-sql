@@ -67,3 +67,55 @@ pub fn parse(input: &str) -> Result<Plan, ParseError> {
     }
     Ok(plan)
 }
+
+/// Parses every plan in the input, in order: plans pasted one after the
+/// other, the plans of a JSON array, each auto_explain entry of a log, each
+/// Markdown code fence and each table psql printed. Parts that hold no plan
+/// are skipped; an error means no part held one.
+///
+/// For an input with a single plan, the result is that of [`parse`].
+pub fn parse_all(input: &str) -> Result<Vec<Plan>, ParseError> {
+    let mut plans = Vec::new();
+    let mut error = None;
+    for part in normalize::normalize_all(input) {
+        if part.text.trim().is_empty() {
+            continue;
+        }
+        let raws = match part.format {
+            Format::Json => match json::parse_all(&part.text) {
+                Ok(raws) => raws,
+                Err(reason) => {
+                    error.get_or_insert(ParseError::InvalidJson(reason));
+                    continue;
+                }
+            },
+            Format::Text => text::parse_all(&part.text),
+        };
+        for (index, (raw, warnings)) in raws.into_iter().enumerate() {
+            // What the normalizer left out came before the part's first plan.
+            let mut all = if index == 0 {
+                part.warnings.clone()
+            } else {
+                Vec::new()
+            };
+            all.extend(warnings);
+            let source = Source {
+                format: part.format,
+                wrappers: part.wrappers.clone(),
+            };
+            let mut plan = lower::lower(raw, source, all);
+            if plan.summary.query_text.is_none() {
+                plan.summary.query_text.clone_from(&part.query_text);
+            }
+            plans.push(plan);
+        }
+    }
+    if plans.is_empty() {
+        return Err(error.unwrap_or(if input.trim().is_empty() {
+            ParseError::Empty
+        } else {
+            ParseError::NoPlan
+        }));
+    }
+    Ok(plans)
+}

@@ -1,7 +1,6 @@
 //! Before and after: the figures that tell whether a change helped, for two
 //! plans of the same statement, such as without and with a suggested index.
-//! This compares totals, not trees; matching nodes between plans comes
-//! later.
+//! This compares totals; [`crate::diff`] matches the nodes of two plans.
 //!
 //! Pages come first. The pages a statement reads, from the cache or from
 //! disk, and the pages it spills to temporary files do not depend on what

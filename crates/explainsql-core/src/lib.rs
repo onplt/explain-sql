@@ -20,6 +20,7 @@ pub mod analysis;
 pub mod catalog;
 pub mod compare;
 pub mod counterfactual;
+pub mod diff;
 pub mod expr;
 pub mod fingerprint;
 pub mod format;
@@ -31,4 +32,4 @@ pub mod rules;
 pub mod scenario;
 
 pub use analysis::{Analysis, analyze};
-pub use pg::{ParseError, parse};
+pub use pg::{ParseError, parse, parse_all};

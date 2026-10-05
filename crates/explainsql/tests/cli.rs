@@ -316,3 +316,63 @@ fn asking_why_needs_a_database() {
             .contains("--why-not and --measure ask the database")
     );
 }
+
+#[test]
+fn compares_two_plans() {
+    let before = fixture("pg/12/anti_join.json");
+    let after = fixture("pg/18/anti_join.txt");
+    let (before, after) = (before.to_str().unwrap(), after.to_str().unwrap());
+    let output = run(&["diff", before, after], None);
+    assert!(output.status.success(), "{output:?}");
+    let text = stdout(&output);
+    assert!(text.starts_with("Worse: pages 2,478 → 2,623"), "{text}");
+    assert!(text.contains(
+        "JOIN      Merge Anti Join of customers c and orders o became Hash Right Anti Join"
+    ));
+    assert!(text.contains("The plan after"));
+    assert!(text.contains("Only in the plan before: Sort."));
+    assert!(!text.contains('\x1b'));
+
+    // For a pull request, or for another program.
+    let markdown = stdout(&run(&["diff", before, after, "--format", "md"], None));
+    assert!(
+        markdown.contains("- **Join:** Merge Anti Join"),
+        "{markdown}"
+    );
+    let json: serde_json::Value = serde_json::from_str(&stdout(&run(
+        &["diff", before, after, "--format", "json"],
+        None,
+    )))
+    .unwrap();
+    assert_eq!(json["changes"][0]["kind"], "join");
+    assert_eq!(json["labels"]["after"][0], "Hash Right Anti Join");
+    assert_ne!(json["shapes"]["before"], json["shapes"]["after"]);
+}
+
+#[test]
+fn compares_two_plans_in_one_input() {
+    let first = std::fs::read_to_string(fixture("pg/12/anti_join.txt")).unwrap();
+    let second = std::fs::read_to_string(fixture("pg/18/anti_join.txt")).unwrap();
+    let pasted = format!("Before:\n{first}\n\nAfter:\n{second}");
+    let output = run(&["diff", "-"], Some(&pasted));
+    assert!(output.status.success(), "{output:?}");
+    assert!(stdout(&output).contains("became Hash Right Anti Join"));
+    // The labels were left out, and said to be.
+    let errors = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        errors.contains("the plan after: ignored 1 line(s) before the plan"),
+        "{errors}"
+    );
+
+    // One plan is not enough.
+    let output = run(&["diff", "-"], Some(&first));
+    assert_eq!(output.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("the input holds one plan"));
+    // Nor is text that is not a plan.
+    let path = fixture("pg/12/anti_join.txt");
+    let output = run(&["diff", "-", path.to_str().unwrap()], Some("hello"));
+    assert_eq!(output.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("the plan before"));
+    // Usage errors are told apart.
+    assert_eq!(run(&["diff"], None).status.code(), Some(2));
+}

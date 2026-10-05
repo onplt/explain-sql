@@ -271,7 +271,7 @@ fn receive(app: &mut App, event: Event) {
         } => {
             // A measured plan after a measured plan: how the change did.
             let previous = app.live.as_ref().is_some_and(|live| live.measured) && measured;
-            let comparison = previous.then(|| explainsql_core::compare::compare(&app.plan, &plan));
+            let diff = previous.then(|| explainsql_core::diff::diff(&app.plan, &plan));
             app.replace(*plan, *analysis);
             if let Some(live) = &mut app.live {
                 live.measured = measured;
@@ -279,11 +279,8 @@ fn receive(app: &mut App, event: Event) {
                     live.running = None;
                 }
             }
-            if let Some(comparison) = comparison {
-                app.message = Some(format!(
-                    "Compared with the previous run: {}.",
-                    comparison.details()
-                ));
+            if let Some(diff) = diff {
+                app.message = Some(rerun_message(&diff));
             }
         }
         Event::Proved {
@@ -382,6 +379,23 @@ fn base64(bytes: &[u8]) -> String {
     out
 }
 
+/// How a run compares with the one before: the figures, then whether the
+/// plan stayed the same or what changed in it first.
+fn rerun_message(diff: &explainsql_core::diff::PlanDiff) -> String {
+    let details = diff.comparison.details();
+    let main = diff.changes.iter().find(|change| change.kind.structural());
+    match main {
+        _ if diff.shapes.same() => {
+            format!("Compared with the previous run: {details}; the same plan.")
+        }
+        Some(change) => format!(
+            "Compared with the previous run: {details}. {}.",
+            change.summary
+        ),
+        None => format!("Compared with the previous run: {details}."),
+    }
+}
+
 /// Draws one frame into a buffer, for tests and benchmarks.
 pub fn render(app: &mut App, theme: &Theme, width: u16, height: u16) -> ratatui::buffer::Buffer {
     let backend = ratatui::backend::TestBackend::new(width, height);
@@ -449,6 +463,48 @@ mod tests {
         // Asked again: the new answer replaces the old one.
         receive(&mut app, Event::Answered(vec![answer]));
         assert_eq!(app.analysis.counterfactuals.len(), 1);
+    }
+
+    /// A run after a run says what changed in the plan.
+    #[test]
+    fn compares_a_run_with_the_previous_one() {
+        let parse = |text: &str| explainsql_core::parse(text).unwrap();
+        let scan = parse(
+            "Seq Scan on orders o  (cost=0.00..4917.00 rows=10 width=64) (actual time=1.053..11.865 rows=10 loops=1)\n  Filter: (customer_id = 4242)\n  Rows Removed by Filter: 199990\n  Buffers: shared hit=2417\nExecution Time: 11.900 ms",
+        );
+        let index = parse(
+            "Index Scan using orders_customer_id_idx on orders o  (cost=0.42..44.50 rows=10 width=64) (actual time=0.020..0.051 rows=10 loops=1)\n  Index Cond: (customer_id = 4242)\n  Buffers: shared hit=13\nExecution Time: 0.070 ms",
+        );
+        let mut app = App::new(scan.clone(), explainsql_core::analyze(&scan));
+        app.live = Some(Live {
+            database: "db".to_owned(),
+            sql: "SELECT".to_owned(),
+            measured: true,
+            running: Some(Instant::now()),
+            task: "Running EXPLAIN ANALYZE".to_owned(),
+            hypopg: false,
+            allow_ddl: false,
+            measure: false,
+        });
+        let event = |plan: &explainsql_core::ir::Plan| Event::Plan {
+            plan: Box::new(plan.clone()),
+            analysis: Box::new(explainsql_core::analyze(plan)),
+            measured: true,
+        };
+        receive(&mut app, event(&index));
+        assert_eq!(
+            app.message.as_deref(),
+            Some(
+                "Compared with the previous run: pages 2,417 → 13 (186× fewer), execution 11.9 ms → 0.070 ms (170× faster). Seq Scan on orders o became Index Scan using orders_customer_id_idx on orders o."
+            )
+        );
+        receive(&mut app, event(&index));
+        assert_eq!(
+            app.message.as_deref(),
+            Some(
+                "Compared with the previous run: pages 13 → 13, execution 0.070 ms → 0.070 ms; the same plan."
+            )
+        );
     }
 
     #[test]

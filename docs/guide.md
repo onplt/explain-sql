@@ -116,3 +116,36 @@ In the viewer, select a node and press `y`.
 Without `--measure`, the alternatives are only planned: the answer says how much more expensive the planner estimates them, and whether `random_page_cost = 1.1` (as suits SSDs and cloud volumes) makes it choose the index by itself. With `--measure`, both plans run and are compared, pages first, and the answer says whether the planner is right. When it is not, it says why: a row misestimate (fix the statistics), or its cost settings. A cost setting is suggested only when the plan it leads to has been measured too, and is better.
 
 The settings are planner settings only, from a fixed list, set with `SET LOCAL` semantics inside the transaction that is rolled back: they never outlast the run. `enable_*` settings apply to the whole statement, so other parts of the plan can change as well; the answer says when they did.
+
+## Compare two plans
+
+A plan changed after an index, a statistics update, an upgrade or a rewrite of the query. `explainsql diff` tells what changed, node by node:
+
+```sh
+explainsql diff before.json after.json
+explainsql diff plans.txt                     # both plans in one input
+explainsql diff before.json after.txt --format md
+```
+
+The two plans can be in any form explainsql reads, and in different ones. A single input can hold both, one after the other: plans pasted one below the other (a label such as `After:` between them is left out), a JSON array or two JSON documents, two Markdown code fences, two psql results, or two auto_explain entries of a log.
+
+The report opens on a sentence: how the second plan compares, pages first, then time (the estimated cost when the plans were not run), and its main change. Then come the changes, with the most significant first:
+
+| Change | What it means |
+|---|---|
+| `ACCESS` | A relation is read another way: another scan type, index or direction, or in parallel. The same change on several partitions is told once. |
+| `JOIN` | The same relations are joined by another method, or the sides of the join swapped. |
+| `ORDER` | The relations are joined in another order. |
+| `STRATEGY` | Another variant of the same operation: a hashed aggregate that became sorted, a sort that became incremental. |
+| `ADDED`, `REMOVED` | A node only one plan has, such as a Sort an index made unnecessary, or a Gather that runs part of the plan in parallel. Partitions read or no longer read are counted together. |
+| `SPILL` | A node started or stopped writing temporary files. |
+| `ESTIMATE` | A row estimate became 10× off or more, or stopped being, where the error starts. |
+| `WORK` | The same node read more or fewer pages, or took more or less time, by more than 10% and 5% of the statement. A change in time alone, for the same pages, says how many of them came from disk: the cache or the server's load may explain it rather than the plan. |
+
+Last, the plan after, with its changed nodes marked `~` and its new ones `+`, and the nodes only the plan before had.
+
+Nodes are matched by the work they do, not by their position. A scan is found again by the relation it reads, a join by the relations it combines, any other node by its kind and the relations below it. Partitions that PostgreSQL named another way, as versions do, are still matched.
+
+Each plan has a shape: 16 hexadecimal digits that stand for its nodes, what they read and how, without numbers, literal values or aliases. Two plans with the same shape are the same plan, whatever the parameters, the data, the cache, or whether they were printed as JSON or text.
+
+In connected mode, after `r` or `e` runs the statement again, the status line compares the run with the previous one in the same way.
