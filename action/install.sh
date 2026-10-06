@@ -2,7 +2,7 @@
 # The action's first step: puts explainsql on the runner and names it in the
 # step output `binary`. INPUT_BINARY, when set, is used as it is; otherwise
 # the release INPUT_VERSION is installed, or the release the action was
-# referenced by (ACTION_REF, such as v0.2.0), or the latest one.
+# referenced by (ACTION_REF, such as v0.3.0), or the latest one.
 set -euo pipefail
 
 if [ -n "${INPUT_BINARY:-}" ]; then

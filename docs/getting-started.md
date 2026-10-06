@@ -19,11 +19,11 @@ irm https://github.com/onplt/explain-sql/releases/latest/download/install.ps1 | 
 Both scripts take options. To pin a version or choose where the binary goes:
 
 ```sh
-curl -fsSL https://github.com/onplt/explain-sql/releases/latest/download/install.sh | sh -s -- --version 0.2.0 --to ~/bin
+curl -fsSL https://github.com/onplt/explain-sql/releases/latest/download/install.sh | sh -s -- --version 0.3.0 --to ~/bin
 ```
 
 ```powershell
-& ([scriptblock]::Create((irm https://github.com/onplt/explain-sql/releases/latest/download/install.ps1))) -Version 0.2.0 -To C:\tools
+& ([scriptblock]::Create((irm https://github.com/onplt/explain-sql/releases/latest/download/install.ps1))) -Version 0.3.0 -To C:\tools
 ```
 
 Prebuilt binaries cover Linux (x86_64 and aarch64, fully static, so they run on any distribution, Alpine included), macOS (Intel and Apple silicon) and Windows (x86_64). You can also download an archive from the [releases page](https://github.com/onplt/explain-sql/releases) and unpack it yourself; each archive comes with a `.sha256` file, and the release has a `SHA256SUMS` list.

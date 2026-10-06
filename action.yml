@@ -52,8 +52,8 @@ inputs:
     default: "false"
   version:
     description: >
-      The explainsql release to install, such as 0.2.0. By default the
-      release the action was referenced by (onplt/explain-sql@v0.2.0), or the
+      The explainsql release to install, such as 0.3.0. By default the
+      release the action was referenced by (onplt/explain-sql@v0.3.0), or the
       latest one.
     required: false
     default: ""

@@ -43,7 +43,5 @@
 
 # Design and development
 
-- [Vision](VISION.md)
 - [Architecture](ARCHITECTURE.md)
-- [Roadmap](ROADMAP.md)
 - [Contributing](contributing.md)

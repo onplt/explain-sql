@@ -63,7 +63,7 @@ jobs:
       - run: psql "$DATABASE_URL" -f schema.sql   # the tables, and data shaped like production's
         env:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/postgres
-      - uses: onplt/explain-sql@v0.2.0
+      - uses: onplt/explain-sql@v0.3.0
         with:
           paths: queries/
           database-url: postgresql://postgres:postgres@localhost:5432/postgres
@@ -84,7 +84,7 @@ Without `database-url`, `paths` are captured plan files and no database is neede
 | `comment` | `true` | Comment on the pull request. |
 | `comment-key` | `default` | Tells this check's comment from another's, when one workflow checks several sets of plans. |
 | `upload-sarif` | `false` | Upload the report to code scanning (needs `security-events: write`). |
-| `version` | the action's | The ExplainSQL release to install, such as `0.2.0`. By default, the release the action is referenced by (`@v0.2.0`), or the latest. |
+| `version` | the action's | The ExplainSQL release to install, such as `0.3.0`. By default, the release the action is referenced by (`@v0.3.0`), or the latest. |
 | `binary` | | An ExplainSQL binary to use instead of installing a release. |
 | `github-token` | `github.token` | The token that writes the comment (needs `pull-requests: write`). |
 
