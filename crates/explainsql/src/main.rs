@@ -201,10 +201,11 @@ enum Task {
     Logs(LogsArgs),
     /// Replace what a plan tells about the data and the schema, to share it
     /// in a bug report or an issue: names of tables, indexes, columns and
-    /// other objects become table1, index1, column1, …, and literal values
-    /// become 'value1' or small numbers, the same way everywhere they
-    /// appear. Node types, estimates, timings and buffers stay, so the plan
-    /// reads and analyzes as before.
+    /// other objects become table_a, index_a, column_a, …, and literal
+    /// values become 'value_a' or other numbers, the same way everywhere
+    /// they appear. Names that differ only in their numbers, as partitions
+    /// do, stay alike (table_b_1, table_b_2). Node types, estimates,
+    /// timings and buffers stay, so the plan reads and analyzes as before.
     ///
     /// Prints the plans of FILE, in the format they were written in, without
     /// what surrounded them (psql output, log lines, code fences). Function

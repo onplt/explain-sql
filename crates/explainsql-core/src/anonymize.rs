@@ -6,9 +6,16 @@
 //! schema is replaced, the same way everywhere it appears:
 //!
 //! - the names of tables, indexes, CTEs, aliases, schemas, columns,
-//!   constraints and triggers (`table1`, `index1`, `column1`, …);
-//! - literal values, strings as `'value1'` (keeping the `%` of a `LIKE`
-//!   pattern at either end) and numbers as small integers.
+//!   constraints and triggers (`table_a`, `index_a`, `column_a`, …);
+//! - literal values, strings as `'value_a'` (keeping the `%` of a `LIKE`
+//!   pattern at either end) and numbers as small ones.
+//!
+//! Names that differ only in their numbers, such as the partitions
+//! `orders_2025_01` and `orders_2025_02`, become names that differ only in
+//! their numbers (`table_a_1`, `table_a_2`), and other names become names
+//! without any: explainsql groups and matches partitions by their names
+//! with the numbers left out, in the viewer, in `diff` and in plan shapes,
+//! and the anonymized plan must group and match the same way.
 //!
 //! Kept: function and type names, keywords, `$n` parameters, system names
 //! (`pg_catalog`, `public`, `pg_…` relations, `RI_ConstraintTrigger_…`,
@@ -24,7 +31,7 @@
 //! let anonymized = anonymize(plan, Options::default()).unwrap();
 //! assert_eq!(
 //!     anonymized.text,
-//!     "Seq Scan on table1 alias1  (cost=0.00..4917.00 rows=10 width=64)\n  Filter: (alias1.column1 = 1)\n",
+//!     "Seq Scan on table_a alias_a  (cost=0.00..4917.00 rows=10 width=64)\n  Filter: (alias_a.column_a = 1)\n",
 //! );
 //! ```
 
@@ -33,6 +40,7 @@ use std::fmt;
 
 use serde::Serialize;
 
+use crate::fingerprint::blank_numbers;
 use crate::ir::{Format, Plan};
 use crate::params;
 use crate::pg::{self, ParseError};
@@ -120,17 +128,42 @@ pub fn anonymize(input: &str, options: Options) -> Result<Anonymized, Error> {
             Format::Json => namer.json(&part.text),
             Format::Text => namer.text_plan(&part.text),
         };
-        parts.push(text.trim_end().to_owned());
+        parts.push((part.format, text.trim_end().to_owned()));
     }
+    // JSON plans follow each other as they are, and so do text plans; a
+    // mix is told apart by Markdown fences.
+    let mixed = parts.windows(2).any(|pair| pair[0].0 != pair[1].0);
+    let parts: Vec<String> = parts
+        .into_iter()
+        .map(|(_, text)| {
+            if mixed {
+                format!("```\n{text}\n```")
+            } else {
+                text
+            }
+        })
+        .collect();
     let mut text = parts.join("\n\n");
     text.push('\n');
     match pg::parse_all(&text) {
-        Ok(again) if again.len() == plans.len() => Ok(Anonymized {
+        Ok(again) if same_nodes(&plans, &again) => Ok(Anonymized {
             text,
             mapping: namer.mapping,
         }),
         _ => Err(Error::Unreadable),
     }
+}
+
+/// Whether two lists of plans have the same nodes, of the same types.
+fn same_nodes(a: &[Plan], b: &[Plan]) -> bool {
+    a.len() == b.len()
+        && a.iter().zip(b).all(|(a, b)| {
+            a.nodes.len() == b.nodes.len()
+                && a.nodes
+                    .iter()
+                    .zip(&b.nodes)
+                    .all(|(x, y)| x.node_type == y.node_type)
+        })
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -176,7 +209,7 @@ impl Kind {
 struct Namer {
     options: Options,
     names: HashMap<(u8, String), String>,
-    counts: HashMap<Kind, usize>,
+    labels: Labels,
     strings: HashMap<String, String>,
     numbers: HashMap<String, String>,
     mapping: Mapping,
@@ -187,7 +220,7 @@ impl Namer {
         Namer {
             options,
             names: HashMap::new(),
-            counts: HashMap::new(),
+            labels: Labels::default(),
             strings: HashMap::new(),
             numbers: HashMap::new(),
             mapping: Mapping::default(),
@@ -239,9 +272,7 @@ impl Namer {
         if let Some(name) = self.names.get(&key) {
             return name.clone();
         }
-        let count = self.counts.entry(kind).or_insert(0);
-        *count += 1;
-        let name = format!("{}{count}", kind.prefix());
+        let name = self.labels.label(kind.namespace(), kind.prefix(), original);
         let map = match kind {
             Kind::Table => &mut self.mapping.tables,
             Kind::Index => &mut self.mapping.indexes,
@@ -262,6 +293,14 @@ impl Namer {
         self.names.get(&(0, original.to_owned())).cloned()
     }
 
+    /// Whether the plans name a relation, an alias, a CTE or a column so.
+    fn is_known(&self, original: &str) -> bool {
+        [Kind::Table, Kind::Column].iter().any(|kind| {
+            self.names
+                .contains_key(&(kind.namespace(), original.to_owned()))
+        })
+    }
+
     fn keeps(&self, kind: Kind, name: &str) -> bool {
         if self.options.keep_names || name.is_empty() || name.starts_with('*') {
             return true;
@@ -278,34 +317,50 @@ impl Namer {
         }
     }
 
-    /// `'value1'`, keeping the `%` of a `LIKE` pattern at either end.
+    /// `'value_a'`, keeping the `%` of a `LIKE` pattern at either end.
     fn string(&mut self, content: &str) -> String {
-        let count = self.strings.len() + 1;
-        let name = self
-            .strings
-            .entry(content.to_owned())
-            .or_insert_with(|| format!("value{count}"))
-            .clone();
-        self.mapping
-            .values
-            .insert(format!("'{content}'"), format!("'{name}'"));
+        if let Some(string) = self.strings.get(content) {
+            return string.clone();
+        }
+        let name = self.labels.label(STRINGS, "value", content);
         let start = if content.starts_with('%') { "%" } else { "" };
         let end = if content.len() > 1 && content.ends_with('%') {
             "%"
         } else {
             ""
         };
-        format!("'{start}{name}{end}'")
+        let string = format!("'{start}{name}{end}'");
+        self.mapping
+            .values
+            .insert(format!("'{content}'"), string.clone());
+        self.strings.insert(content.to_owned(), string.clone());
+        string
     }
 
+    /// Another number of the same form: its first run of digits counts the
+    /// numbers met so far, its other runs are zeros (`1.99` → `3.0`).
     fn number(&mut self, text: &str) -> String {
-        let count = self.numbers.len() + 1;
-        let number = self
-            .numbers
-            .entry(text.to_owned())
-            .or_insert_with(|| count.to_string())
-            .clone();
+        if let Some(number) = self.numbers.get(text) {
+            return number.clone();
+        }
+        let count = (self.numbers.len() + 1).to_string();
+        let mut number = String::with_capacity(text.len());
+        let mut runs = 0;
+        let mut in_run = false;
+        for c in text.chars() {
+            if c.is_ascii_digit() {
+                if !in_run {
+                    number.push_str(if runs == 0 { &count } else { "0" });
+                    runs += 1;
+                }
+                in_run = true;
+            } else {
+                number.push(c);
+                in_run = false;
+            }
+        }
         self.mapping.values.insert(text.to_owned(), number.clone());
+        self.numbers.insert(text.to_owned(), number.clone());
         number
     }
 
@@ -369,7 +424,7 @@ impl Namer {
                     out.push_str(&self.number(&rest[..length]));
                 }
                 rest = &rest[length..];
-            } else if (c == '"' || is_identifier_start(c)) && !previous_word {
+            } else if c == '"' || is_identifier_start(c) {
                 let (chain, after) = identifier_chain(rest);
                 if chain.is_empty() {
                     out.push(c);
@@ -405,6 +460,15 @@ impl Namer {
         keyword: &str,
         sql: bool,
     ) -> String {
+        // A statement's names fold to lower case unless quoted, as in
+        // PostgreSQL: `FROM Orders` reads `orders`.
+        let folded: Vec<Identifier>;
+        let chain = if sql {
+            folded = chain.iter().map(Identifier::folded).collect();
+            folded.as_slice()
+        } else {
+            chain
+        };
         let raw = || {
             chain
                 .iter()
@@ -412,23 +476,37 @@ impl Namer {
                 .collect::<Vec<_>>()
                 .join(".")
         };
-        // Functions keep their names: count(*), lower(email).
-        if after.starts_with('(') && !chain.last().is_some_and(|part| part.quoted) {
-            return raw();
+        // Functions keep their names, not their schemas: count(*),
+        // lower(email), app.tax(amount).
+        if let Some((function, schemas)) = chain.split_last() {
+            if after.starts_with('(') && !function.quoted {
+                let mut out = String::new();
+                for schema in schemas {
+                    out.push_str(&self.written(Kind::Schema, schema));
+                    out.push('.');
+                }
+                out.push_str(&function.raw);
+                return out;
+            }
         }
         if keyword.eq_ignore_ascii_case("COLLATE") {
             return raw();
         }
         match chain {
             [word] => {
+                // A statement may name a column `time` or `first`: a keyword
+                // that is not reserved is a name where the plans use it so.
+                let named = sql && !is_reserved(&word.raw) && self.is_known(&word.name);
                 if !word.quoted
-                    && (is_keyword(&word.raw, sql) || PLAN_WORDS.contains(&word.raw.as_str()))
+                    && !named
+                    && (is_keyword(&word.raw, sql) || is_plan_word(&word.raw, after))
                 {
                     return word.raw.clone();
                 }
                 // (InitPlan 1).col1, a window w1.
                 if (before.ends_with(").") && is_numbered(&word.raw, "col"))
-                    || (is_numbered(&word.raw, "w") && after.starts_with(" AS ("))
+                    || (is_numbered(&word.raw, "w")
+                        && (after.starts_with(" AS (") || before.ends_with("OVER ")))
                 {
                     return word.raw.clone();
                 }
@@ -472,49 +550,72 @@ impl Namer {
     /// Rewrites a JSON plan in place: only string values change, so the
     /// document keeps its layout and its key order.
     fn json(&mut self, text: &str) -> String {
+        /// An open object or array: the key whose value is being read (an
+        /// array repeats the key that holds it), and the key that holds the
+        /// object.
+        struct Open {
+            object: bool,
+            key: String,
+            owner: String,
+        }
         let mut out = String::with_capacity(text.len());
-        // For each open object, the key being read; arrays repeat the key
-        // that holds them.
-        let mut stack: Vec<(bool, String)> = Vec::new();
+        let mut stack: Vec<Open> = Vec::new();
         let mut expecting_key = false;
         let mut rest = text;
         while let Some(c) = rest.chars().next() {
             match c {
-                '{' => {
-                    stack.push((true, String::new()));
-                    expecting_key = true;
-                }
-                '[' => {
-                    let key = stack.last().map(|(_, key)| key.clone()).unwrap_or_default();
-                    stack.push((false, key));
-                    expecting_key = false;
+                '{' | '[' => {
+                    let (key, owner) = stack
+                        .last()
+                        .map(|open| (open.key.clone(), open.owner.clone()))
+                        .unwrap_or_default();
+                    stack.push(if c == '{' {
+                        Open {
+                            object: true,
+                            key: String::new(),
+                            owner: key,
+                        }
+                    } else {
+                        Open {
+                            object: false,
+                            key,
+                            owner,
+                        }
+                    });
+                    expecting_key = c == '{';
                 }
                 '}' | ']' => {
                     stack.pop();
                     expecting_key = false;
                 }
-                ',' => expecting_key = stack.last().is_some_and(|(object, _)| *object),
+                ',' => expecting_key = stack.last().is_some_and(|open| open.object),
                 ':' => expecting_key = false,
                 '"' => {
                     let length = json_string_length(rest);
                     let token = &rest[..length];
-                    let value: Option<String> = serde_json::from_str(token).ok();
                     rest = &rest[length..];
-                    match (value, stack.last_mut()) {
-                        (Some(value), Some((true, key))) if expecting_key => {
-                            *key = value;
+                    let value: Option<String> = serde_json::from_str(token).ok();
+                    match stack.last_mut() {
+                        Some(open) if open.object && expecting_key => {
+                            open.key = value.unwrap_or_default();
                             out.push_str(token);
                         }
-                        (Some(value), Some((_, key))) => {
-                            let key = key.clone();
-                            match self.property(&key, &value, false) {
+                        open => {
+                            let (key, owner) = open
+                                .map(|open| (open.key.clone(), open.owner.clone()))
+                                .unwrap_or_default();
+                            let new = match value {
+                                Some(value) => self.json_value(&owner, &key, &value),
+                                // Unreadable, so nothing of it is kept.
+                                None => Some(String::new()),
+                            };
+                            match new {
                                 Some(new) => out.push_str(
                                     &serde_json::to_string(&new).expect("a string serializes"),
                                 ),
                                 None => out.push_str(token),
                             }
                         }
-                        _ => out.push_str(token),
                     }
                     continue;
                 }
@@ -524,6 +625,20 @@ impl Namer {
             rest = &rest[c.len_utf8()..];
         }
         out
+    }
+
+    /// The replacement for a string value of a JSON plan, by its key and the
+    /// key of the object that holds it; `None` keeps it.
+    fn json_value(&mut self, owner: &str, key: &str, value: &str) -> Option<String> {
+        if owner == "Settings" {
+            // Planner settings name nothing, but for the search path.
+            return if key == "search_path" {
+                self.property(key, value, false)
+            } else {
+                None
+            };
+        }
+        self.property(key, value, false)
     }
 
     /// The replacement for the value of a property, by its key (JSON) or
@@ -552,6 +667,7 @@ impl Namer {
             "Schema" => names(self, Kind::Schema),
             "Alias" => names(self, Kind::Alias),
             "Index Name" | "Conflict Arbiter Indexes" => names(self, Kind::Index),
+            "Tuplestore Name" => names(self, Kind::Table),
             "CTE Name" => names(self, Kind::Cte),
             "Constraint Name" => names(self, Kind::Constraint),
             "Trigger Name" => names(self, Kind::Trigger),
@@ -569,12 +685,16 @@ impl Namer {
                 out.join(", ")
             }
             "Query Text" | "Remote SQL" => self.expression(value, true),
+            // `bernoulli ('10'::real) REPEATABLE ('42'::double precision)`:
+            // the method is a function.
+            "Sampling" => match value.split_once(' ') {
+                Some((method, rest)) => format!("{method} {}", self.expression(rest, false)),
+                None => value.to_owned(),
+            },
             _ if EXPRESSIONS.contains(&key) => self.expression(value, false),
-            _ if text && !KEPT.contains(&key) => {
-                // An unfamiliar label: its value could hold anything.
-                self.expression(value, true)
-            }
-            _ => return None,
+            _ if KEPT.contains(&key) => return None,
+            // An unfamiliar property: its value could hold anything.
+            _ => self.expression(value, true),
         };
         Some(new)
     }
@@ -582,7 +702,6 @@ impl Namer {
     /// Rewrites a text plan line by line.
     fn text_plan(&mut self, text: &str) -> String {
         let mut out = String::with_capacity(text.len());
-        let mut seen_node = false;
         for line in text.split_inclusive('\n') {
             let (line, newline) = match line.strip_suffix('\n') {
                 Some(line) => (line, "\n"),
@@ -590,27 +709,25 @@ impl Namer {
             };
             let content = line.trim_start();
             out.push_str(&line[..line.len() - content.len()]);
-            out.push_str(&self.text_line(content, &mut seen_node));
+            out.push_str(&self.text_line(content));
             out.push_str(newline);
         }
         out
     }
 
-    fn text_line(&mut self, content: &str, seen_node: &mut bool) -> String {
+    fn text_line(&mut self, content: &str) -> String {
         if content.is_empty() {
             return String::new();
         }
         if let Some(header) = content.strip_prefix("->") {
             let name = header.trim_start();
-            *seen_node = true;
             return format!(
                 "->{}{}",
                 &header[..header.len() - name.len()],
                 self.node_header(name)
             );
         }
-        if is_node_line(content) || !*seen_node && !content.contains(": ") {
-            *seen_node = true;
+        if is_node_line(content) || is_node_name(content) {
             return self.node_header(content);
         }
         if let Some(rest) = content.strip_prefix("Trigger ") {
@@ -624,7 +741,7 @@ impl Namer {
                 // `Worker 0:  actual time=…`, or one space before PostgreSQL 13.
                 let property = rest.trim_start();
                 let space = &rest[..rest.len() - property.len()];
-                let property = self.text_line(property, seen_node);
+                let property = self.text_line(property);
                 return format!("{worker}:{space}{property}");
             }
         }
@@ -632,15 +749,19 @@ impl Namer {
             if label == "Settings" {
                 return format!("Settings: {}", self.settings(value));
             }
-            return match self.property(label, value, true) {
-                Some(value) => format!("{label}: {value}"),
-                None => content.to_owned(),
-            };
+            // A label in PostgreSQL's words; anything else may name things.
+            if is_label(label) {
+                return match self.property(label, value, true) {
+                    Some(value) => format!("{label}: {value}"),
+                    None => content.to_owned(),
+                };
+            }
         }
-        if content.ends_with(':')
-            || content.starts_with("InitPlan ")
-            || content.starts_with("SubPlan ")
-            || content.starts_with("actual ")
+        // `Planning:`, `JIT:`, and a worker's `actual time=… rows=… loops=…`.
+        if content
+            .strip_suffix(':')
+            .is_some_and(|label| KEPT.contains(&label))
+            || is_actual(content)
         {
             return content.to_owned();
         }
@@ -662,28 +783,37 @@ impl Namer {
             .min()
             .unwrap_or(content.len());
         let (name, numbers) = content.split_at(split);
-        let mut out = String::new();
-        let mut rest = name;
-        if let Some(at) = rest.find(" using ") {
-            out.push_str(&rest[..at + " using ".len()]);
-            let node_type = &rest[..at];
-            let (chain, after) = identifier_chain(&rest[at + " using ".len()..]);
-            match chain.as_slice() {
-                [index] => out.push_str(&self.written(Kind::Index, index)),
-                _ => return format!("{}{numbers}", self.expression(name, true)),
+        // The node type is PostgreSQL's words; only what follows names
+        // anything.
+        let (node_type, mut rest) = match name.find(" using ").or_else(|| name.find(" on ")) {
+            Some(at) => name.split_at(at),
+            None => (name, ""),
+        };
+        let mut out = node_type.to_owned();
+        if let Some(index_text) = rest.strip_prefix(" using ") {
+            out.push_str(" using ");
+            let (chain, after) = identifier_chain(index_text);
+            match chain.split_last() {
+                Some((index, schemas)) => {
+                    for schema in schemas {
+                        out.push_str(&self.written(Kind::Schema, schema));
+                        out.push('.');
+                    }
+                    out.push_str(&self.written(Kind::Index, index));
+                    rest = after;
+                }
+                None => {
+                    out.push_str(&self.expression(index_text, true));
+                    rest = "";
+                }
             }
-            rest = after;
-            if let Some(target) = rest.strip_prefix(" on ") {
-                out.push_str(" on ");
-                out.push_str(&self.target(node_type, target));
-                rest = "";
-            }
-        } else if let Some(at) = rest.find(" on ") {
-            out.push_str(&rest[..at + " on ".len()]);
-            out.push_str(&self.target(&rest[..at], &rest[at + " on ".len()..]));
-            rest = "";
         }
-        out.push_str(rest);
+        if let Some(target) = rest.strip_prefix(" on ") {
+            out.push_str(" on ");
+            out.push_str(&self.target(node_type, target));
+        } else if !rest.is_empty() {
+            out.push_str(&self.expression(rest, true));
+        }
         out.push_str(numbers);
         out
     }
@@ -786,6 +916,59 @@ impl Namer {
     }
 }
 
+/// The namespace of string literals for [`Labels`].
+const STRINGS: u8 = 5;
+
+/// Replacements that keep what tells names apart and what makes them alike.
+/// Names that differ only in their numbers share a base (`table_a`) and
+/// get a number each (`table_a_1`, `table_a_2`); a name without numbers
+/// gets a base of its own, without numbers.
+#[derive(Default)]
+struct Labels {
+    /// The base of each name with its numbers left out, by namespace.
+    bases: HashMap<(u8, String), String>,
+    /// How many bases each prefix has.
+    counts: HashMap<&'static str, usize>,
+    /// How many names with numbers each base has.
+    members: HashMap<String, usize>,
+}
+
+impl Labels {
+    fn label(&mut self, namespace: u8, prefix: &'static str, original: &str) -> String {
+        let pattern = blank_numbers(original);
+        let base = match self.bases.get(&(namespace, pattern.clone())) {
+            Some(base) => base.clone(),
+            None => {
+                let count = self.counts.entry(prefix).or_insert(0);
+                *count += 1;
+                let base = format!("{prefix}_{}", letters(*count));
+                self.bases
+                    .insert((namespace, pattern.clone()), base.clone());
+                base
+            }
+        };
+        if pattern == original {
+            return base;
+        }
+        let member = self.members.entry(base.clone()).or_insert(0);
+        *member += 1;
+        format!("{base}_{member}")
+    }
+}
+
+/// `a`, `b`, …, `z`, `aa`, `ab`, …: a count without digits.
+fn letters(count: usize) -> String {
+    let mut out = Vec::new();
+    let mut n = count;
+    while n > 0 {
+        n -= 1;
+        out.push(b'a' + (n % 26) as u8);
+        n /= 26;
+    }
+    out.reverse();
+    String::from_utf8(out).expect("ASCII letters")
+}
+
 /// Splits `a = '1', b = 'x, y'` at the commas outside quotes.
 fn split_settings(value: &str) -> Vec<&str> {
     let mut parts = Vec::new();
@@ -811,6 +994,21 @@ struct Identifier {
     raw: String,
     name: String,
     quoted: bool,
+}
+
+impl Identifier {
+    /// The name a statement means: in lower case, unless quoted.
+    fn folded(&self) -> Identifier {
+        Identifier {
+            raw: self.raw.clone(),
+            name: if self.quoted {
+                self.name.clone()
+            } else {
+                self.name.to_ascii_lowercase()
+            },
+            quoted: self.quoted,
+        }
+    }
 }
 
 fn is_identifier_start(c: char) -> bool {
@@ -905,17 +1103,25 @@ fn cast_type<'a>(text: &'a str, out: &mut String) -> &'a str {
     rest
 }
 
+/// The length of the number at the start of `text`: `42`, `1.5`, `1e-3`,
+/// `1_000`.
 fn number_length(text: &str) -> usize {
-    let mut length = 0;
     let bytes = text.as_bytes();
-    while length < bytes.len() {
-        let b = bytes[length];
-        let exponent_sign =
-            (b == b'+' || b == b'-') && length > 0 && matches!(bytes[length - 1], b'e' | b'E');
-        if b.is_ascii_alphanumeric() || b == b'.' || exponent_sign {
-            length += 1;
-        } else {
-            break;
+    let digits = |at: usize| {
+        bytes[at..]
+            .iter()
+            .take_while(|b| b.is_ascii_digit() || **b == b'_')
+            .count()
+    };
+    let mut length = digits(0);
+    if bytes.get(length) == Some(&b'.') {
+        length += 1 + digits(length + 1);
+    }
+    if matches!(bytes.get(length), Some(b'e' | b'E')) {
+        let sign = usize::from(matches!(bytes.get(length + 1), Some(b'+' | b'-')));
+        let exponent = digits(length + 1 + sign);
+        if exponent > 0 {
+            length += 1 + sign + exponent;
         }
     }
     length
@@ -949,18 +1155,73 @@ fn is_node_line(content: &str) -> bool {
         || content.ends_with("(never executed)")
 }
 
-/// A keyword as PostgreSQL prints it in a plan: in capitals. In a
-/// statement someone wrote, in any case.
+/// Whether a line of a text plan names a node in PostgreSQL's words, as
+/// plans without costs print them: `Hash Join`, `Seq Scan on orders o`,
+/// `Custom Scan (ChunkAppend) on metrics`.
+fn is_node_name(content: &str) -> bool {
+    let node_type = content
+        .find(" using ")
+        .or_else(|| content.find(" on "))
+        .map_or(content, |at| &content[..at]);
+    // A custom scan's provider is the extension's name.
+    let node_type = match node_type.split_once("Custom Scan (") {
+        Some((before, provider)) => match provider.split_once(')') {
+            Some((_, after)) => format!("{before}Custom Scan{after}"),
+            None => return false,
+        },
+        None => node_type.to_owned(),
+    };
+    !node_type.is_empty() && node_type.split(' ').all(|word| NODE_WORDS.contains(&word))
+}
+
+/// Whether the label of a text plan's line is in PostgreSQL's words:
+/// `Rows Removed by Filter`, `I/O Timings`, `Full-sort Groups`.
+fn is_label(label: &str) -> bool {
+    !label.is_empty()
+        && label.split(' ').all(|word| {
+            matches!(word, "by" | "for" | "in" | "of" | "per" | "to")
+                || (word.starts_with(|c: char| c.is_ascii_uppercase())
+                    && word
+                        .chars()
+                        .all(|c| c.is_ascii_alphabetic() || c == '/' || c == '-'))
+        })
+}
+
+/// A worker's first line: `actual time=0.1..0.2 rows=10 loops=1`.
+fn is_actual(content: &str) -> bool {
+    content.strip_prefix("actual ").is_some_and(|figures| {
+        figures.split_whitespace().all(|figure| {
+            figure.split_once('=').is_some_and(|(key, value)| {
+                matches!(key, "time" | "rows" | "loops")
+                    && value.bytes().all(|b| b.is_ascii_digit() || b == b'.')
+            })
+        })
+    })
+}
+
+/// A keyword as PostgreSQL prints it in a plan: in capitals, since it
+/// quotes names with capitals. In a statement someone wrote, in any case.
 fn is_keyword(word: &str, sql: bool) -> bool {
+    if matches!(word, "true" | "false") {
+        return true;
+    }
     if sql {
         KEYWORDS
             .iter()
             .chain(SQL_KEYWORDS)
             .any(|k| k.eq_ignore_ascii_case(word))
-            || matches!(word, "true" | "false")
     } else {
-        KEYWORDS.contains(&word) || matches!(word, "true" | "false")
+        KEYWORDS
+            .iter()
+            .chain(SQL_KEYWORDS)
+            .chain(PRINTED)
+            .any(|k| *k == word)
     }
+}
+
+/// A keyword that names nothing unless quoted.
+fn is_reserved(word: &str) -> bool {
+    RESERVED.iter().any(|k| k.eq_ignore_ascii_case(word))
 }
 
 /// Properties whose value is an expression or a list of them.
@@ -990,13 +1251,28 @@ const EXPRESSIONS: &[&str] = &[
     "Window",
     "Relations",
     "Conflict Filter",
-    "Sampling",
+    "Sampling Parameters",
     "Repeatable Seed",
 ];
 
-/// Labels of a text plan whose values are figures or settings, and name
-/// nothing.
+/// Properties whose values are figures, settings or PostgreSQL's words,
+/// and name nothing: labels of text plans and keys of JSON plans.
 const KEPT: &[&str] = &[
+    "Node Type",
+    "Parent Relationship",
+    "Join Type",
+    "Strategy",
+    "Partial Mode",
+    "Operation",
+    "Command",
+    "Scan Direction",
+    "Sort Space Type",
+    "Sort Methods Used",
+    "Function Name",
+    "Table Function Name",
+    "Custom Plan Provider",
+    "Sampling Method",
+    "Format",
     "Buffers",
     "I/O Timings",
     "Planning Time",
@@ -1038,19 +1314,96 @@ const KEPT: &[&str] = &[
     "Serialization",
     "Query Identifier",
     "Params Evaluated",
-    "Estimates",
-    "Prefetch",
-    "Window Aggregate",
-    "Peak Memory Usage",
-    "Average Prefetch Distance",
+];
+
+/// The words of node types in text plans.
+const NODE_WORDS: &[&str] = &[
+    "Aggregate",
+    "All",
+    "Anti",
+    "Append",
+    "Async",
+    "Backward",
+    "Bitmap",
+    "BitmapAnd",
+    "BitmapOr",
+    "CTE",
+    "Custom",
+    "Delete",
+    "Except",
+    "Finalize",
+    "Foreign",
+    "Full",
+    "Function",
+    "Gather",
+    "Group",
+    "GroupAggregate",
+    "Hash",
+    "HashAggregate",
+    "HashSetOp",
+    "Heap",
+    "Incremental",
+    "Index",
+    "Inner",
+    "Insert",
+    "Intersect",
+    "Join",
+    "Left",
+    "Limit",
+    "LockRows",
+    "Loop",
+    "Materialize",
+    "Memoize",
+    "Merge",
+    "MixedAggregate",
+    "Named",
+    "Nested",
+    "Only",
+    "Parallel",
+    "Partial",
+    "ProjectSet",
+    "Range",
+    "Recursive",
+    "Result",
+    "Right",
+    "Sample",
+    "Scan",
+    "Semi",
+    "Seq",
+    "SetOp",
+    "Sort",
+    "Subquery",
+    "Table",
+    "Tid",
+    "Tuplestore",
+    "Union",
+    "Unique",
+    "Update",
+    "Values",
+    "WindowAgg",
+    "WorkTable",
 ];
 
 /// Columns every table has.
 const SYSTEM_COLUMNS: &[&str] = &["ctid", "xmin", "xmax", "cmin", "cmax", "tableoid"];
 
-/// Words of plans that are not names: `(hashed SubPlan 2)`,
-/// `InitPlan 1 (returns $0)`.
-const PLAN_WORDS: &[&str] = &["InitPlan", "SubPlan", "hashed", "returns", "CTE"];
+/// Whether a word is one of the plan's own, by what follows it:
+/// `(hashed SubPlan 2)`, `InitPlan 1 (returns $0)`.
+fn is_plan_word(word: &str, after: &str) -> bool {
+    match word {
+        "InitPlan" | "SubPlan" => after
+            .strip_prefix(' ')
+            .is_some_and(|rest| rest.starts_with(|c: char| c.is_ascii_digit())),
+        "hashed" => after.starts_with(" SubPlan "),
+        // `(alternatives: SubPlan 1 or hashed SubPlan 2)`, before
+        // PostgreSQL 14.
+        "alternatives" => after.starts_with(": SubPlan ") || after.starts_with(": hashed SubPlan "),
+        "or" => after.starts_with(" SubPlan ") || after.starts_with(" hashed SubPlan "),
+        "returns" => after.starts_with(" $"),
+        "CTE" => after.starts_with(' '),
+        _ => false,
+    }
+}
 
 /// Words that continue a type name after `::`.
 const TYPE_WORDS: &[&str] = &["without", "with", "time", "zone", "varying", "precision"];
@@ -1069,8 +1422,12 @@ const KEYWORDS: &[&str] = &[
     "CASE",
     "CAST",
     "COLLATE",
+    "COLLATION",
     "CURRENT",
+    "CURRENT_CATALOG",
     "CURRENT_DATE",
+    "CURRENT_ROLE",
+    "CURRENT_SCHEMA",
     "CURRENT_TIME",
     "CURRENT_TIMESTAMP",
     "CURRENT_USER",
@@ -1105,24 +1462,30 @@ const KEYWORDS: &[&str] = &[
     "ORDER",
     "OTHERS",
     "OVER",
+    "OVERLAPS",
     "PARTITION",
+    "PLACING",
     "PRECEDING",
     "RANGE",
+    "REPEATABLE",
     "ROW",
     "ROWS",
     "SESSION_USER",
     "SIMILAR",
     "SOME",
     "SYMMETRIC",
+    "SYSTEM_USER",
     "THEN",
     "TIES",
     "TIME",
     "TO",
     "TRUE",
     "UNBOUNDED",
+    "UNIQUE",
     "UNKNOWN",
     "USER",
     "USING",
+    "VARIADIC",
     "WHEN",
     "WITHIN",
     "ZONE",
@@ -1172,7 +1535,6 @@ const SQL_KEYWORDS: &[&str] = &[
     "INTERSECT",
     "INTO",
     "JSON",
-    "KEY",
     "LATERAL",
     "LEADING",
     "LIMIT",
@@ -1198,7 +1560,6 @@ const SQL_KEYWORDS: &[&str] = &[
     "SKIP",
     "TABLE",
     "TABLESAMPLE",
-    "TEXT",
     "TIMING",
     "TRAILING",
     "UNION",
@@ -1212,6 +1573,128 @@ const SQL_KEYWORDS: &[&str] = &[
     "WITHOUT",
     "MATCHED",
     "UPSERT",
+];
+
+/// Words PostgreSQL prints in some conditions and output columns, kept in
+/// plans only: `PARTIAL count(*)`, `IS JSON SCALAR`, `JSON_VALUE(… ERROR
+/// ON ERROR)`. A statement may well name a column `value` or `partial`.
+const PRINTED: &[&str] = &[
+    "ABSENT",
+    "CONDITIONAL",
+    "EMPTY",
+    "ENCODING",
+    "ERROR",
+    "ESCAPE",
+    "KEEP",
+    "KEYS",
+    "LOCAL",
+    "NFC",
+    "NFD",
+    "NFKC",
+    "NFKD",
+    "NORMALIZED",
+    "OBJECT",
+    "OMIT",
+    "PARTIAL",
+    "PASSING",
+    "QUOTES",
+    "SCALAR",
+    "UNCONDITIONAL",
+    "UTF8",
+    "VALUE",
+    "WRAPPER",
+];
+
+/// The keywords above that name nothing unless quoted: PostgreSQL's
+/// reserved keywords, and those that may only name a function or a type.
+const RESERVED: &[&str] = &[
+    "ALL",
+    "ANALYZE",
+    "AND",
+    "ANY",
+    "ARRAY",
+    "AS",
+    "ASC",
+    "ASYMMETRIC",
+    "BOTH",
+    "CASE",
+    "CAST",
+    "CHECK",
+    "COLLATE",
+    "COLLATION",
+    "CONSTRAINT",
+    "CREATE",
+    "CROSS",
+    "CURRENT_CATALOG",
+    "CURRENT_DATE",
+    "CURRENT_ROLE",
+    "CURRENT_SCHEMA",
+    "CURRENT_TIME",
+    "CURRENT_TIMESTAMP",
+    "CURRENT_USER",
+    "DEFAULT",
+    "DESC",
+    "DISTINCT",
+    "DO",
+    "ELSE",
+    "END",
+    "EXCEPT",
+    "FALSE",
+    "FETCH",
+    "FOR",
+    "FROM",
+    "FULL",
+    "GROUP",
+    "HAVING",
+    "ILIKE",
+    "IN",
+    "INNER",
+    "INTERSECT",
+    "INTO",
+    "IS",
+    "JOIN",
+    "LATERAL",
+    "LEADING",
+    "LEFT",
+    "LIKE",
+    "LIMIT",
+    "LOCALTIME",
+    "LOCALTIMESTAMP",
+    "NATURAL",
+    "NOT",
+    "NULL",
+    "OFFSET",
+    "ON",
+    "ONLY",
+    "OR",
+    "ORDER",
+    "OUTER",
+    "OVERLAPS",
+    "PLACING",
+    "RETURNING",
+    "RIGHT",
+    "SELECT",
+    "SESSION_USER",
+    "SIMILAR",
+    "SOME",
+    "SYMMETRIC",
+    "SYSTEM_USER",
+    "TABLE",
+    "TABLESAMPLE",
+    "THEN",
+    "TO",
+    "TRAILING",
+    "TRUE",
+    "UNION",
+    "UNIQUE",
+    "USER",
+    "USING",
+    "VARIADIC",
+    "VERBOSE",
+    "WHEN",
+    "WHERE",
+    "WINDOW",
+    "WITH",
 ];
 
 #[cfg(test)]
@@ -1239,16 +1722,16 @@ Settings: work_mem = '64MB', search_path = 'app, public'
 Execution Time: 0.3 ms";
         insta::assert_snapshot!(text(plan), @r"
         Hash Join  (cost=1.00..2.00 rows=1 width=4) (actual time=0.1..0.2 rows=1 loops=1)
-          Hash Cond: (alias1.column1 = alias2.column2)
-          ->  Seq Scan on public.table1 alias1  (cost=0.00..1.00 rows=1 width=4) (actual time=0.1..0.2 rows=1 loops=1)
-                Filter: ((alias1.column3 = 'value1'::text) AND (alias1.column4 ~~ 'value2%'::text) AND (alias1.column5 > 1))
+          Hash Cond: (alias_a.column_a = alias_b.column_b)
+          ->  Seq Scan on public.table_a alias_a  (cost=0.00..1.00 rows=1 width=4) (actual time=0.1..0.2 rows=1 loops=1)
+                Filter: ((alias_a.column_c = 'value_a'::text) AND (alias_a.column_d ~~ 'value_b%'::text) AND (alias_a.column_e > 1.0))
                 Rows Removed by Filter: 10
           ->  Hash  (cost=1.00..1.00 rows=1 width=4) (actual time=0.1..0.2 rows=1 loops=1)
-                ->  Index Scan using index1 on public.table2 alias2  (cost=0.00..1.00 rows=1 width=4) (actual time=0.1..0.2 rows=1 loops=1)
-                      Index Cond: (alias2.column2 = $1)
-                      Filter: (lower(alias2.column6) = 'value3'::character varying)
-        Trigger RI_ConstraintTrigger_a_16417 for constraint constraint1: time=0.5 calls=1
-        Settings: work_mem = '64MB', search_path = 'schema1, public'
+                ->  Index Scan using index_a on public.table_b alias_b  (cost=0.00..1.00 rows=1 width=4) (actual time=0.1..0.2 rows=1 loops=1)
+                      Index Cond: (alias_b.column_b = $1)
+                      Filter: (lower(alias_b.column_f) = 'value_c'::character varying)
+        Trigger RI_ConstraintTrigger_a_16417 for constraint constraint_a: time=0.5 calls=1
+        Settings: work_mem = '64MB', search_path = 'schema_a, public'
         Execution Time: 0.3 ms
         ");
     }
@@ -1276,16 +1759,16 @@ Execution Time: 0.3 ms";
           {
             "Plan": {
               "Node Type": "Seq Scan",
-              "Relation Name": "table1",
-              "Alias": "alias1",
+              "Relation Name": "table_a",
+              "Alias": "alias_a",
               "Startup Cost": 0.00,
               "Total Cost": 1.00,
               "Plan Rows": 1,
               "Plan Width": 4,
-              "Output": ["alias1.column1", "alias1.column2"],
-              "Filter": "(alias1.column3 = 'value1'::text)"
+              "Output": ["alias_a.column_a", "alias_a.column_b"],
+              "Filter": "(alias_a.column_c = 'value_a'::text)"
             },
-            "Query Text": "SELECT alias1.column1, alias1.column2 FROM table1 alias1 WHERE alias1.column3 = 'value1'  "
+            "Query Text": "SELECT alias_a.column_a, alias_a.column_b FROM table_a alias_a WHERE alias_a.column_c = 'value_a'  "
           }
         ]
         "#);
@@ -1311,17 +1794,49 @@ Execution Time: 0.3 ms";
 Seq Scan on events e  (cost=0.00..1.00 rows=1 width=4)
   Filter: ((e.created_at >= (InitPlan 1).col1) AND (date_trunc('day'::text, e.created_at) = '2024-01-01 00:00:00'::timestamp without time zone) AND (e.kind = ANY ('{a,b}'::text[])) AND (NOT (hashed SubPlan 2)) AND (e.amount = '1.50'::numeric(10,2)) AND ((e.name)::text = E'it\\'s'::text COLLATE \"C\"))";
         insta::assert_snapshot!(text(plan), @r#"
-        Seq Scan on table1 alias1  (cost=0.00..1.00 rows=1 width=4)
-          Filter: ((alias1.column1 >= (InitPlan 1).col1) AND (date_trunc('value1'::text, alias1.column1) = 'value2'::timestamp without time zone) AND (alias1.column2 = ANY ('value3'::text[])) AND (NOT (hashed SubPlan 2)) AND (alias1.column3 = 'value4'::numeric(10,2)) AND ((alias1.column4)::text = 'value5'::text COLLATE "C"))
+        Seq Scan on table_a alias_a  (cost=0.00..1.00 rows=1 width=4)
+          Filter: ((alias_a.column_a >= (InitPlan 1).col1) AND (date_trunc('value_a'::text, alias_a.column_a) = 'value_b_1'::timestamp without time zone) AND (alias_a.column_b = ANY ('value_c'::text[])) AND (NOT (hashed SubPlan 2)) AND (alias_a.column_c = 'value_d_1'::numeric(10,2)) AND ((alias_a.column_d)::text = 'value_e'::text COLLATE "C"))
         "#);
+    }
+
+    #[test]
+    fn keeps_what_aggregates_windows_and_subplans_print() {
+        let plan = "\
+Aggregate  (cost=1.00..2.00 rows=1 width=8)
+  Output: PARTIAL count(*) FILTER (WHERE (o.amount > '10'::numeric)), row_number() OVER w1
+  Window: w1 AS (PARTITION BY o.status ORDER BY o.created_at ROWS UNBOUNDED PRECEDING)
+  ->  Seq Scan on public.orders o  (cost=0.00..1.00 rows=1 width=4)
+        Filter: (alternatives: SubPlan 1 or hashed SubPlan 2)";
+        insta::assert_snapshot!(text(plan), @r"
+        Aggregate  (cost=1.00..2.00 rows=1 width=8)
+          Output: PARTIAL count(*) FILTER (WHERE (alias_a.column_a > 'value_a_1'::numeric)), row_number() OVER w1
+          Window: w1 AS (PARTITION BY alias_a.column_b ORDER BY alias_a.column_c ROWS UNBOUNDED PRECEDING)
+          ->  Seq Scan on public.table_a alias_a  (cost=0.00..1.00 rows=1 width=4)
+                Filter: (alternatives: SubPlan 1 or hashed SubPlan 2)
+        ");
+    }
+
+    /// The statement of an auto_explain entry names what its plan names the
+    /// same way: unquoted names in any case, and columns named by keywords.
+    #[test]
+    fn names_a_statement_as_its_plan_does() {
+        let plan = r#"{"Query Text": "SELECT Time, first FROM Metrics m WHERE m.Time > now() - interval '1 day' ORDER BY Time DESC NULLS LAST", "Plan": {"Node Type": "Seq Scan", "Relation Name": "metrics", "Alias": "m", "Startup Cost": 0.00, "Total Cost": 1.00, "Plan Rows": 1, "Plan Width": 4, "Output": ["\"time\"", "first"], "Filter": "(m.\"time\" > (now() - '1 day'::interval))"}}"#;
+        insta::assert_snapshot!(text(plan), @r#"{"Query Text": "SELECT column_a, column_b FROM table_a alias_a WHERE alias_a.column_a > now() - interval 'value_a_1' ORDER BY column_a DESC NULLS LAST", "Plan": {"Node Type": "Seq Scan", "Relation Name": "table_a", "Alias": "alias_a", "Startup Cost": 0.00, "Total Cost": 1.00, "Plan Rows": 1, "Plan Width": 4, "Output": ["column_a", "column_b"], "Filter": "(alias_a.column_a > (now() - 'value_a_1'::interval))"}}"#);
+    }
+
+    #[test]
+    fn keeps_every_reserved_keyword() {
+        for word in RESERVED {
+            assert!(is_keyword(word, true), "{word}");
+        }
     }
 
     #[test]
     fn names_the_same_thing_the_same_way_in_every_plan() {
         let plans = "Seq Scan on orders  (cost=0.00..1.00 rows=1 width=4)\n  Filter: (status = 'new'::text)\n\nSeq Scan on orders  (cost=0.00..2.00 rows=1 width=4)\n  Filter: (status = 'new'::text)";
         let anonymized = text(plans);
-        assert_eq!(anonymized.matches("table1").count(), 2, "{anonymized}");
-        assert_eq!(anonymized.matches("'value1'").count(), 2, "{anonymized}");
+        assert_eq!(anonymized.matches("table_a").count(), 2, "{anonymized}");
+        assert_eq!(anonymized.matches("'value_a'").count(), 2, "{anonymized}");
     }
 
     #[test]
@@ -1330,6 +1845,102 @@ Seq Scan on events e  (cost=0.00..1.00 rows=1 width=4)
         let anonymized = text(input);
         assert!(!anonymized.contains("secret"), "{anonymized}");
         assert!(!anonymized.contains("mydb"), "{anonymized}");
+    }
+
+    #[test]
+    fn keeps_partitions_alike_and_other_names_apart() {
+        let plan = "\
+Append  (cost=0.00..2.00 rows=2 width=4)
+  ->  Seq Scan on events_2025_01 events_1  (cost=0.00..1.00 rows=1 width=4)
+        Filter: (events_1.kind = 'click'::text)
+  ->  Seq Scan on events_2025_02 events_2  (cost=0.00..1.00 rows=1 width=4)
+        Filter: (events_2.kind = 'click'::text)
+  ->  Seq Scan on orders  (cost=0.00..1.00 rows=1 width=4)
+        Filter: (orders.status = 'new'::text)";
+        insta::assert_snapshot!(text(plan), @r"
+        Append  (cost=0.00..2.00 rows=2 width=4)
+          ->  Seq Scan on table_a_1 alias_a_1  (cost=0.00..1.00 rows=1 width=4)
+                Filter: (alias_a_1.column_a = 'value_a'::text)
+          ->  Seq Scan on table_a_2 alias_a_2  (cost=0.00..1.00 rows=1 width=4)
+                Filter: (alias_a_2.column_a = 'value_a'::text)
+          ->  Seq Scan on table_b  (cost=0.00..1.00 rows=1 width=4)
+                Filter: (table_b.column_b = 'value_b'::text)
+        ");
+    }
+
+    #[test]
+    fn counts_in_letters() {
+        let counted: Vec<String> = [1, 2, 26, 27, 52, 53, 702, 703].map(letters).into();
+        assert_eq!(counted, ["a", "b", "z", "aa", "az", "ba", "zz", "aaa"]);
+    }
+
+    #[test]
+    fn replaces_what_it_does_not_know_in_json() {
+        let plan = r#"{
+  "Query Text": "select * from orders where id = $1",
+  "Query Parameters": "$1 = '4242'",
+  "Plan": {
+    "Node Type": "Seq Scan",
+    "Relation Name": "orders",
+    "Alias": "orders",
+    "Startup Cost": 0.00,
+    "Total Cost": 1.00,
+    "Plan Rows": 1,
+    "Plan Width": 4,
+    "Something New": "orders.secret"
+  },
+  "Settings": {"enable_seqscan": "off", "search_path": "app, public"}
+}"#;
+        insta::assert_snapshot!(text(plan), @r#"
+        {
+          "Query Text": "select * from table_a where column_a = $1",
+          "Query Parameters": "$1 = 'value_a_1'",
+          "Plan": {
+            "Node Type": "Seq Scan",
+            "Relation Name": "table_a",
+            "Alias": "table_a",
+            "Startup Cost": 0.00,
+            "Total Cost": 1.00,
+            "Plan Rows": 1,
+            "Plan Width": 4,
+            "Something New": "table_a.column_b"
+          },
+          "Settings": {"enable_seqscan": "off", "search_path": "schema_a, public"}
+        }
+        "#);
+    }
+
+    #[test]
+    fn replaces_names_in_lines_it_does_not_place() {
+        // The target tables of an UPDATE of a partitioned table, and a
+        // prompt pasted after the plan.
+        let plan = "\
+Update on parted  (cost=0.00..2.00 rows=0 width=0)
+  Update on parted_p1 parted_1
+  ->  Seq Scan on parted_p1 parted_1  (cost=0.00..1.00 rows=1 width=10)
+        Filter: (secret = 1)
+mydb=# select secret from parted;";
+        insta::assert_snapshot!(text(plan), @r"
+        Update on table_a  (cost=0.00..2.00 rows=0 width=0)
+          Update on table_b_1 alias_a_1
+          ->  Seq Scan on table_b_1 alias_a_1  (cost=0.00..1.00 rows=1 width=10)
+                Filter: (column_a = 1)
+        column_b=# select column_a from table_a;
+        ");
+    }
+
+    #[test]
+    fn fences_plans_of_both_formats() {
+        let input = "```json\n[{\"Plan\": {\"Node Type\": \"Seq Scan\", \"Relation Name\": \"orders\", \"Alias\": \"orders\"}}]\n```\n\n```\nSeq Scan on orders  (cost=0.00..1.00 rows=1 width=4)\n```";
+        insta::assert_snapshot!(text(input), @r#"
+        ```
+        [{"Plan": {"Node Type": "Seq Scan", "Relation Name": "table_a", "Alias": "table_a"}}]
+        ```
+
+        ```
+        Seq Scan on table_a  (cost=0.00..1.00 rows=1 width=4)
+        ```
+        "#);
     }
 
     #[test]

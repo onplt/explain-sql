@@ -4,12 +4,13 @@
 
 mod common;
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use common::{corpus, fixtures, node_differences, plan_path, read, summary_differences};
 use explainsql_core::anonymize::{Options, anonymize};
+use explainsql_core::fingerprint::leaf_key;
 use explainsql_core::ir::Plan;
-use explainsql_core::{analyze, parse, parse_all};
+use explainsql_core::{analyze, diff, parse, parse_all};
 
 /// What a plan names: relations, aliases, indexes, CTEs, schemas, the
 /// columns of qualified references, constraints and string literals.
@@ -225,4 +226,89 @@ fn the_leak_check_finds_names() {
     let leaked = leaks(&parse(&input).unwrap(), &input);
     assert!(leaked.contains(&"orders".to_owned()), "{leaked:?}");
     assert!(leaked.contains(&"customer_id".to_owned()), "{leaked:?}");
+}
+
+/// What `diff` makes of two plans, leaving out the names it prints: the
+/// nodes it matches, the changes it tells and whether the shapes are the
+/// same.
+fn diff_outline(before: &Plan, after: &Plan) -> String {
+    let diff = diff::diff(before, after);
+    let changes: Vec<String> = diff
+        .changes
+        .iter()
+        .map(|change| format!("{:?} {:?} {:?}", change.kind, change.before, change.after))
+        .collect();
+    format!(
+        "matched {:?}\nchanges {:?}\nsame shape {}",
+        diff.matched,
+        changes,
+        diff.shapes.same()
+    )
+}
+
+/// The nodes the viewer folds together, as similar siblings would be.
+fn alike(plan: &Plan) -> BTreeSet<Vec<usize>> {
+    let mut groups: BTreeMap<String, Vec<usize>> = BTreeMap::new();
+    for node in &plan.nodes {
+        if let Some(key) = leaf_key(plan, node.id) {
+            groups.entry(key).or_default().push(node.id.index());
+        }
+    }
+    groups.into_values().collect()
+}
+
+/// Names that differ only in their numbers, as partitions do, stay alike,
+/// and other names stay apart: the plans of a scenario on two PostgreSQL
+/// versions, anonymized together, compare as the originals do, partitions
+/// renamed from one version to the next included; and each plan's nodes
+/// fold together as before.
+#[test]
+fn plans_compare_and_fold_as_before() {
+    let mut versions: BTreeMap<String, Vec<u32>> = BTreeMap::new();
+    for (major, scenario) in corpus() {
+        versions.entry(scenario).or_default().push(major);
+    }
+    let mut problems = Vec::new();
+    let mut compared = 0;
+    for (scenario, majors) in &versions {
+        for pair in majors.windows(2) {
+            for extension in ["json", "txt"] {
+                let label = format!(
+                    "{scenario}.{extension}, PostgreSQL {} and {}",
+                    pair[0], pair[1]
+                );
+                let input = format!(
+                    "{}\n\n{}",
+                    read(&plan_path(pair[0], scenario, extension)).trim_end(),
+                    read(&plan_path(pair[1], scenario, extension)).trim_end()
+                );
+                let originals = parse_all(&input).unwrap();
+                let anonymized =
+                    parse_all(&anonymize(&input, Options::default()).unwrap().text).unwrap();
+                let ([a, b], [x, y]) = (originals.as_slice(), anonymized.as_slice()) else {
+                    problems.push(format!("{label}: not read as two plans"));
+                    continue;
+                };
+                compared += 1;
+                let (before, after) = (diff_outline(a, b), diff_outline(x, y));
+                if before != after {
+                    problems.push(format!(
+                        "{label}:\n--- original\n{before}\n--- anonymized\n{after}"
+                    ));
+                }
+                for (original, plan) in [(a, x), (b, y)] {
+                    if alike(original) != alike(plan) {
+                        problems.push(format!("{label}: folds other nodes together"));
+                    }
+                }
+            }
+        }
+    }
+    assert!(compared > 600, "only {compared} pairs compared");
+    assert!(
+        problems.is_empty(),
+        "{} problems:\n{}",
+        problems.len(),
+        problems.join("\n")
+    );
 }

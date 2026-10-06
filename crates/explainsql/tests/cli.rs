@@ -742,11 +742,11 @@ fn anonymizes_a_plan() {
     );
     assert!(output.status.success(), "{output:?}");
     let plan = stdout(&output);
-    assert!(plan.starts_with("Seq Scan on public.table1"), "{plan}");
+    assert!(plan.starts_with("Seq Scan on public.table_a"), "{plan}");
     assert!(!plan.contains("orders"), "{plan}");
     let mapping: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&map).unwrap()).unwrap();
-    assert_eq!(mapping["tables"]["orders"], "table1");
+    assert_eq!(mapping["tables"]["orders"], "table_a");
 
     // The anonymized plan gets the same findings.
     let report = stdout(&run(&["--print"], Some(&plan)));
