@@ -4,7 +4,7 @@ members = ["crates/*", "xtask"]
 exclude = ["fuzz"]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 rust-version = "1.85"
 license = "MIT OR Apache-2.0"
@@ -12,9 +12,9 @@ repository = "https://github.com/onplt/explain-sql"
 homepage = "https://onplt.github.io/explain-sql/"
 
 [workspace.dependencies]
-explainsql-core = { path = "crates/explainsql-core", version = "0.1.0" }
-explainsql-db = { path = "crates/explainsql-db", version = "0.1.0" }
-explainsql-tui = { path = "crates/explainsql-tui", version = "0.1.0" }
+explainsql-core = { path = "crates/explainsql-core", version = "0.1.1" }
+explainsql-db = { path = "crates/explainsql-db", version = "0.1.1" }
+explainsql-tui = { path = "crates/explainsql-tui", version = "0.1.1" }
 clap = { version = "4.5", features = ["derive"] }
 insta = "1"
 # 0.30 needs Rust 1.86; the workspace supports 1.85.
