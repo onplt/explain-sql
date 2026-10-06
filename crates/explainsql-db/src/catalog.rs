@@ -3,6 +3,7 @@
 //! foreign keys it names, and the installed extensions.
 
 use explainsql_core::catalog::{Catalog, Column, ExistingIndex, ForeignKey, Table};
+use explainsql_core::requests::Reference;
 use tokio_postgres::Client;
 
 use crate::{Error, Safety, describe};
@@ -48,6 +49,67 @@ FROM pg_constraint c
 JOIN pg_class t ON t.oid = c.conrelid
 JOIN pg_namespace n ON n.oid = t.relnamespace
 WHERE c.contype = 'f' AND c.conname = ANY($1)";
+
+/// The foreign keys of a single column that start or end at a column.
+const REFERENCES: &str = "
+SELECT c.conname::text, f.relname::text, fa.attname::text, t.relname::text, ta.attname::text
+FROM pg_constraint c
+JOIN pg_class f ON f.oid = c.conrelid
+JOIN pg_class t ON t.oid = c.confrelid
+JOIN pg_attribute fa ON fa.attrelid = c.conrelid AND fa.attnum = c.conkey[1]
+JOIN pg_attribute ta ON ta.attrelid = c.confrelid AND ta.attnum = c.confkey[1]
+WHERE c.contype = 'f' AND cardinality(c.conkey) = 1
+  AND ((c.conrelid = to_regclass($1) AND fa.attname = $2)
+       OR (c.confrelid = to_regclass($1) AND ta.attname = $2))
+ORDER BY c.conname";
+
+/// The foreign keys of a single column from or to `table.column`.
+pub(crate) async fn references(
+    client: &Client,
+    schema: Option<&str>,
+    table: &str,
+    column: &str,
+    safety: Safety,
+) -> Result<Vec<Reference>, Error> {
+    let server = |error: tokio_postgres::Error| Error::Server(describe(&error));
+    let name = match schema {
+        Some(schema) => format!("{}.{}", quote(schema), quote(table)),
+        None => quote(table),
+    };
+    client
+        .batch_execute("BEGIN READ ONLY")
+        .await
+        .map_err(server)?;
+    let result = async {
+        client
+            .batch_execute(&format!(
+                "SET LOCAL statement_timeout = {}",
+                safety.timeout.as_millis().max(1)
+            ))
+            .await?;
+        client.query(REFERENCES, &[&name, &column]).await
+    }
+    .await;
+    let rollback = client.batch_execute("ROLLBACK").await;
+    let rows = result.map_err(server)?;
+    rollback.map_err(server)?;
+    Ok(rows
+        .iter()
+        .map(|row| Reference {
+            constraint: row.get(0),
+            from_table: row.get(1),
+            from_column: row.get(2),
+            to_table: row.get(3),
+            to_column: row.get(4),
+            children: false,
+        })
+        .collect())
+}
+
+/// An identifier in double quotes, for `to_regclass`.
+fn quote(name: &str) -> String {
+    format!("\"{}\"", name.replace('"', "\"\""))
+}
 
 pub(crate) async fn read(
     client: &Client,

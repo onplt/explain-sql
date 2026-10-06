@@ -735,3 +735,30 @@ fn postgres_database(url: &str) -> Option<String> {
         .contains("://")
         .then(|| format!("{server}/postgres?{query}"))
 }
+
+/// The foreign keys of a column, both ways, and the time of a round trip.
+#[test]
+fn reads_foreign_keys_and_round_trips() {
+    let Some(db) = database() else {
+        return;
+    };
+    let keys = db.references(None, "order_items", "order_id").unwrap();
+    assert_eq!(keys.len(), 1);
+    assert_eq!(keys[0].constraint, "order_items_order_id_fkey");
+    assert_eq!(
+        (keys[0].to_table.as_str(), keys[0].to_column.as_str()),
+        ("orders", "id")
+    );
+    // The referenced side: every foreign key that ends at orders.id.
+    let keys = db.references(Some("public"), "orders", "id").unwrap();
+    assert!(
+        keys.iter()
+            .any(|key| key.from_table == "order_items" && key.from_column == "order_id")
+    );
+    assert!(
+        db.references(None, "no_such_table", "id")
+            .unwrap()
+            .is_empty()
+    );
+    assert!(db.round_trip(3).unwrap() < Duration::from_secs(5));
+}
