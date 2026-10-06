@@ -3,7 +3,7 @@
 //!
 //! `cargo xtask demo --record` records the session. It builds the release
 //! binary and runs it in a tmux pane against the database named by
-//! `EXPLAINSQL_TEST_DATABASE_URL` (the fixture schema, with HypoPG). It
+//! `EXPLAINSQL_TEST_DATABASE_URL` (the fixture schema, without HypoPG). It
 //! types each step below, waits for the result, and saves the screen as
 //! tmux shows it, colors included, to `xtask/demo/recording.json`.
 //!
@@ -68,16 +68,18 @@ struct Step {
 
 /// The session. `{postgres}` in a caption is the server's version. The
 /// texts waited for follow `xtask/demo/slow.sql` and the viewer's screens.
-const STEPS: [Step; 7] = [
+/// The database must not have HypoPG: `t` then builds the index in a
+/// transaction that is rolled back and measures the query with it.
+const STEPS: [Step; 9] = [
     Step {
         input: &[
             Input::Type("cat slow.sql"),
             Input::Press("Enter"),
             // The end of the file, then the prompt.
             Input::Wait("GROUP BY c.name;\n$"),
-            Input::Type("explainsql -d \"$DATABASE_URL\" -f slow.sql"),
+            Input::Type("explainsql -d \"$DATABASE_URL\" -f slow.sql --allow-ddl"),
         ],
-        until: "-f slow.sql",
+        until: "--allow-ddl",
         caption: "The query: a customer's order summary",
         seconds: 4.0,
     },
@@ -85,7 +87,7 @@ const STEPS: [Step; 7] = [
         input: &[Input::Press("Enter")],
         until: "measured with EXPLAIN ANALYZE",
         caption: "Enter  EXPLAIN ANALYZE on PostgreSQL {postgres}, rolled back",
-        seconds: 3.5,
+        seconds: 4.0,
     },
     Step {
         input: &[Input::Type("1")],
@@ -107,15 +109,27 @@ const STEPS: [Step; 7] = [
     },
     Step {
         input: &[Input::Type("t")],
+        until: "y/n",
+        caption: "t  test it: build it in a transaction that is rolled back",
+        seconds: 3.0,
+    },
+    Step {
+        input: &[Input::Type("y")],
         until: "Before → after",
-        caption: "t  test it with a hypothetical index (HypoPG)",
+        caption: "y  measured before and after, then rolled back",
+        seconds: 5.0,
+    },
+    Step {
+        input: &[Input::Type("L")],
+        until: "Locks the statement takes",
+        caption: "L  the locks the statement takes, and what would wait for them",
         seconds: 4.5,
     },
     Step {
-        input: &[Input::Type("?")],
+        input: &[Input::Press("Escape"), Input::Type("?")],
         until: "Any key closes this help",
         caption: "?  all the keys",
-        seconds: 3.0,
+        seconds: 3.5,
     },
 ];
 
@@ -167,7 +181,7 @@ pub fn demo(option: Option<&str>) -> Result<(), String> {
 /// returns the screens.
 fn record(root: &Path) -> Result<Value, String> {
     let url = env::var("EXPLAINSQL_TEST_DATABASE_URL").map_err(|_| {
-        "recording needs EXPLAINSQL_TEST_DATABASE_URL: a database with the fixture schema and HypoPG"
+        "recording needs EXPLAINSQL_TEST_DATABASE_URL: a database with the fixture schema, without HypoPG"
             .to_owned()
     })?;
     run(Command::new("tmux").arg("-V")).map_err(|e| format!("recording needs tmux: {e}"))?;
@@ -190,6 +204,21 @@ fn record(root: &Path) -> Result<Value, String> {
     let postgres = run(Command::new("psql").args([url.as_str(), "-XAtc", "SHOW server_version"]))
         .ok()
         .and_then(|version| version.split_whitespace().next().map(str::to_owned));
+
+    // With HypoPG, `t` tests the index without building it and asks
+    // nothing, and the steps below would wait for a question.
+    let hypopg = run(Command::new("psql").args([
+        url.as_str(),
+        "-XAtc",
+        "SELECT count(*) FROM pg_extension WHERE extname = 'hypopg'",
+    ]))
+    .unwrap_or_default();
+    if hypopg.trim() == "1" {
+        return Err(
+            "the demo builds the index in a rolled-back transaction: record it against a database without HypoPG (DROP EXTENSION hypopg)"
+                .to_owned(),
+        );
+    }
 
     let session = Session::start(root, &bin, &url)?;
     println!("recording");
@@ -658,7 +687,7 @@ fn svg(frames: &[(String, String, f64)], source: &str) -> String {
     let _ = write!(
         out,
         r#"<svg xmlns="http://www.w3.org/2000/svg" width="{width:.0}" height="{height:.0}" viewBox="0 0 {width:.0} {height:.0}" fill="{FOREGROUND}" font-family="ui-monospace, 'SFMono-Regular', Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="{FONT_SIZE}">
-<title>ExplainSQL on a slow query: the verdict, the slowest node, why the planner uses no index, and the suggested index tested with HypoPG</title>
+<title>ExplainSQL on a slow query: the verdict, the slowest node, why the planner uses no index, the suggested index measured in a rolled-back transaction, and the locks the statement takes</title>
 <desc>{}</desc>
 <style>
 .frame {{ opacity: 0; animation: show {total}s step-end infinite; }}

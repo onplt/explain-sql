@@ -2,9 +2,27 @@
 
 [Introduction](index.md)
 
+- [Getting started](getting-started.md)
+
 # User guide
 
-- [Install and use](guide.md)
+- [Overview](guide.md)
+  - [The viewer](guide/viewer.md)
+  - [As psql's pager](guide/pager.md)
+  - [Reports and output](guide/reports.md)
+  - [Connected mode](guide/connected.md)
+  - [Ask the planner why](guide/why-not.md)
+  - [Statements with parameters](guide/parameters.md)
+  - [What a statement locks](guide/locks.md)
+  - [What a write costs](guide/writes.md)
+  - [The costliest statements](guide/top.md)
+  - [Plan changes in server logs](guide/logs.md)
+  - [N+1 loops in requests](guide/requests.md)
+  - [Compare two plans](guide/diff.md)
+  - [Check plans in CI](guide/ci.md)
+  - [Share a plan](guide/anonymize.md)
+- [Command-line reference](reference.md)
+- [Troubleshooting](troubleshooting.md)
 
 # Rules
 
@@ -23,8 +41,9 @@
   - [ES012: JIT overhead dominates](rules/ES012.md)
   - [ES013: Planner settings force the plan](rules/ES013.md)
 
-# Design
+# Design and development
 
 - [Vision](VISION.md)
 - [Architecture](ARCHITECTURE.md)
 - [Roadmap](ROADMAP.md)
+- [Contributing](contributing.md)

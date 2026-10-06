@@ -44,6 +44,14 @@ All notable changes to ExplainSQL. The format follows
   `--prove --allow-ddl`, the statement runs again with those indexes dropped
   in a transaction that is rolled back. See the guide.
 
+### Changed
+
+- The documentation is rewritten and reorganized: a getting-started page, a
+  guide chapter for each feature, a command-line reference, troubleshooting
+  and a contributing guide. The README's demo is recorded again on the
+  current viewer, with the suggested index measured in a rolled-back
+  transaction and the locks the statement takes.
+
 ## [0.2.0] - 2026-10-06
 
 ### Added
