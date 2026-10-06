@@ -313,6 +313,413 @@ fn asking_why_needs_a_database() {
     assert!(!output.status.success());
     assert!(
         String::from_utf8_lossy(&output.stderr)
-            .contains("--why-not and --measure ask the database")
+            .contains("--why-not, --params and --measure ask the database")
     );
+}
+
+/// Statements with parameters, against the database named by
+/// `EXPLAINSQL_TEST_DATABASE_URL`; skipped without it.
+#[test]
+fn connected_mode_tries_the_values_of_parameters() {
+    let Ok(url) = std::env::var("EXPLAINSQL_TEST_DATABASE_URL") else {
+        eprintln!("EXPLAINSQL_TEST_DATABASE_URL is not set; skipping");
+        return;
+    };
+    let json = |args: &[&str]| -> serde_json::Value {
+        let mut all = vec!["-d", url.as_str(), "--format", "json"];
+        all.extend_from_slice(args);
+        let output = run(&all, None);
+        assert!(output.status.success(), "{output:?}");
+        serde_json::from_str(&stdout(&output)).unwrap()
+    };
+
+    // A customer's latest orders, as a Java application sends them: the
+    // generic plan walks the index of dates and filters, which suits the
+    // LIMIT it cannot see but not a customer with few orders.
+    let latest = "SELECT * FROM orders WHERE customer_id = ? ORDER BY created_at DESC LIMIT ?";
+    let report = json(&["-c", latest, "--params", "--measure"]);
+    let parameters = &report["parameters"];
+    assert_eq!(parameters["verdict"], "sensitive", "{parameters}");
+    assert_eq!(parameters["converted"], true);
+    assert_eq!(
+        parameters["parameters"][0]["column"]["column"],
+        "customer_id"
+    );
+    assert_eq!(parameters["parameters"][1]["clause"], "limit");
+    let worst = parameters["rows"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["measured"]["change"] == "worse")
+        .unwrap_or_else(|| panic!("{parameters}"));
+    assert_eq!(worst["generic"], false);
+    assert!(
+        worst["measured"]["after"]["pages"].as_u64().unwrap()
+            > 10 * worst["measured"]["before"]["pages"].as_u64().unwrap(),
+        "{worst}"
+    );
+    assert!(
+        parameters["advice"][0]
+            .as_str()
+            .unwrap()
+            .contains("force_custom_plan"),
+        "{parameters}"
+    );
+    // The plan shown is the generic plan, measured with those values, and
+    // its advice is the index that serves both.
+    assert!(
+        parameters["shown"]
+            .as_str()
+            .unwrap()
+            .contains("the values it does worst with")
+    );
+    assert!(report["plan"]["summary"]["execution_time"].is_number());
+    assert!(
+        report["advice"][0]["ddl"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("(customer_id, created_at)"),
+        "{}",
+        report["advice"]
+    );
+
+    // No index on status: every value gets the same plan.
+    let report = json(&["-c", "SELECT * FROM orders WHERE status = $1", "--params"]);
+    assert_eq!(report["parameters"]["verdict"], "insensitive");
+    assert_eq!(report["parameters"]["rows"][0]["value"], "delivered");
+
+    // Values given: those alone. A value the statistics cannot give needs
+    // one.
+    let expression = "SELECT * FROM orders WHERE lower(note) = $1";
+    let report = json(&["-c", expression, "--params"]);
+    assert_eq!(report["parameters"]["verdict"], "unknown");
+    let report = json(&["-c", expression, "--bind", "1=abc"]);
+    let rows = report["parameters"]["rows"].as_array().unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0]["values"][0], "abc");
+
+    // A statement with parameters needs --params, and --params needs one.
+    let output = run(
+        &[
+            "-d",
+            &url,
+            "-c",
+            "SELECT * FROM orders WHERE id = $1",
+            "--print",
+        ],
+        None,
+    );
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("--params tries values for it"),
+        "{output:?}"
+    );
+    let output = run(&["-d", &url, "-c", "SELECT 1", "--params", "--print"], None);
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("takes no parameters"));
+}
+
+#[test]
+fn compares_two_plans() {
+    let before = fixture("pg/12/anti_join.json");
+    let after = fixture("pg/18/anti_join.txt");
+    let (before, after) = (before.to_str().unwrap(), after.to_str().unwrap());
+    let output = run(&["diff", before, after], None);
+    assert!(output.status.success(), "{output:?}");
+    let text = stdout(&output);
+    assert!(text.starts_with("Worse: pages 2,478 → 2,623"), "{text}");
+    assert!(text.contains(
+        "JOIN      Merge Anti Join of customers c and orders o became Hash Right Anti Join"
+    ));
+    assert!(text.contains("The plan after"));
+    assert!(text.contains("Only in the plan before: Sort."));
+    assert!(!text.contains('\x1b'));
+
+    // For a pull request, or for another program.
+    let markdown = stdout(&run(&["diff", before, after, "--format", "md"], None));
+    assert!(
+        markdown.contains("- **Join:** Merge Anti Join"),
+        "{markdown}"
+    );
+    let json: serde_json::Value = serde_json::from_str(&stdout(&run(
+        &["diff", before, after, "--format", "json"],
+        None,
+    )))
+    .unwrap();
+    assert_eq!(json["changes"][0]["kind"], "join");
+    assert_eq!(json["labels"]["after"][0], "Hash Right Anti Join");
+    assert_ne!(json["shapes"]["before"], json["shapes"]["after"]);
+}
+
+#[test]
+fn compares_two_plans_in_one_input() {
+    let first = std::fs::read_to_string(fixture("pg/12/anti_join.txt")).unwrap();
+    let second = std::fs::read_to_string(fixture("pg/18/anti_join.txt")).unwrap();
+    let pasted = format!("Before:\n{first}\n\nAfter:\n{second}");
+    let output = run(&["diff", "-"], Some(&pasted));
+    assert!(output.status.success(), "{output:?}");
+    assert!(stdout(&output).contains("became Hash Right Anti Join"));
+    // The labels were left out, and said to be.
+    let errors = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        errors.contains("the plan after: ignored 1 line(s) before the plan"),
+        "{errors}"
+    );
+
+    // One plan is not enough.
+    let output = run(&["diff", "-"], Some(&first));
+    assert_eq!(output.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("the input holds one plan"));
+    // Nor is text that is not a plan.
+    let path = fixture("pg/12/anti_join.txt");
+    let output = run(&["diff", "-", path.to_str().unwrap()], Some("hello"));
+    assert_eq!(output.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("the plan before"));
+    // Usage errors are told apart.
+    assert_eq!(run(&["diff"], None).status.code(), Some(2));
+}
+
+const INDEXED: &str = "\
+Index Scan using orders_customer_id_idx on orders o  (cost=0.42..44.50 rows=10 width=20) (actual time=0.020..0.051 rows=10 loops=1)
+  Index Cond: (customer_id = 4242)
+  Buffers: shared hit=13
+Execution Time: 0.070 ms
+";
+
+const SCANNED: &str = "\
+Seq Scan on orders o  (cost=0.00..4917.00 rows=10 width=20) (actual time=1.053..11.865 rows=10 loops=1)
+  Filter: (customer_id = 4242)
+  Rows Removed by Filter: 199990
+  Buffers: shared hit=2031 read=386
+Execution Time: 11.899 ms
+";
+
+/// A directory of its own for a test.
+fn scratch(name: &str) -> PathBuf {
+    let dir = std::env::temp_dir().join(format!("explainsql-{name}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("plans")).unwrap();
+    dir
+}
+
+#[test]
+fn checks_plans_against_their_locked_plans() {
+    let dir = scratch("check");
+    let plans = dir.join("plans");
+    let lock = dir.join("explainsql.lock");
+    let (plans_arg, lock_arg) = (plans.to_str().unwrap(), lock.to_str().unwrap());
+    std::fs::write(plans.join("customer.txt"), INDEXED).unwrap();
+    let check = |extra: &[&str]| {
+        let mut args = vec!["check", plans_arg, "--lock", lock_arg, "--color", "never"];
+        args.extend_from_slice(extra);
+        run(&args, None)
+    };
+
+    // Nothing locked yet: new, and passing.
+    let output = check(&[]);
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    assert!(stdout(&output).starts_with("NEW   plans/customer.txt"));
+
+    // Locked, then the same plan passes.
+    assert_eq!(check(&["--update"]).status.code(), Some(0));
+    let locked = std::fs::read_to_string(&lock).unwrap();
+    assert!(locked.contains("\"plans/customer.txt\""), "{locked}");
+    let output = check(&[]);
+    assert_eq!(output.status.code(), Some(0));
+    assert!(stdout(&output).starts_with("PASS  plans/customer.txt"));
+
+    // The index is gone: worse by pages, which fails.
+    std::fs::write(plans.join("customer.txt"), SCANNED).unwrap();
+    let output = check(&[]);
+    assert_eq!(output.status.code(), Some(1), "{output:?}");
+    let text = stdout(&output);
+    assert!(text.starts_with("FAIL  plans/customer.txt"), "{text}");
+    assert!(
+        text.contains("Worse than the locked plan: pages 13 → 2,417 (186× more)"),
+        "{text}"
+    );
+    assert!(text.ends_with("1 plan: 1 failed.\n"), "{text}");
+
+    // For code scanning and for a pull request.
+    let sarif: serde_json::Value =
+        serde_json::from_str(&stdout(&check(&["--format", "sarif"]))).unwrap();
+    assert_eq!(sarif["version"], "2.1.0");
+    let results = sarif["runs"][0]["results"].as_array().unwrap();
+    assert!(results.iter().any(|result| result["ruleId"] == "plan-worse"
+        && result["level"] == "error"
+        && result["locations"][0]["physicalLocation"]["artifactLocation"]["uri"]
+            == "plans/customer.txt"));
+    // ES001 is there, but does not fail the plan without --fail-on.
+    assert!(
+        results
+            .iter()
+            .any(|result| result["ruleId"] == "ES001" && result["level"] == "warning")
+    );
+    let markdown = stdout(&check(&["--format", "md"]));
+    assert!(markdown.contains("**The plan failed.**"), "{markdown}");
+    assert!(
+        markdown.contains("| `plans/customer.txt` | **Failed** |"),
+        "{markdown}"
+    );
+    let json: serde_json::Value =
+        serde_json::from_str(&stdout(&check(&["--format", "json"]))).unwrap();
+    assert_eq!(json["passed"], false);
+    assert_eq!(json["plans"][0]["status"], "failed");
+
+    // Findings fail a plan when asked to, even a new one.
+    std::fs::remove_file(&lock).unwrap();
+    assert_eq!(check(&[]).status.code(), Some(0));
+    let output = check(&["--fail-on", "high"]);
+    assert_eq!(output.status.code(), Some(1));
+    assert!(stdout(&output).contains("ES001 Selective sequential scan"));
+
+    // Errors are not failures.
+    std::fs::write(&lock, "not a lock").unwrap();
+    assert_eq!(check(&[]).status.code(), Some(2));
+    std::fs::remove_file(&lock).unwrap();
+    std::fs::write(plans.join("notes.txt"), "not a plan").unwrap();
+    let output = check(&[]);
+    assert_eq!(output.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("plans/notes.txt"));
+    assert_eq!(run(&["check", "/nonexistent"], None).status.code(), Some(2));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn fails_on_findings_when_asked() {
+    let scanned = run(&["--print", "--fail-on", "high"], Some(SCANNED));
+    assert_eq!(scanned.status.code(), Some(1));
+    assert!(stdout(&scanned).contains("ES001"));
+    assert_eq!(
+        run(&["--print", "--fail-on", "high"], Some(INDEXED))
+            .status
+            .code(),
+        Some(0)
+    );
+    assert_eq!(run(&["--print"], Some(SCANNED)).status.code(), Some(0));
+}
+
+#[test]
+fn checks_statements_against_a_database() {
+    let Ok(url) = std::env::var("EXPLAINSQL_TEST_DATABASE_URL") else {
+        eprintln!("EXPLAINSQL_TEST_DATABASE_URL is not set; skipping");
+        return;
+    };
+    let dir = scratch("check-db");
+    std::fs::write(
+        dir.join("plans/customer.sql"),
+        "SELECT id, amount FROM orders WHERE customer_id = 4242",
+    )
+    .unwrap();
+    let lock = dir.join("explainsql.lock");
+    let check = |extra: &[&str]| {
+        let mut args = vec![
+            "check",
+            "-d",
+            &url,
+            dir.to_str().unwrap(),
+            "--lock",
+            lock.to_str().unwrap(),
+            "--color",
+            "never",
+        ];
+        args.extend_from_slice(extra);
+        run(&args, None)
+    };
+    assert_eq!(check(&["--update"]).status.code(), Some(0));
+    let output = check(&[]);
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    assert!(stdout(&output).starts_with("PASS  plans/customer.sql"));
+    // The scan of orders is a finding: it fails when asked to, and the
+    // suggested index is tested.
+    let output = check(&["--fail-on", "high", "--prove"]);
+    assert_eq!(output.status.code(), Some(1), "{output:?}");
+    let text = stdout(&output);
+    assert!(
+        text.contains("CREATE INDEX CONCURRENTLY ON public.orders (customer_id);"),
+        "{text}"
+    );
+    assert!(text.contains("HypoPG"), "{text}");
+    // A statement with parameters cannot run as it is: an error, which
+    // says so, and the other statements are still checked.
+    std::fs::write(
+        dir.join("plans/by_status.sql"),
+        "SELECT id FROM orders WHERE status = $1",
+    )
+    .unwrap();
+    let output = check(&[]);
+    assert_eq!(output.status.code(), Some(2), "{output:?}");
+    assert!(stdout(&output).contains("PASS  plans/customer.sql"));
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("takes parameters ($1)"),
+        "{output:?}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The plans of server logs over time, from the logs captured in the three
+/// formats PostgreSQL writes.
+#[test]
+fn tells_when_plans_in_logs_changed() {
+    let log = fixture("logs/postgresql.log");
+    let json = |args: &[&str]| -> serde_json::Value {
+        let mut all = vec!["logs", log.to_str().unwrap(), "--format", "json"];
+        all.extend_from_slice(args);
+        let output = run(&all, None);
+        assert!(output.status.success(), "{output:?}");
+        serde_json::from_str(&stdout(&output)).unwrap()
+    };
+    let report = json(&[]);
+    let statements = report["statements"].as_array().unwrap();
+    assert_eq!(statements.len(), 3);
+    assert_eq!(statements[0]["prepared"], "latest");
+    assert_eq!(statements[0]["changes"][0]["generic"], true);
+    assert_eq!(statements[2]["pattern"], "stable");
+
+    // Only the statements whose plan changed, or one of them by its tags.
+    assert_eq!(
+        json(&["--changed"])["statements"].as_array().unwrap().len(),
+        2
+    );
+    let report = json(&["--query", "OrderController"]);
+    assert_eq!(report["statements"].as_array().unwrap().len(), 1);
+    assert_eq!(report["statements"][0]["runs"], 12);
+    // Entries from a time on: the second run of the session.
+    let report = json(&["--since", "2026-10-06 06:35:13.900"]);
+    assert_eq!(report["entries"], 16);
+
+    // The text report leads with the costliest change, and with --trace,
+    // says which plan the trace ran.
+    let output = run(
+        &[
+            "logs",
+            log.to_str().unwrap(),
+            "--trace",
+            "4bf92f3577b34da6a3ce929d0e0e4736",
+            "--color",
+            "never",
+        ],
+        None,
+    );
+    assert!(output.status.success(), "{output:?}");
+    let text = stdout(&output);
+    assert!(
+        text.starts_with(
+            "Trace 4bf92f3577b34da6a3ce929d0e0e4736: SELECT id, status, amount FROM orders"
+        ),
+        "{text}"
+    );
+    assert!(text.contains("ran plan 1 of 2"), "{text}");
+
+    // A time it cannot read, and a file that is not a log.
+    let output = run(
+        &["logs", log.to_str().unwrap(), "--since", "yesterday"],
+        None,
+    );
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("give a time"));
+    let plan = fixture("pg/16/seq_scan_selective.txt");
+    let output = run(&["logs", plan.to_str().unwrap()], None);
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("no EXPLAIN plan found"));
 }

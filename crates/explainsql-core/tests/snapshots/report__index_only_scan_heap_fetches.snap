@@ -10,7 +10,7 @@ Planning 0.350 ms · Execution 1.31 ms · Buffers 2,060 pages, 100% from cache
 Share     Time              Node                                                      Rows  Estimate  Buffers
   93%  1.22 ms  █████████▍  Index Only Scan using page_views_page_idx on page_views  2,000     2,158    2,060
 
-Findings (1)
+Findings (2)
 
   HIGH    ES007 Index-only scan with many heap fetches
           Index Only Scan using page_views_page_idx on page_views visited the table 2,200 times for
@@ -20,6 +20,15 @@ Findings (1)
           Time in the node: 1.22 ms (93% of the runtime)
           → VACUUM page_views to update its visibility map, and check that autovacuum keeps up with
           how often the table changes.
+
+  MEDIUM  ES013 Planner settings force the plan
+          The plan was made with enable_bitmapscan = off, which keeps the planner from some of its
+          usual choices.
+          Settings: enable_bitmapscan = off
+          → Applications that plan with the defaults may get another plan: reset it (RESET
+          enable_bitmapscan, or a new session) and run EXPLAIN again. If a role or a database sets
+          it (ALTER ROLE or ALTER DATABASE … SET), every session plans this way; to test a plan, SET
+          LOCAL keeps a setting to one transaction.
 
 Share and Time: time spent in each node itself, wall-clock. Rows: actual rows per loop, ×loops when
 it ran more than once. ▲/▼: actual rows above or below the estimate by 10× or more. Buffers: pages

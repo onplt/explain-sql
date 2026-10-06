@@ -8,8 +8,9 @@
 
 use std::time::Duration;
 
+use explainsql_core::ir::Plan;
 use explainsql_core::scenario::Setting;
-use explainsql_db::{Database, Error, Mode, Safety, Settings, Writes};
+use explainsql_db::{Cache, Database, Error, Mode, Safety, Settings, Writes};
 
 fn database() -> Option<Database> {
     let Ok(url) = std::env::var("EXPLAINSQL_TEST_DATABASE_URL") else {
@@ -408,4 +409,168 @@ fn plans_under_settings_only_inside_the_transaction() {
         Err(Error::NeedsAllowDml(_))
     ));
     assert_eq!(count(&db, "audit_log"), 5000.0);
+}
+
+/// Every condition of a plan, in one string.
+fn conditions(plan: &Plan) -> String {
+    plan.nodes
+        .iter()
+        .flat_map(|node| {
+            node.predicates
+                .iter()
+                .map(|predicate| predicate.text.clone())
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+#[test]
+fn plans_prepared_statements_as_applications_run_them() {
+    let Some(db) = database() else { return };
+    let parse = |json: String| explainsql_core::parse(&json).unwrap();
+    let safety = Safety::default();
+    let sql = "SELECT * FROM orders WHERE customer_id = $1 ORDER BY created_at DESC LIMIT $2";
+    assert_eq!(
+        db.parameter_types(sql, safety).unwrap(),
+        ["integer", "bigint"]
+    );
+    let values = [Some("4242".to_owned()), Some("10".to_owned())];
+    // The generic plan keeps the parameters, a custom plan has the values.
+    let generic = parse(
+        db.explain_prepared(sql, Cache::Generic, &values, &[], Mode::Estimate, safety)
+            .unwrap(),
+    );
+    assert!(
+        conditions(&generic).contains("$1"),
+        "{}",
+        conditions(&generic)
+    );
+    let custom = parse(
+        db.explain_prepared(sql, Cache::Custom, &values, &[], Mode::Analyze, safety)
+            .unwrap(),
+    );
+    assert!(
+        conditions(&custom).contains("4242"),
+        "{}",
+        conditions(&custom)
+    );
+    assert!(custom.root().actuals.is_some());
+    let runs = db
+        .measure_prepared(sql, Cache::Generic, &values, 2, safety)
+        .unwrap();
+    assert_eq!(runs.len(), 2);
+    assert!(parse(runs[1].clone()).root().actuals.is_some());
+
+    // Values travel as literals in dollar quotes, whatever they hold.
+    let tricky = "it's $v$ $$ \\ ;DROP TABLE orders";
+    let plan = parse(
+        db.explain_prepared(
+            "SELECT * FROM orders WHERE note = $1",
+            Cache::Custom,
+            &[Some(tricky.to_owned())],
+            &[],
+            Mode::Analyze,
+            safety,
+        )
+        .unwrap(),
+    );
+    assert!(
+        conditions(&plan).contains("'it''s $v$ $$ \\ ;DROP TABLE orders'"),
+        "{}",
+        conditions(&plan)
+    );
+    // One statement only.
+    assert!(
+        db.explain_prepared(
+            "SELECT $1::int; DROP TABLE orders",
+            Cache::Custom,
+            &[Some("1".to_owned())],
+            &[],
+            Mode::Estimate,
+            safety,
+        )
+        .is_err()
+    );
+    // Writes need --allow-dml, and are rolled back.
+    let delete = "DELETE FROM audit_log WHERE id > $1";
+    assert!(matches!(
+        db.explain_prepared(
+            delete,
+            Cache::Generic,
+            &[Some("0".to_owned())],
+            &[],
+            Mode::Analyze,
+            safety
+        ),
+        Err(Error::NeedsAllowDml(_))
+    ));
+    db.explain_prepared(
+        delete,
+        Cache::Generic,
+        &[Some("0".to_owned())],
+        &[],
+        Mode::Analyze,
+        allow_dml(),
+    )
+    .unwrap();
+    assert_eq!(count(&db, "audit_log"), 5000.0);
+    // Nothing stays prepared, whatever happened.
+    let left = parse(
+        db.explain(
+            "SELECT * FROM pg_prepared_statements WHERE name LIKE 'explainsql%'",
+            Mode::Analyze,
+            safety,
+        )
+        .unwrap(),
+    );
+    assert_eq!(left.root().actuals.unwrap().rows, 0.0);
+
+    // Under planner settings: without partition pruning, the generic plan
+    // shows every partition, whatever the values.
+    let events = "SELECT * FROM events WHERE created_at >= $1 AND created_at < $2";
+    let march = [Some("2025-03-01".to_owned()), Some("2025-03-02".to_owned())];
+    let scans = |plan: &Plan| {
+        plan.nodes
+            .iter()
+            .filter(|node| node.node_type == "Bitmap Heap Scan")
+            .count()
+    };
+    let pruned = parse(
+        db.explain_prepared(events, Cache::Generic, &march, &[], Mode::Estimate, safety)
+            .unwrap(),
+    );
+    assert_eq!(scans(&pruned), 1);
+    let all = parse(
+        db.explain_prepared(
+            events,
+            Cache::Generic,
+            &march,
+            &[Setting::new("enable_partition_pruning", "off")],
+            Mode::Estimate,
+            safety,
+        )
+        .unwrap(),
+    );
+    assert_eq!(scans(&all), 12);
+}
+
+#[test]
+fn reads_column_statistics() {
+    let Some(db) = database() else { return };
+    let status = db
+        .column_stats(Some("public"), "orders", "status")
+        .unwrap()
+        .unwrap();
+    assert_eq!(status.common_values[0], "delivered");
+    assert!((status.common_freqs[0] - 0.7).abs() < 0.05);
+    let created = db
+        .column_stats(None, "orders", "created_at")
+        .unwrap()
+        .unwrap();
+    assert_eq!(created.histogram.len(), 101);
+    assert!(created.histogram[0].starts_with("2024-01-01"));
+    assert_eq!(
+        db.column_stats(None, "orders", "no_such_column").unwrap(),
+        None
+    );
 }

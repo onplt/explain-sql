@@ -4,9 +4,12 @@ use std::io::{IsTerminal, Read, Write};
 use std::process::{Command, ExitCode, Stdio};
 use std::{env, fs, io};
 
+mod check;
 mod connected;
+mod logs;
+mod params;
 
-use clap::{Parser, ValueEnum};
+use clap::{Args, Parser, Subcommand, ValueEnum};
 use explainsql_core::Analysis;
 use explainsql_core::ir::{Node, Plan};
 use explainsql_core::report;
@@ -27,9 +30,24 @@ use explainsql_core::report;
 /// Connected mode runs a query itself: explainsql -d "$DATABASE_URL" -f
 /// slow.sql. It shows the estimated plan, then runs EXPLAIN ANALYZE in a
 /// transaction that is always rolled back, READ ONLY unless --allow-dml.
+/// With --params, a statement with parameters ($1, or ? as in JDBC) is
+/// prepared as an application runs it, and the plans its values get are
+/// compared with the generic plan.
+///
+/// explainsql diff BEFORE AFTER compares two plans of the same statement;
+/// explainsql check checks plans in continuous integration; explainsql logs
+/// tells when the plans in server logs changed.
 #[derive(Parser)]
-#[command(name = "explainsql", version)]
+#[command(
+    name = "explainsql",
+    version,
+    args_conflicts_with_subcommands = true,
+    disable_help_subcommand = true
+)]
 struct Cli {
+    #[command(subcommand)]
+    task: Option<Task>,
+
     /// The plan file; standard input when missing or `-`.
     file: Option<String>,
 
@@ -105,9 +123,29 @@ struct Cli {
     #[arg(long, value_name = "TABLE", num_args = 0..=1, default_missing_value = "")]
     why_not: Option<String>,
 
+    /// Connected mode: the statement takes parameters ($1, or ? as in
+    /// JDBC). Prepare it as an application does, try values from the
+    /// columns' statistics and common LIMIT and OFFSET row counts, and
+    /// compare the plan each gets with the generic plan, which PostgreSQL
+    /// may switch to after five executions. Prints a report.
+    #[arg(long, conflicts_with_all = ["why_not", "prove"])]
+    params: bool,
+
+    /// Connected mode: with --params, the value of a parameter, as 1=pending
+    /// for $1, tried instead of values from the statistics. Repeat it for
+    /// each parameter to give; implies --params.
+    #[arg(
+        long,
+        value_name = "N=VALUE",
+        value_parser = params::binding,
+        conflicts_with_all = ["why_not", "prove"]
+    )]
+    bind: Vec<(usize, String)>,
+
     /// Connected mode: measure the alternatives of --why-not (and of y in
-    /// the viewer) with EXPLAIN ANALYZE rather than only estimating them.
-    /// Every run is rolled back.
+    /// the viewer), and the plans of --params where they differ, with
+    /// EXPLAIN ANALYZE rather than only estimating them. Every run is
+    /// rolled back.
     #[arg(long)]
     measure: bool,
 
@@ -125,6 +163,185 @@ struct Cli {
     /// query.
     #[arg(long)]
     no_analyze: bool,
+
+    /// With a printed report: exit with 1 when a finding is at least this
+    /// severe, as a check in a script or CI.
+    #[arg(long, value_enum, value_name = "SEVERITY")]
+    fail_on: Option<Severity>,
+}
+
+#[derive(Subcommand)]
+enum Task {
+    /// Compare two plans of the same statement, node by node: which scans
+    /// read their table another way, which joins changed method or order,
+    /// which nodes came or went, and how the work of each node changed.
+    Diff(DiffArgs),
+    /// Check plans in continuous integration: each plan against its
+    /// findings and against the plan locked for it, with exit code 0 when
+    /// every plan passed, 1 when one failed and 2 on an error.
+    ///
+    /// Without -d, PATHS are plan files. With -d, they are SQL files, each
+    /// run in a transaction that is rolled back, READ ONLY unless
+    /// --allow-dml. Directories are searched for both. A plan fails when it
+    /// is worse than its locked plan by pages (by the estimated cost when
+    /// not run): time alone, for the same pages, does not fail it. --update
+    /// locks the plans as they are.
+    Check(CheckArgs),
+    /// Read auto_explain plans from server logs: which plans each statement
+    /// got, when its plan changed, what changed and what it cost, the
+    /// costliest change first.
+    ///
+    /// FILES are server logs with auto_explain entries, plans in JSON or
+    /// text: stderr with any log_line_prefix, csvlog or jsonlog; `-` reads
+    /// standard input. Statements are told apart by their query identifier
+    /// (compute_query_id, logged with auto_explain.log_verbose), or else by
+    /// their text without literal values. sqlcommenter tags in the text say
+    /// where in the application a statement comes from.
+    Logs(LogsArgs),
+}
+
+#[derive(Args)]
+struct LogsArgs {
+    /// Server logs with auto_explain entries; `-` for standard input.
+    #[arg(required = true, value_name = "FILES")]
+    files: Vec<String>,
+
+    /// Only entries from this time on, written as the log prints times
+    /// (2026-10-06 06:00), or 30m, 24h, 7d back from the last entry.
+    #[arg(long, value_name = "TIME")]
+    since: Option<String>,
+
+    /// Only entries up to this time.
+    #[arg(long, value_name = "TIME")]
+    until: Option<String>,
+
+    /// Only the statement with this query identifier, or whose text
+    /// contains this.
+    #[arg(long, value_name = "ID|TEXT")]
+    query: Option<String>,
+
+    /// Only statements that ran in this trace: the trace id of a
+    /// sqlcommenter traceparent tag.
+    #[arg(long, value_name = "TRACE_ID")]
+    trace: Option<String>,
+
+    /// Only statements whose plan changed.
+    #[arg(long)]
+    changed: bool,
+
+    /// Report format.
+    #[arg(long, value_enum, default_value_t = Format::Text)]
+    format: Format,
+
+    /// When to color the text report.
+    #[arg(long, value_enum, default_value_t = Color::Auto)]
+    color: Color,
+}
+
+#[derive(Args)]
+struct CheckArgs {
+    /// Plan files, or with -d, SQL files; directories are searched for
+    /// *.json and *.txt plans, or *.sql statements.
+    #[arg(required = true, value_name = "PATHS")]
+    paths: Vec<String>,
+
+    /// Run the SQL files against this database (as -d in connected mode).
+    #[arg(short = 'd', long, value_name = "DATABASE")]
+    dbname: Option<String>,
+
+    /// Also fail a plan with a finding at least this severe.
+    #[arg(long, value_enum, value_name = "SEVERITY")]
+    fail_on: Option<Severity>,
+
+    /// Also fail a plan whose shape changed from its locked plan, even when
+    /// it is not worse.
+    #[arg(long)]
+    strict: bool,
+
+    /// The file of locked plans.
+    #[arg(long, value_name = "FILE", default_value = "explainsql.lock")]
+    lock: String,
+
+    /// Lock the plans as they are now, rather than check them: to start,
+    /// or to accept a change. Other plans in the file stay as they are.
+    #[arg(long, conflicts_with_all = ["fail_on", "strict", "prove"])]
+    update: bool,
+
+    /// With -d: test the suggested indexes of each plan that failed with
+    /// HypoPG, and report before and after.
+    #[arg(long, requires = "dbname")]
+    prove: bool,
+
+    /// With -d: plan the statements without running them.
+    #[arg(long, requires = "dbname")]
+    no_analyze: bool,
+
+    /// With -d: also run statements that modify data or lock rows, in a
+    /// transaction that is rolled back.
+    #[arg(long, requires = "dbname")]
+    allow_dml: bool,
+
+    /// With -d: stop a statement after this many seconds.
+    #[arg(long, value_name = "SECONDS", default_value_t = 30)]
+    timeout: u64,
+
+    /// Report format: sarif for code scanning, md for a pull request
+    /// comment.
+    #[arg(long, value_enum, default_value_t = CheckFormat::Text)]
+    format: CheckFormat,
+
+    /// When to color the text report.
+    #[arg(long, value_enum, default_value_t = Color::Auto)]
+    color: Color,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum CheckFormat {
+    /// For a terminal.
+    Text,
+    /// Markdown, for a pull request comment.
+    Md,
+    /// JSON, for other programs.
+    Json,
+    /// SARIF 2.1.0, for code scanning (GitHub and others).
+    Sarif,
+}
+
+/// How severe a finding is.
+#[derive(Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum Severity {
+    Low,
+    Medium,
+    High,
+}
+
+impl From<Severity> for explainsql_core::rules::Severity {
+    fn from(severity: Severity) -> Self {
+        match severity {
+            Severity::Low => explainsql_core::rules::Severity::Low,
+            Severity::Medium => explainsql_core::rules::Severity::Medium,
+            Severity::High => explainsql_core::rules::Severity::High,
+        }
+    }
+}
+
+#[derive(Args)]
+struct DiffArgs {
+    /// The plan before: a file, or `-` for standard input.
+    before: String,
+
+    /// The plan after. Without it, BEFORE must hold both plans, one after
+    /// the other: pasted text, a JSON array, Markdown code fences or log
+    /// entries.
+    after: Option<String>,
+
+    /// Report format.
+    #[arg(long, value_enum, default_value_t = Format::Text)]
+    format: Format,
+
+    /// When to color the text report.
+    #[arg(long, value_enum, default_value_t = Color::Auto)]
+    color: Color,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, ValueEnum)]
@@ -165,6 +382,12 @@ const DEMO: &str = include_str!("../demo/plan.txt");
 
 fn main() -> ExitCode {
     let cli = Cli::parse();
+    match &cli.task {
+        Some(Task::Diff(args)) => return diff(args),
+        Some(Task::Check(args)) => return check::run(args),
+        Some(Task::Logs(args)) => return logs::run(args),
+        None => {}
+    }
     if cli.query_file.is_some() || cli.command.is_some() {
         return connected::run(&cli);
     }
@@ -172,9 +395,9 @@ fn main() -> ExitCode {
         eprintln!("error: give the query to run with -f FILE or -c SQL");
         return ExitCode::FAILURE;
     }
-    if cli.why_not.is_some() || cli.measure {
+    if cli.why_not.is_some() || cli.measure || cli.params || !cli.bind.is_empty() {
         eprintln!(
-            "error: --why-not and --measure ask the database: give the query to run with -d DATABASE and -f FILE or -c SQL"
+            "error: --why-not, --params and --measure ask the database: give the query to run with -d DATABASE and -f FILE or -c SQL"
         );
         return ExitCode::FAILURE;
     }
@@ -220,7 +443,82 @@ fn main() -> ExitCode {
             }
         }
     }
-    emit(&report_for(&cli, &plan, &analysis))
+    with_findings(&cli, &analysis, emit(&report_for(&cli, &plan, &analysis)))
+}
+
+/// The exit code after a printed report: 1 when `--fail-on` is given and a
+/// finding is at least that severe.
+pub(crate) fn with_findings(cli: &Cli, analysis: &Analysis, code: ExitCode) -> ExitCode {
+    let Some(threshold) = cli.fail_on else {
+        return code;
+    };
+    let threshold = explainsql_core::rules::Severity::from(threshold);
+    if code == ExitCode::SUCCESS
+        && analysis
+            .findings
+            .iter()
+            .any(|finding| finding.severity >= threshold)
+    {
+        ExitCode::FAILURE
+    } else {
+        code
+    }
+}
+
+/// `explainsql diff`: reads both plans and prints how they differ.
+fn diff(args: &DiffArgs) -> ExitCode {
+    let read =
+        |path: &str| read_input(Some(path), false).map_err(|error| format!("error: {error}"));
+    let plans = match &args.after {
+        Some(after) => read(&args.before).and_then(|before| {
+            let after = read(after)?;
+            let parse = |text: &str, which: &str| {
+                explainsql_core::parse(text).map_err(|error| format!("error: {which}: {error}"))
+            };
+            Ok((parse(&before, "the plan before")?, parse(&after, "the plan after")?))
+        }),
+        None => read(&args.before).and_then(|input| {
+            let plans = explainsql_core::parse_all(&input).map_err(|error| format!("error: {error}"))?;
+            if plans.len() > 2 {
+                eprintln!(
+                    "explainsql: the input holds {} plans; comparing the first two",
+                    plans.len()
+                );
+            }
+            let mut plans = plans.into_iter();
+            match (plans.next(), plans.next()) {
+                (Some(before), Some(after)) => Ok((before, after)),
+                _ => Err(
+                    "error: the input holds one plan; give the plan after as a second file, or both plans in one input"
+                        .to_owned(),
+                ),
+            }
+        }),
+    };
+    let (before, after) = match plans {
+        Ok(plans) => plans,
+        Err(message) => {
+            eprintln!("{message}");
+            return ExitCode::FAILURE;
+        }
+    };
+    for (which, plan) in [("before", &before), ("after", &after)] {
+        for warning in &plan.warnings {
+            match warning.line {
+                Some(line) => eprintln!(
+                    "explainsql: the plan {which}: line {line}: {}",
+                    warning.message
+                ),
+                None => eprintln!("explainsql: the plan {which}: {}", warning.message),
+            }
+        }
+    }
+    let diff = explainsql_core::diff::diff(&before, &after);
+    emit(&match args.format {
+        Format::Text => report::diff_text(&before, &after, &diff, use_color(args.color)),
+        Format::Md => report::diff_markdown(&before, &after, &diff),
+        Format::Json => report::diff_json(&before, &after, &diff),
+    })
 }
 
 fn viewer_options(cli: &Cli) -> explainsql_tui::Options {
@@ -236,20 +534,22 @@ fn viewer_options(cli: &Cli) -> explainsql_tui::Options {
 /// The report in the format asked for.
 fn report_for(cli: &Cli, plan: &Plan, analysis: &Analysis) -> String {
     match cli.format {
-        Format::Text => {
-            let color = match cli.color {
-                Color::Always => true,
-                Color::Never => false,
-                Color::Auto => {
-                    io::stdout().is_terminal()
-                        && env::var_os("NO_COLOR").is_none_or(|value| value.is_empty())
-                        && env::var("TERM").map_or(true, |term| term != "dumb")
-                }
-            };
-            report::text(plan, analysis, color)
-        }
+        Format::Text => report::text(plan, analysis, use_color(cli.color)),
         Format::Md => report::markdown(plan, analysis),
         Format::Json => report::json(plan, analysis),
+    }
+}
+
+/// Whether to color a text report.
+fn use_color(color: Color) -> bool {
+    match color {
+        Color::Always => true,
+        Color::Never => false,
+        Color::Auto => {
+            io::stdout().is_terminal()
+                && env::var_os("NO_COLOR").is_none_or(|value| value.is_empty())
+                && env::var("TERM").map_or(true, |term| term != "dumb")
+        }
     }
 }
 

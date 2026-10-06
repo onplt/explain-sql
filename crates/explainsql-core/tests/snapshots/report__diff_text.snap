@@ -1,0 +1,39 @@
+---
+source: crates/explainsql-core/tests/report.rs
+expression: "report::diff_text(&before, &after, &diff, false)"
+---
+Worse: pages 2,478 → 2,623, execution 20.1 ms → 32.2 ms (1.6× slower). Merge Anti Join of customers
+c and orders o became Hash Right Anti Join. 2 other changes in the plan.
+
+Plan shape 7775c88e44b9e329 → 31a65572e88ef23f: another plan.
+
+Changes (4)
+
+  JOIN      Merge Anti Join of customers c and orders o became Hash Right Anti Join
+            Time: 1.85 ms → 2.94 ms
+
+  ACCESS    Index Only Scan using customers_pkey on customers c became Seq Scan on customers c
+            Pages: 57 → 206
+            Time: 1.51 ms → 1.95 ms
+
+  REMOVED   Sort removed
+            Was above: Seq Scan on orders o
+
+  WORK      Seq Scan on orders o: time 15.3 ms → 23.8 ms (1.6× slower) for the same pages and disk
+            reads
+            Pages: 2,417 → 2,417
+            Time: 15.3 ms → 23.8 ms
+
+The plan after
+
+  Share     Time              Node                             Rows  Estimate  Buffers
+~  9.1%  2.94 ms  ▉           Hash Right Anti Join           19,800    18,047        0
+~   74%  23.8 ms  ███████▍    ├─ Seq Scan on orders o         2,000     1,953    2,417
++  8.4%  2.71 ms  ▉           └─ Hash                        20,000    20,000        0
+~  6.0%  1.95 ms  ▋              └─ Seq Scan on customers c  20,000    20,000      206
+
+Only in the plan before: Sort.
+
+~: a node that changed. +: a node only the plan after has. Share and Time: time spent in each node
+itself, wall-clock. Rows: actual rows per loop, ×loops when it ran more than once. ▲/▼: actual rows
+above or below the estimate by 10× or more. Buffers: pages each node read itself.

@@ -27,27 +27,33 @@ explain-sql/
 ├─ crates/
 │  ├─ explainsql-core/           # no I/O, no async, WASM-compatible
 │  │  ├─ src/ir.rs               # the plan IR
-│  │  ├─ src/pg/                 # PostgreSQL front end: normalize, json, text, raw, lower
+│  │  ├─ src/pg/                 # PostgreSQL front end: normalize, json, text, raw, lower; log entries
 │  │  ├─ src/metrics.rs          # inclusive and exclusive time and buffers, misestimates
 │  │  ├─ src/expr.rs             # reads the conditions printed in plans
 │  │  ├─ src/rules/              # one file per rule
 │  │  ├─ src/advisor/            # index candidates, rewrites, and why no index
 │  │  ├─ src/catalog.rs          # what the database says about the plan's tables
+│  │  ├─ src/check.rs            # the CI gate: findings, locked plans, explainsql.lock
 │  │  ├─ src/compare.rs          # before and after a change: pages first, then time
+│  │  ├─ src/memory.rs           # the work_mem a spill needs, and what it may take
+│  │  ├─ src/diff.rs             # two plans of a statement, node by node
 │  │  ├─ src/scenario.rs         # the planner settings explainsql may plan under
-│  │  ├─ src/fingerprint.rs      # the same scan or join in another plan of the statement
+│  │  ├─ src/fingerprint.rs      # the same scan or join in another plan; plan shapes
 │  │  ├─ src/counterfactual.rs   # why the planner chose its plan: questions and answers
+│  │  ├─ src/params.rs           # statements with parameters: values to try, generic and custom plans
+│  │  ├─ src/timeline.rs         # plans over time from server logs: statements, plan changes, tags
 │  │  ├─ src/analysis.rs         # metrics + findings + the one-sentence verdict
 │  │  ├─ src/report.rs           # static reports: text, Markdown, JSON
 │  │  └─ tests/                  # corpus, inputs, metrics, rules, report snapshots, robustness
-│  ├─ explainsql-db/             # tokio-postgres + rustls: safe executor, catalog reader, HypoPG/rollback prover
+│  ├─ explainsql-db/             # tokio-postgres + rustls: safe executor, prepared statements, catalog reader, HypoPG/rollback prover
 │  ├─ explainsql-tui/            # Ratatui app: state, views, keymap, theme
-│  └─ explainsql/                # binary: clap CLI, mode dispatch (tui | print | pager | json)
+│  └─ explainsql/                # binary: clap CLI, mode dispatch (tui | print | pager | json), diff, check, logs
 ├─ fixtures/
 │  ├─ schema.sql                 # deterministic dataset
 │  ├─ scenarios/<name>.sql       # one statement plus expectations (rules, advice) per scenario
 │  ├─ pg/{12..18}/               # generated plans: <name>.json, <name>.txt, manifest.json
-│  └─ inputs/                    # one plan in each form it arrives in: psql output, server logs
+│  ├─ inputs/                    # one plan in each form it arrives in: psql output, server logs
+│  └─ logs/                      # a session's auto_explain entries in stderr, csvlog and jsonlog
 ├─ fuzz/                         # cargo-fuzz target for the parsers (its own workspace; needs nightly)
 ├─ tools/cross-check/            # compares exclusive times with pev2 and explain.depesz.com
 ├─ docs/                         # the documentation site (mdBook): guide, rule catalog, design documents
@@ -115,6 +121,7 @@ input ─▶ normalize() ─┬─▶ json::parse() ─┬─▶ raw tree ─▶
 - **The text parser is hand-written**, with no regular expressions and no parser generator. An indentation stack follows the layout rules of PostgreSQL's `explain.c`: a node's properties start two columns to the right of its name, a child's `->` arrow sits in its parent's property column, and an `InitPlan`, `SubPlan` or `CTE` label sits in the property column with its node two columns further in. Lines after the tree that start in column 0 belong to the statement (`Planning:`, triggers, `JIT:`, `Settings:`, `Execution Time`, ...). Text plans do not print relationships; they are inferred from the parent's type and the child's position.
 - **`lower()`** builds the typed IR, absorbing version drift (below) and the differences that only reflect how a plan was printed.
 - **Never fail hard.** Unfamiliar properties are kept in `extra`. In text plans they also produce a warning, and a line that cannot be read at all is kept verbatim in `extra["Unparsed Lines"]`. A truncated JSON plan is closed after its last complete value, and a truncated text plan keeps the nodes before the cut. Input holding several plans, such as a before-and-after pair, yields the first one and a warning. Only input with no plan in it is rejected, with one exception: serde_json parses recursively, so JSON nested deeper than 512 levels (255 plan levels) is refused rather than risking the stack. Text plans have no depth limit.
+- **Several plans.** `parse()` reads the first plan of the input and warns of others; `parse_all()` reads them all, in order. `normalize_all()` keeps every Markdown fence, every auto_explain entry of a log (each with its query text) and every psql result; then the JSON parser reads each plan of an array and each JSON value that follows, and the text parser starts a new plan at each root line in column 0. Text between two plans that belongs to neither, such as `After:`, is left out with a warning on the plan it precedes. For an input with one plan, `parse_all()` returns what `parse()` does; the corpus and the input fixtures check it.
 - **Not supported:** the YAML and XML formats.
 
 ### Version and fork drift (examples)
@@ -150,6 +157,7 @@ Getting per-node numbers right is harder than it looks, and everything else is b
 - **Time outside the tree.** Triggers (including foreign-key checks, which can dominate a slow `DELETE`), `SERIALIZE` and executor startup are not part of any node. They are reported for the statement, along with an unattributed remainder: execution time minus the tree, triggers and serialization. JIT compilation falls partly inside node times and partly outside, so it is reported on its own.
 - **Misestimates** compare actual and estimated rows per loop, each counted as at least one row. A node that a `Limit`, a semi or anti join, a merge join or a subquery can stop early is marked, so that returning fewer rows than estimated is not mistaken for a bad estimate.
 - **Never-executed nodes** count as zero; with `TIMING OFF` or without `ANALYZE`, times are `None` and hotspots are ranked by buffers.
+- **I/O time** (`track_io_timing`) is subtracted like buffers: each node keeps what it read and wrote itself. For the statement, the root's figures, which include every node and every process, are split into reads of pages outside shared buffers, writes, and temporary files, and compared with the time of every process: the nodes' own CPU time, summed. Compared with the leader's wall-clock time alone, a parallel scan that waits for reads in three processes would take more than all of it.
 
 The results agree with pev2 and explain.depesz.com, compared node by node on 24 reference plans from PostgreSQL 13, 16 and 18 (see [tools/cross-check](https://github.com/onplt/explain-sql/blob/HEAD/tools/cross-check/README.md)). Every node is within 5%, except in the Memoize plan above. There, both tools clamp the negative rounding gap to zero, so their exclusive times add up to more than the statement took.
 
@@ -291,7 +299,7 @@ Related work: Microsoft's AutoAdmin "what-if" indexes (Chaudhuri and Narasayya),
   After a run, `r` or an edit with `e` compares the new measured plan with the previous one in the status line.
 
   A rolled-back `INSERT` or `UPDATE` still leaves dead rows until the next `VACUUM`, as any rolled-back transaction does; `--allow-dml`'s help says that effects outside the table data are not undone.
-- **Not yet:** a full tree diff between plans (v0.2), partial indexes from `pg_stats.most_common_freqs`, and `INCLUDE` columns.
+- **Not yet:** partial indexes from `pg_stats.most_common_freqs`, and `INCLUDE` columns.
 
 ## Why not: asking the planner again
 
@@ -311,6 +319,73 @@ A plan shows what the planner chose, not what it turned down. `counterfactual.rs
 - **Approximation.** `enable_*` settings hold for the whole statement, so other scans and joins can change too. The answer lists them and is marked approximate.
 - **Advice.** `Analysis::record` keeps the answers and puts them into the advice: an existing index that the planner did not use gets the reason found instead of the likely ones.
 - **Tests.** `counterfactual.rs` covers every answer on small plans. `crates/explainsql-db/tests/live.rs` checks that settings hold only inside their transaction and that others are refused; `crates/explainsql/tests/cli.rs` asks about a function of a column, a broad range and a sort that spills, against the fixture database.
+
+## Statements with parameters
+
+A statement with parameters has two kinds of plans. A custom plan is made for the values of one execution. The generic plan is made once for any value. After five custom plans, PostgreSQL switches to the generic plan when its estimated cost is below the custom plans' average cost, each with a charge for planning (`choose_custom_plan` in `plancache.c`), and then keeps it. `params.rs` finds how the plan depends on the values. It is pure: it maps the parameters, picks the values and judges the plans. `params.rs` in the binary runs the plans through `explainsql-db`'s `prepared.rs`.
+
+- **Placeholders.** `$n`, or JDBC's `?` turned into `$n` in order. Literals, quoted identifiers, dollar quotes and comments are skipped, and `??` becomes the `?` operator. PostgreSQL infers each parameter's type from a `PREPARE` (`pg_prepared_statements.parameter_types`).
+- **Running.** Each plan comes from its own `PREPARE` and `EXPLAIN EXECUTE`. They run inside a transaction that is rolled back, under `plan_cache_mode` (`force_generic_plan` or `force_custom_plan`, from PostgreSQL 12). The values travel as literals in dollar quotes whose tag they do not contain. The statement is deallocated after the rollback, which does not undo a `PREPARE`, whatever happened. Each run prepares the statement again, so that no cached generic plan carries over from earlier settings. The usual safety holds: the estimated plan first, `READ ONLY` unless `--allow-dml`, and a timeout.
+- **Mapping.** A parameter is compared with a column when a scan's index condition, recheck condition or filter does so: `col = $1`, a cast of the column, `$1 <= col` flipped, or `col = ANY (ARRAY[$1, $2])` for an `IN` list. A parameter after `LIMIT`, `OFFSET` or `FETCH FIRST` counts rows. Mapping uses the generic plan with NULL values and `enable_partition_pruning = off`. The generic plan prunes partitions when it starts, using the values it runs with, so with NULL values it would prune them all.
+- **Values.**
+  - For equality: two most common values, the least common of the most common values, and a histogram value outside them.
+  - For a range: the bounds at the 0th, 25th, 50th, 75th and 100th percentiles of the histogram.
+  - For a `LIMIT` or an `OFFSET`: fixed row counts.
+  - Statistics come from `pg_stats`, of the partitioned table (`pg_partition_root`, inherited) when the scanned table is a partition and the partitioned table has them.
+
+  Each parameter is tried with the others held at a typical value: the one that keeps the most rows, or a page of 10 rows for a `LIMIT`. `--bind` fixes a value. A parameter with no value stops the trials: holding it at NULL would make every custom plan a contradiction.
+- **Same plan.** A custom plan is the generic plan when their shapes match. Before comparing, an Append or Merge Append that the generic plan's run-time pruning left with one child is replaced by that child (`fingerprint::pruned_shape`). A custom plan that proves there is no row (a Result whose one-time filter is false, as a range that ends before it starts) is set aside.
+- **Judging.**
+  - Estimated: values that get another plan make the statement sensitive.
+  - Measured (`--measure`): the custom plan and the generic plan run with the same values. The generic plan hurts when it reads at least twice the pages, or, for as many pages, takes twice the time, or runs past the timeout while the custom plan finished. Another plan that does not hurt is harmless.
+  - The switch is predicted from the planner's costs. The generic plan is kept whatever the first five values when its cost is below every custom plan's, never when it is above them all, and otherwise depending on those values.
+  - Advice to plan each execution (`plan_cache_mode = force_custom_plan`, pgJDBC's `prepareThreshold=0`) comes only when PostgreSQL could switch.
+- **Report.** Measured, the report shows the generic plan run with the values it does worst with, so that the findings and the advice (often an index that serves every value) are about that plan. The parameters section comes first, in text, Markdown and JSON.
+- **Tests.** `params.rs` covers placeholders, clauses, mapping, values, holding, trials and every verdict on small plans. `fingerprint.rs` covers pruned shapes, and `tests/report.rs` snapshots the report. `crates/explainsql-db/tests/live.rs` checks generic and custom plans, values that try to escape their quotes, writes refused without `--allow-dml`, that nothing stays prepared, and partition pruning. `crates/explainsql/tests/cli.rs` runs a customer's latest orders, whose generic plan walks the index of dates, against the fixture database.
+
+## Plan diff
+
+`diff.rs` compares two plans of the same statement: from `explainsql diff`, and for the viewer's status line after a run in connected mode. It is pure, and takes plans from any source and in any format.
+
+- **Matching.** Nodes are matched by the work they do, in three passes, each node at most once:
+  1. Within the same scope (the main query, an InitPlan, a SubPlan, a CTE): a scan by what it reads and its alias, a join by the relations below it, any other node by its family (`Gather` and `Gather Merge` are one family, as are the two sorts, the two appends, and `Aggregate` with `Group`) and the relations below it. Relation names below a node have their numbers blanked out, so that an Append over pruned partitions still matches.
+  2. Scans by their relation and scope alone: partitions get their aliases in plan order, which pruning and versions change (`events_2025_06` in one plan, `events_6` in the other).
+  3. Anything left, wherever it is in the statement.
+
+  When several nodes share a key, they match in plan order.
+- **Shapes** (`fingerprint::shape`, `fingerprint::id`). One line per node: its type, join type, strategy, partial mode, parallelism, direction and relationship, the relation, index, CTE or function it reads with numbers blanked out, and the kinds of its conditions. Costs, rows, times, buffers, literal values and aliases are left out: the same plan has the same shape whatever the parameters, the data and the cache, in JSON or text (the corpus checks it on every scenario and version), and when PostgreSQL renames partitions. The id is the shape's 64-bit FNV-1a hash.
+- **Changes.** A matched pair of scans changed its access path when its type, index, direction or parallelism differ, or, for bitmap heap scans, the indexes of the bitmaps below; a pair of joins its method, join type or outer side; any other pair its operation (type, strategy, partial mode). Unmatched joins on both sides mean another join order. Unmatched nodes are added or removed, except those their parent's change explains: bitmap index scans, and the Hash of a matched hash join. The same access change on several partitions, and partitions read or no longer read, are told once. Measured plans also compare temporary files (spills), misestimates of 10× or more where they start (not where they carry up the tree), and the work of matched nodes: a change over 10% in pages or time that moves at least 5% of the statement. Time alone, for the same pages, is reported with the pages read from disk: the cache or the load may explain it.
+- **Order and verdict.** Structural changes come first, then the others, each by weight: the larger share of the statement's time, pages or estimated cost its nodes take in either plan. The verdict is `compare.rs`'s comparison of the totals followed by the first structural change, or "the plan is the same" when the shapes are.
+- **Reports.** Text, Markdown and JSON (`report::diff_*`): the verdict, the shapes, the changes with their evidence, and the plan after with changed nodes marked `~` and new ones `+`. The JSON report is the diff with the label of every node of both plans.
+- **Tests.** `diff.rs` covers each kind of change on small plans. `tests/diff.rs` checks that every corpus plan matches itself and its other format node for node, that scans find their relation in another version, that any two plans compare, and what changed from PostgreSQL 12 to 18 in three scenarios; `tests/report.rs` snapshots the text and Markdown reports, and `tests/cli.rs` runs `explainsql diff`.
+
+## Plans over time: server logs
+
+`explainsql logs` reads the plans auto_explain logged and tells, for each statement, which plans it got and when its plan changed. Reading is in `pg/log.rs`, the analysis in `timeline.rs`, both pure; the binary filters and prints.
+
+- **Entries** (`pg::parse_log`). One pass over a jsonlog, a csvlog or a stderr log finds every auto_explain message (`duration: … ms  plan:`) and what the log says about it:
+  - jsonlog and csvlog: the record's fields (time, process, user, database, application, query id);
+  - stderr: the line prefix, read for a time, a `[pid]`, `user@db` or `user=,db=,app=`;
+  - the duration, kept in thousandths of a millisecond so that entries compare exactly;
+  - auto_explain's `Query Text:` and, from PostgreSQL 16, its `Query Parameters:` line (a key of JSON plans).
+
+  The plan itself goes through the parsers like any other. An entry whose plan cannot be read is a warning on its line. The robustness tests feed the captured logs cut and mangled.
+- **Statements.** Entries are ordered by time, as the log prints it; the time zone is left out, as a log's entries share one. Entries are grouped by the query identifier of the plan, or else of the log record: for an `EXECUTE`, the record's identifier is that of the `EXECUTE`, the plan's that of the prepared query. Without one, entries are grouped by the text: comments, a leading `PREPARE name (types) AS`, literal values and parameters left out, an `IN` list one `?`.
+- **Plan changes.** A statement's entries form runs of the same [shape](#plan-diff). Where one run ends and another begins, `diff.rs` compares the last plan of the one with the first of the other. The change also records the runs' median durations, whether another process ran the plan after, and whether the plan after is a generic plan: one that keeps the parameters (`$1`) of a parameterized statement, the plan before not. A statement with four runs or more, and more than twice as many runs as plans, alternates.
+- **Order.** Statements whose plan changed come first, by what their costliest change added: the median duration after minus before, times the runs after. The others follow by their total time.
+- **sqlcommenter** (`timeline::tags`). The tags of the last comment that holds only `key='value'` pairs are decoded (percent-encoding, `\'`). The statement keeps them, the trace context left out. `--trace` matches the trace id of `traceparent`.
+- **Reports** (`report::logs_*`). Text and Markdown: each statement with its plans and changes, and for a switch to a generic plan, the `--params` and `--bind` command that tests it. JSON: the timeline, and every entry with what the log says, its shape and its trace, without the plans.
+- **Tests.** `fixtures/logs/` holds a real session, logged by PostgreSQL 16 in the three formats at once (see its README): an index dropped by a migration, a stable report, and a prepared statement that switches to its generic plan. `tests/logs.rs` checks that the three formats give the same entries and timeline. `timeline.rs` covers texts, tags and times on small inputs, `tests/report.rs` snapshots the reports, and `tests/cli.rs` runs the filters.
+
+## Checks in CI
+
+`explainsql check` is a gate: it exits with 0 when every plan passed, 1 when one failed and 2 when it could not run, and says why in text, Markdown, JSON or SARIF.
+
+- **Core** (`check.rs`, pure). `check()` takes a plan, its analysis and its locked plan, if any, under a `Policy`: `fail_on`, a severity, and `strict`. A plan fails on a finding at least as severe as `fail_on`; on being worse than its locked plan as `compare.rs` judges it, when pages, temporary files or, for two estimated plans, the cost decided; and, under `strict`, on any change of shape. Time alone never fails a plan: for the same pages it changes with the cache and the runner's load, which in CI is noise; it is a note, like a plan that changed and is not worse. Without a locked plan, a plan is new.
+- **The lock** (`check::Lock`). Pretty JSON, sorted by name, versioned: for each name, the plan's shape id, pages and estimated cost, and the plan as captured, JSON as JSON and anything else as text, so that `diff.rs` can compare with it and a change reads well in a review. `--update` writes the plans checked and keeps the others. Names are paths from the lock file's directory, with `/`.
+- **Binary** (`check.rs`). It collects the files (directories are searched in order: `*.sql` with `-d`, `*.json` and `*.txt` without), reads or runs each one as connected mode does, with the advice checked against the catalog, checks it, and with `--prove` tests the suggested indexes of the plans that failed. A file it cannot read or run is reported on standard error and makes the exit code 2, after the others are checked.
+- **Reports** (`report::check_*`). Text: one line per plan with its shape, then why it failed, notes and fixes. Markdown: a table, and for each plan that failed or changed, its diff folded under `<details>`. JSON: every check with its findings and advice. SARIF 2.1.0: the rules and two more, `plan-worse` and `plan-changed`; each finding is a result on its file, an error when it fails the plan and otherwise a warning or a note by severity.
+- **Tests.** `check.rs` covers the policy and the lock; `tests/report.rs` snapshots the text and Markdown reports; `tests/cli.rs` runs a plan from new to locked to worse, every format, the exit codes, and the same against the fixture database with `--prove`.
 
 ## Releases and documentation
 

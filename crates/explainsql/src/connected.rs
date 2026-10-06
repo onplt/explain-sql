@@ -15,7 +15,7 @@ use explainsql_core::{Analysis, advisor, catalog, compare};
 use explainsql_db::{Database, Error, Mode, Safety, Settings};
 use explainsql_tui::{Command, Connection, Event};
 
-use crate::{Cli, Format, emit, interactive, report_for, viewer_options};
+use crate::{Cli, Format, emit, interactive, params, report_for, viewer_options, with_findings};
 
 pub fn run(cli: &Cli) -> ExitCode {
     match try_run(cli) {
@@ -41,6 +41,24 @@ fn try_run(cli: &Cli) -> Result<ExitCode, String> {
         timeout: Duration::from_secs(cli.timeout.max(1)),
     };
     let runs = usize::from(cli.runs);
+    if cli.params || !cli.bind.is_empty() {
+        let trying = params::Trying {
+            measure: cli.measure,
+            runs,
+            safety,
+        };
+        let (plan, sensitivity) = params::sensitivity(&db, &sql, &cli.bind, trying)?;
+        let (mut analysis, _) = analyzed(&db, &plan);
+        analysis.parameters = Some(sensitivity);
+        return Ok(with_findings(
+            cli,
+            &analysis,
+            emit(&report_for(cli, &plan, &analysis)),
+        ));
+    }
+    if let Some(error) = undeclared_parameters(&sql) {
+        return Err(error);
+    }
     let viewer = cli.format == Format::Text && !cli.print && interactive();
     if !viewer {
         let mode = if cli.no_analyze {
@@ -72,7 +90,11 @@ fn try_run(cli: &Cli) -> Result<ExitCode, String> {
                 Err(error) => eprintln!("explainsql: cannot ask the planner: {error}"),
             }
         }
-        return Ok(emit(&report_for(cli, &plan, &analysis)));
+        return Ok(with_findings(
+            cli,
+            &analysis,
+            emit(&report_for(cli, &plan, &analysis)),
+        ));
     }
 
     // The estimated plan at once; EXPLAIN ANALYZE in the background.
@@ -178,6 +200,29 @@ fn try_run(cli: &Cli) -> Result<ExitCode, String> {
     Ok(ExitCode::SUCCESS)
 }
 
+/// A statement with `$n` placeholders cannot run without values: what to
+/// do instead.
+fn undeclared_parameters(sql: &str) -> Option<String> {
+    let (list, count) = placeholder_list(sql)?;
+    Some(format!(
+        "the statement takes parameters ({list}): --params tries values for {}, or --bind N=VALUE gives them",
+        if count == 1 { "it" } else { "them" }
+    ))
+}
+
+/// `$1`, or `$1 to $3`, and how many, when the statement has `$n`
+/// placeholders, which it cannot run without values.
+pub(crate) fn placeholder_list(sql: &str) -> Option<(String, usize)> {
+    let placeholders = explainsql_core::params::placeholders(sql);
+    (placeholders.count > 0 && !placeholders.converted).then(|| {
+        let list = match placeholders.count {
+            1 => "$1".to_owned(),
+            count => format!("$1 to ${count}"),
+        };
+        (list, placeholders.count)
+    })
+}
+
 /// Runs EXPLAIN, analyzes the plan, and checks the advice against the
 /// catalog, which it returns when it could be read.
 fn plan_of(
@@ -190,13 +235,20 @@ fn plan_of(
         .explain(sql, mode, safety)
         .map_err(|error| error.to_string())?;
     let plan = explainsql_core::parse(&json).map_err(|error| error.to_string())?;
-    let mut analysis = explainsql_core::analyze(&plan);
-    let catalog = read_catalog(db, &plan, &analysis);
+    let (analysis, catalog) = analyzed(db, &plan);
+    Ok((plan, analysis, catalog))
+}
+
+/// The analysis of a plan, with its advice checked against the catalog
+/// when it could be read.
+pub(crate) fn analyzed(db: &Database, plan: &Plan) -> (Analysis, Option<Catalog>) {
+    let mut analysis = explainsql_core::analyze(plan);
+    let catalog = read_catalog(db, plan, &analysis);
     // Without the catalog, the advice stays as the plan alone gives it.
     if let Some(catalog) = &catalog {
         advisor::refine(&mut analysis.advice, catalog);
     }
-    Ok((plan, analysis, catalog))
+    (analysis, catalog)
 }
 
 /// What the catalog says about the tables of a plan and its advice.
@@ -364,7 +416,13 @@ fn parse_all(plans: &[String]) -> Result<Vec<Plan>, String> {
 
 /// Tests every index suggestion: with HypoPG when it is installed, else by
 /// building the index with --allow-ddl.
-fn prove_all(db: &Database, sql: &str, analysis: &mut Analysis, runs: usize, safety: Safety) {
+pub(crate) fn prove_all(
+    db: &Database,
+    sql: &str,
+    analysis: &mut Analysis,
+    runs: usize,
+    safety: Safety,
+) {
     let hypopg = has_hypopg(db);
     if !hypopg && !safety.allow_ddl {
         eprintln!(

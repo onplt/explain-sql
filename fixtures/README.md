@@ -10,7 +10,8 @@ fixtures/
 │  ├─ <name>.json           # EXPLAIN (…, FORMAT JSON)
 │  ├─ <name>.txt            # EXPLAIN (…, FORMAT TEXT)
 │  └─ manifest.json         # server version, JIT availability, status of every scenario
-└─ inputs/                  # one plan in the forms it is pasted or logged in (see below)
+├─ inputs/                  # one plan in the forms it is pasted or logged in (see below)
+└─ logs/                    # a session's auto_explain entries in stderr, csvlog and jsonlog (see logs/README.md)
 ```
 
 ## Regenerating

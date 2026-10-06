@@ -33,7 +33,7 @@ pbpaste | explainsql                 # standard input
 psql -XAtq -c "EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) SELECT …" | explainsql
 ```
 
-For the most useful analysis, capture plans with `EXPLAIN (ANALYZE, BUFFERS, VERBOSE, SETTINGS)`. In a terminal, the plan opens in the interactive viewer. Otherwise, or with `--print`, explainsql prints a report: `--format text` (the default), `md` for an issue or a pull request, or `json` for other programs. `--debug-parse` shows what the parser understood.
+For the most useful analysis, capture plans with `EXPLAIN (ANALYZE, BUFFERS, VERBOSE, SETTINGS)`, with `track_io_timing` on: explainsql then says how much of the time went to reading and writing pages, and when the cache was cold. In a terminal, the plan opens in the interactive viewer. Otherwise, or with `--print`, explainsql prints a report: `--format text` (the default), `md` for an issue or a pull request, or `json` for other programs. `--debug-parse` shows what the parser understood.
 
 ## The viewer
 
@@ -116,3 +116,175 @@ In the viewer, select a node and press `y`.
 Without `--measure`, the alternatives are only planned: the answer says how much more expensive the planner estimates them, and whether `random_page_cost = 1.1` (as suits SSDs and cloud volumes) makes it choose the index by itself. With `--measure`, both plans run and are compared, pages first, and the answer says whether the planner is right. When it is not, it says why: a row misestimate (fix the statistics), or its cost settings. A cost setting is suggested only when the plan it leads to has been measured too, and is better.
 
 The settings are planner settings only, from a fixed list, set with `SET LOCAL` semantics inside the transaction that is rolled back: they never outlast the run. `enable_*` settings apply to the whole statement, so other parts of the plan can change as well; the answer says when they did.
+
+## Statements with parameters
+
+An application rarely sends `WHERE customer_id = 4242`. It sends `WHERE customer_id = $1`, or `?` through JDBC, with the value apart. PostgreSQL plans such a statement in one of two ways:
+
+- a **custom plan**, made for the values of one execution;
+- the **generic plan**, made once for any value.
+
+A prepared statement gets custom plans for its first five executions. From the sixth on, PostgreSQL switches to the generic plan if it estimates it cheaper than the custom plans were on average, and then keeps it. pgJDBC prepares a statement on the server from its fifth execution (`prepareThreshold`). So a statement that a Java application runs often can end up with the generic plan. That plan may suit some values and ruin others, while the same statement tried in psql with a literal value stays fast.
+
+```sh
+explainsql -d shop -c "SELECT * FROM orders WHERE customer_id = ? ORDER BY created_at DESC LIMIT ?" --params --print
+explainsql -d shop -f latest_orders.sql --params --measure --print
+explainsql -d shop -f latest_orders.sql --bind 1=4242 --bind 2=20 --measure --print
+```
+
+explainsql prepares the statement as the application does, then works in four steps:
+
+1. **It maps each parameter** to what the statement does with it. That is the column it is compared with in a scan's conditions (with `=`, a range or an `IN` list), or the `LIMIT` or `OFFSET` it counts rows for.
+2. **It picks values to try:**
+   - for equality: the most common values, the least common of them, and a value outside them, from `pg_stats` (for a partition, from the partitioned table's statistics);
+   - for a range: bounds from across the histogram;
+   - for a `LIMIT`: 1, 10, 100, 1,000 and 10,000 rows;
+   - for an `OFFSET`: 0, 1,000 and 100,000.
+3. **It tries the values one parameter at a time.** The other parameters are held at a typical value: the most common value, the end of a range that keeps every row, a page of 10 rows, or the first page. For each value it compares the custom plan with the generic plan.
+4. **With `--measure`, it runs both plans** for each value whose custom plan differs. Each runs `--runs N` times, after one run that warms the cache.
+
+| Verdict | What it means |
+|---|---|
+| `INSENSITIVE` | Every value gets the generic plan. Whichever plan PostgreSQL uses, it is the same. |
+| `SENSITIVE` | Some values get another plan. Measured, for at least one value the generic plan reads at least twice as many pages (or, for as many pages, takes twice as long), or runs past the timeout. Estimated only, the planner prefers another plan for those values, and `--measure` tells how much that matters. |
+| `HARMLESS` | Some values get another plan, but measured, the generic plan does less than twice as badly for them. |
+| `UNKNOWN` | A parameter has no value to try: it is compared with an expression rather than a column, or its column has no statistics. `--bind N=VALUE` gives it one. |
+
+The report also says whether PostgreSQL would switch to the generic plan after five executions. It switches when the generic plan's estimated cost is below the average cost of the custom plans so far, each with a charge for planning. The outcome therefore depends on the values the first five executions happen to have.
+
+When PostgreSQL would switch and the generic plan does badly, the advice is to plan every execution:
+
+- set `plan_cache_mode = force_custom_plan` for the application's connections (in a JDBC URL, `options=-c%20plan_cache_mode=force_custom_plan`) or for its role;
+- or set `prepareThreshold=0` in pgJDBC, for the connection or for one statement.
+
+Either way, each execution is planned again, which costs planning time. An index that serves every value fixes the cause instead, and the report's advice may suggest one.
+
+**The plan in the report.** With `--measure`, it is the generic plan run with the values it does worst with, and the findings and advice are about that plan. Without `--measure`, it is the generic plan, estimated with the typical values.
+
+**Giving values.** `--bind N=VALUE` gives the value of `$N`, and that value is then the only one tried for it. Give a value for every parameter to compare the custom and generic plans for exactly those values, such as one call taken from a log.
+
+**Placeholders.**
+
+- `$1`, `$2`, … are read as PostgreSQL and `pg_stat_statements` write them.
+- JDBC's `?` is converted in order when the statement has no `$n`, and `??` becomes the `?` operator.
+- A statement with `$n` placeholders cannot run without values, so it needs `--params` or `--bind`.
+
+**Safety and requirements.** Every run is rolled back and every statement explainsql prepares is deallocated, as in connected mode. `--params` needs PostgreSQL 12 or later, for `plan_cache_mode`. It prints a report; the viewer does not show it yet.
+
+**Limits.**
+
+- Values are tried one parameter at a time, so how columns depend on each other is not taken into account.
+- A parameter inside an expression (`lower(email) = $1`), an array (`= ANY($1)`) or a `SET` clause gets no value from the statistics. Give one with `--bind`.
+
+## Find plan changes in server logs
+
+"It was fast yesterday" is often a plan that changed: after an `ANALYZE`, as the data grew, when a prepared statement switched to its generic plan, or after an upgrade. With [auto_explain](https://www.postgresql.org/docs/current/auto-explain.html), the server logs the plans it ran, and `explainsql logs` reads them: which plans each statement got, when its plan changed, what changed, and what it cost.
+
+```sh
+explainsql logs /var/log/postgresql/postgresql-16-main.log
+explainsql logs postgresql.json --changed --since 24h
+explainsql logs postgresql.csv --query OrderController --format md > incident.md
+explainsql logs postgresql.log --trace 4bf92f3577b34da6a3ce929d0e0e4736
+```
+
+**Reading the logs.**
+
+- **Formats.** Logs in any of the server's formats: stderr with any `log_line_prefix`, csvlog or jsonlog. Plans can be in text or JSON format, and several files can be read together. `-` reads standard input.
+- **What each entry says.** From jsonlog and csvlog records, and from the common stderr prefixes (`%m [%p] %u@%d`, or `user=%u,db=%d,app=%a`), explainsql takes the time, the process, the user, the database and the application. It also reads the duration, the query text and, from PostgreSQL 16, the values a prepared statement ran with.
+
+**Telling statements apart.** A statement is known by its query identifier, which the plans carry when `compute_query_id` is on and auto_explain logs with `log_verbose`. Without one, a statement is known by its text, with its comments, literal values and parameters left out. A prepared statement is known by its query, not by the `PREPARE` around it.
+
+**For each statement**, the report shows:
+
+- its plans, each with how its tables are read, how many runs it had and their median duration;
+- each change of plan: when it happened, after how many runs, whether in another session, the median duration before and after, how the plan after compares (pages first, as `explainsql diff` says it), and what changed.
+
+Statements whose plan changed come first, the costliest change first: the time the plan after added over the runs it had. A statement whose plans go back and forth many times is marked `ALTERNATING`: often a plan that depends on the values.
+
+**Generic plans.** A plan that keeps a prepared statement's parameters (`$1`) is its generic plan. The report says when a statement switched to one, with the values it ran with. Those values feed [`--params` and `--bind`](#statements-with-parameters), which tell which values the generic plan suits.
+
+**sqlcommenter tags** in the statements, such as `/*controller='OrderController',action='latest',traceparent='00-…'*/`, say where in the application a statement comes from. Libraries for Spring and Hibernate, Django, Rails and others add them. The report lists the tags, and filters can use them:
+
+- `--query` takes a query identifier, or text found in the statement, the name it was prepared under, or its tags.
+- `--trace` takes the trace id of a `traceparent` tag. It keeps the statements that ran in the trace, and says which plan each of the trace's runs got.
+
+**Other filters.** `--changed` keeps only statements whose plan changed. `--since` and `--until` take a time as the log prints it (`2026-10-06 06:00`), or a span back from the log's last entry (`30m`, `24h`, `7d`).
+
+**Setting up auto_explain.** Load it for the whole server with `shared_preload_libraries = 'auto_explain'`, or for one session with `LOAD 'auto_explain'`. Then set:
+
+- `auto_explain.log_min_duration` to the duration from which to log, `0` for every statement;
+- `auto_explain.log_analyze`, `log_buffers` and `log_settings` on;
+- `auto_explain.log_verbose` on, with `compute_query_id = on`, for the query identifier;
+- `auto_explain.log_format` as you like.
+
+With `log_analyze`, every statement is instrumented, logged or not, which slows it down. On a busy server, set `auto_explain.log_timing = off`, or instrument a sample of statements with `auto_explain.sample_rate`.
+
+## Compare two plans
+
+A plan changed after an index, a statistics update, an upgrade or a rewrite of the query. `explainsql diff` tells what changed, node by node:
+
+```sh
+explainsql diff before.json after.json
+explainsql diff plans.txt                     # both plans in one input
+explainsql diff before.json after.txt --format md
+```
+
+The two plans can be in any form explainsql reads, and in different ones. A single input can hold both, one after the other: plans pasted one below the other (a label such as `After:` between them is left out), a JSON array or two JSON documents, two Markdown code fences, two psql results, or two auto_explain entries of a log.
+
+The report opens on a sentence: how the second plan compares, pages first, then time (the estimated cost when the plans were not run), and its main change. Then come the changes, with the most significant first:
+
+| Change | What it means |
+|---|---|
+| `ACCESS` | A relation is read another way: another scan type, index or direction, or in parallel. The same change on several partitions is told once. |
+| `JOIN` | The same relations are joined by another method, or the sides of the join swapped. |
+| `ORDER` | The relations are joined in another order. |
+| `STRATEGY` | Another variant of the same operation: a hashed aggregate that became sorted, a sort that became incremental. |
+| `ADDED`, `REMOVED` | A node only one plan has, such as a Sort an index made unnecessary, or a Gather that runs part of the plan in parallel. Partitions read or no longer read are counted together. |
+| `SPILL` | A node started or stopped writing temporary files. |
+| `ESTIMATE` | A row estimate became 10× off or more, or stopped being, where the error starts. |
+| `WORK` | The same node read more or fewer pages, or took more or less time, by more than 10% and 5% of the statement. A change in time alone, for the same pages, says how many of them came from disk: the cache or the server's load may explain it rather than the plan. |
+
+Last, the plan after, with its changed nodes marked `~` and its new ones `+`, and the nodes only the plan before had.
+
+Nodes are matched by the work they do, not by their position. A scan is found again by the relation it reads, a join by the relations it combines, any other node by its kind and the relations below it. Partitions that PostgreSQL named another way, as versions do, are still matched.
+
+Each plan has a shape: 16 hexadecimal digits that stand for its nodes, what they read and how, without numbers, literal values or aliases. Two plans with the same shape are the same plan, whatever the parameters, the data, the cache, or whether they were printed as JSON or text.
+
+In connected mode, after `r` or `e` runs the statement again, the status line compares the run with the previous one in the same way.
+
+## Check plans in CI
+
+`explainsql check` makes plans a gate in continuous integration: each plan is checked against its findings and against the plan locked for it in `explainsql.lock`. It exits with 0 when every plan passed, 1 when one failed, and 2 when the check could not run.
+
+```sh
+explainsql check -d "$DATABASE_URL" queries/ --update      # lock the plans as they are; commit explainsql.lock
+explainsql check -d "$DATABASE_URL" queries/               # in CI: fail when a plan got worse
+explainsql check -d "$DATABASE_URL" queries/ --fail-on high --prove --format md > comment.md
+explainsql check plans/ --format sarif > explainsql.sarif  # captured plans, no database
+```
+
+- **What it reads.** With `-d`, SQL files, one statement each (directories are searched for `*.sql`), run as in connected mode: in a transaction that is rolled back, READ ONLY unless `--allow-dml`, with `EXPLAIN ANALYZE`, or with `EXPLAIN` alone under `--no-analyze`. Without `-d`, plan files in any form explainsql reads (directories are searched for `*.json` and `*.txt`).
+- **The lock.** `--update` writes each plan to `explainsql.lock` (`--lock FILE` for another file), under its path from the lock file's directory: its shape, its pages, its estimated cost, and the plan itself, a JSON plan as JSON so that a change reads well in a review. Plans not checked in that run stay as they are. Commit the file, and run `--update` again to accept a change.
+- **When a plan fails.**
+  - It is worse than its locked plan by pages, by temporary files, or, when neither plan was run, by the planner's estimated cost, by more than 10%. Time alone does not fail a plan: on a shared runner it changes from one run to the next for the same pages, so it is a note.
+  - With `--fail-on SEVERITY`, a finding at least that severe fails it, locked or not.
+  - With `--strict`, a plan whose shape changed fails even when it is not worse: the plan becomes a contract, changed on purpose with `--update`.
+
+  A plan not in the lock yet is new, and fails only on its findings.
+- **What it says.** For each plan that failed: why, what changed in the plan (as `explainsql diff` tells it), and the suggested fix; with `--prove` and HypoPG, each suggested index is tested and reported before and after. `--format md` is a pull request comment: the plans in a table, with what changed folded below. `--format sarif` is for code scanning: each finding and each plan worse than its lock is a result on its file, an error when it fails the plan. `--format json` is for other programs.
+
+A GitHub Actions job, against the database the tests use:
+
+```yaml
+- name: Check the plans
+  run: explainsql check -d "$DATABASE_URL" queries/ --fail-on high --format sarif > explainsql.sarif
+- name: Show them in code scanning
+  if: always()
+  uses: github/codeql-action/upload-sarif@v3
+  with:
+    sarif_file: explainsql.sarif
+```
+
+For a single plan, the main command takes `--fail-on` as well: `explainsql --print --fail-on high plan.json` exits with 1 when a finding is at least that severe.
+
+A plan from a database with a handful of rows says little: the planner reads such tables whole. Check against data shaped like production's. PostgreSQL 18 can also restore production's statistics (`pg_restore_relation_stats`, `pg_restore_attribute_stats`), although the planner still sees the size of each table on disk.

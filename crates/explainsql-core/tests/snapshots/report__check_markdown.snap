@@ -1,0 +1,40 @@
+---
+source: crates/explainsql-core/tests/report.rs
+expression: "report::check_markdown(&checked)"
+---
+### explainsql check
+
+**1 of 3 plans failed.** 3 plans: 1 failed, 1 new, 1 passed.
+
+| Plan | Result | Shape | Why |
+|---|---|---|---|
+| `queries/customer.sql` | **Failed** | `5bfa6998127d5b02` → `21ef80807b63d923` | Worse than the locked plan: pages 13 → 2,417 (186× more), execution 0.070 ms → 11.9 ms (170× slower). Index Scan using orders\_customer\_id\_idx on orders o became Seq Scan on orders. |
+| `queries/new.sql` | New | `5bfa6998127d5b02` |  |
+| `queries/same.sql` | Passed | `5bfa6998127d5b02` |  |
+
+<details><summary><code>queries/customer.sql</code>: why it failed</summary>
+
+- Worse than the locked plan: pages 13 → 2,417 (186× more), execution 0.070 ms → 11.9 ms (170× slower). Index Scan using orders\_customer\_id\_idx on orders o became Seq Scan on orders.
+- **Fix:** CREATE INDEX CONCURRENTLY ON public.orders (customer\_id);
+
+**Worse: pages 13 → 2,417 (186× more), execution 0.070 ms → 11.9 ms (170× slower). Index Scan using orders\_customer\_id\_idx on orders o became Seq Scan on orders.**
+
+Plan shape 5bfa6998127d5b02 → 21ef80807b63d923: another plan.
+
+### Changes
+
+- **Access:** Index Scan using orders\_customer\_id\_idx on orders o became Seq Scan on orders.
+  - Before: `Index Cond (customer_id = 4242)`
+  - After: `Filter (orders.customer_id = 4242)`
+  - Pages: `13 → 2,417`
+  - Time: `0.051 ms → 11.9 ms`
+
+### The plan after
+
+| | Share | Time | Node | Rows | Estimate | Buffers |
+|---|---:|---:|---|---:|---:|---:|
+| ~ | 100% | 11.9 ms | Seq Scan on orders | 10 | 10 | 2,417 |
+
+`~` a node that changed, `+` a node only the plan after has.
+
+</details>

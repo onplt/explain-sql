@@ -15,7 +15,7 @@ pub fn disjuncts(condition: &str) -> Vec<&str> {
 }
 
 /// Splits at a separator outside parentheses, brackets and quotes.
-fn split<'a>(text: &'a str, separator: &str) -> Vec<&'a str> {
+pub(crate) fn split<'a>(text: &'a str, separator: &str) -> Vec<&'a str> {
     let bytes = text.as_bytes();
     let mut parts = Vec::new();
     let (mut start, mut depth, mut quote) = (0, 0i32, None);

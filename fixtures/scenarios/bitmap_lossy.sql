@@ -1,5 +1,5 @@
 -- description: Bitmap heap scan over most of the table with a tiny work_mem, so the bitmap becomes lossy and rows are rechecked.
--- rules: ES008
+-- rules: ES008, ES013
 -- set: work_mem = '64kB'
 -- set: enable_seqscan = off
 -- set: enable_indexscan = off

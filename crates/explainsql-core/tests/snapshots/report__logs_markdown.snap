@@ -1,0 +1,42 @@
+---
+source: crates/explainsql-core/tests/report.rs
+expression: "report::logs_markdown(&entries, &timeline)"
+---
+### explainsql logs
+
+32 plans of 3 statements, from 2026-10-06 06:35:13.475 UTC to 2026-10-06 06:35:14.238 UTC. The plan of 2 of them changed, the costliest first.
+
+| Statement | Runs | Time in all | Plans | Changes |
+|---|---:|---:|---:|---:|
+| CHANGED `SELECT id, status, amount FROM orders WHERE customer_id = ? ORDER BY created_at DESC LIMIT ?` (prepared as latest) | 16 | 468.2 ms | 2 | 3 |
+| CHANGED `SELECT id, status, amount FROM orders WHERE customer_id = ? ORDER BY created_at DESC LIMIT ?` | 12 | 80.3 ms | 2 | 3 |
+| STABLE `SELECT status, count(*) FROM orders WHERE created_at >= timestamptz ? AND created_at < timestamptz ? GROUP BY status` | 4 | 2.10 ms | 1 | 0 |
+
+#### CHANGED: `SELECT id, status, amount FROM orders WHERE customer_id = ? ORDER BY created_at DESC LIMIT ?`
+
+prepared as latest · query id -1243494815637630641 · 16 runs, 468.2 ms in all
+
+- plan 1  Seq Scan on orders · 10 runs, median 12.2 ms
+- plan 2  Index Scan Backward using orders\_created\_at\_idx on orders · the generic plan · 6 runs, median 57.9 ms
+
+- **06:35:13.659 UTC, line 264**: plan 1 → plan 2 after 5 runs: the generic plan, with $1 = '777', $2 = '10'; median 13.2 ms → 58.7 ms (4.4× slower)
+  - Worse: pages 2,417 → 186,053 (77× more), estimated cost 4917 → 1517 (3.2× cheaper). Seq Scan on orders became Index Scan Backward using orders\_created\_at\_idx on orders. 1 other change in the plan.
+  - REMOVED Sort removed
+  - **Action:** PostgreSQL switched to the generic plan after five executions. With the statement in a file, explainsql -d DATABASE -f FILE --params --measure shows which values the generic plan suits and what to do; with --bind 1=777 --bind 2=10, it compares the generic plan with the custom plan for these values.
+- **06:35:14.021 UTC, line 1278**: plan 2 → plan 1 after 3 runs, in another session; median 58.7 ms → 11.9 ms (4.9× faster)
+  - Better: pages 172,432 → 2,417 (71× fewer), estimated cost 1517 → 4917 (3.2× more expensive). Index Scan Backward using orders\_created\_at\_idx on orders became Seq Scan on orders. 1 other change in the plan.
+  - ADDED Sort added
+- **06:35:14.126 UTC, line 1818**: plan 1 → plan 2 again after 5 runs: the generic plan, with $1 = '777', $2 = '10'; median 11.9 ms → 56.3 ms (4.7× slower)
+
+#### CHANGED: `SELECT id, status, amount FROM orders WHERE customer_id = ? ORDER BY created_at DESC LIMIT ?`
+
+query id 6425368004246004440 · 12 runs, 80.3 ms in all · action=latest, controller=OrderController, framework=spring
+
+- plan 1  Bitmap Heap Scan on orders (through orders\_customer\_id\_idx) · 6 runs, median 0.062 ms
+- plan 2  Seq Scan on orders · 6 runs, median 12.8 ms
+
+- **06:35:13.496 UTC, line 98**: plan 1 → plan 2 after 3 runs; median 0.064 ms → 13.6 ms (213× slower)
+  - Worse: pages 12 → 2,417 (201× more), estimated cost 43 → 4917 (115× more expensive). Bitmap Heap Scan on orders (through orders\_customer\_id\_idx) became Seq Scan on orders.
+- **06:35:13.962 UTC, line 308**: plan 2 → plan 1 after 3 runs, in another session; median 13.6 ms → 0.054 ms (252× faster)
+  - Better: pages 2,417 → 12 (201× fewer), estimated cost 4917 → 43 (115× cheaper). Seq Scan on orders became Bitmap Heap Scan on orders (through orders\_customer\_id\_idx).
+- **06:35:13.982 UTC, line 844**: plan 1 → plan 2 again after 3 runs; median 0.054 ms → 12.2 ms (226× slower)

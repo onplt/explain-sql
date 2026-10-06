@@ -19,9 +19,10 @@ Findings (1)
           Disk used: 9.1 MB
           Sort key: orders.note
           Time in the node: 350.3 ms (92% of the runtime)
-          → Raise work_mem for this query rather than globally (SET LOCAL work_mem), to roughly
-          twice the 9.1 MB written to disk. Or avoid the sort with an index that returns rows
-          ordered by orders.note.
+          → Raise work_mem so that the sort fits in memory. For this statement alone: SET LOCAL
+          work_mem = '32MB' in its transaction. Every session that runs the statement at the same
+          time may take that much. Or avoid the sort with an index that returns rows ordered by
+          orders.note.
 
 Share and Time: time spent in each node itself, wall-clock. Rows: actual rows per loop, ×loops when
 it ran more than once. ▲/▼: actual rows above or below the estimate by 10× or more. Buffers: pages

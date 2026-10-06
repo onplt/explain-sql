@@ -238,7 +238,7 @@ pub(crate) async fn measure(
 
 /// What the estimated plan says the statement writes, if `--allow-dml`
 /// lets it run.
-fn allowed_writes(estimated: &str, safety: Safety) -> Result<Writes, Error> {
+pub(crate) fn allowed_writes(estimated: &str, safety: Safety) -> Result<Writes, Error> {
     let writes = writes_of(estimated);
     match writes.reason() {
         Some(reason) if !safety.allow_dml => Err(Error::NeedsAllowDml(reason.to_owned())),

@@ -7,7 +7,7 @@ mod common;
 
 use common::{fixtures, node_differences, read};
 use explainsql_core::ir::{Format, Plan, Wrapper};
-use explainsql_core::parse;
+use explainsql_core::{ParseError, parse, parse_all};
 
 fn input(name: &str) -> String {
     read(&fixtures().join("inputs").join(name))
@@ -148,6 +148,128 @@ fn only_the_first_of_several_plans_is_read() {
     let plan = parse(&format!("{json}\n{json}")).unwrap();
     assert_same_tree("two JSON plans", &plan);
     assert_eq!(plan.warnings[0].message, "ignored text after the JSON plan");
+}
+
+#[test]
+fn parse_all_reads_a_single_plan_as_parse_does() {
+    for entry in std::fs::read_dir(fixtures().join("inputs")).unwrap() {
+        let path = entry.unwrap().path();
+        let name = path.file_name().unwrap().to_string_lossy().into_owned();
+        let text = read(&path);
+        let all = parse_all(&text).unwrap_or_else(|e| panic!("{name}: {e}"));
+        assert_eq!(all, [parse(&text).unwrap()], "{name}");
+    }
+}
+
+#[test]
+fn parse_all_reads_every_plan() {
+    let text = input("reference.txt");
+    let other = "Seq Scan on t  (cost=0.00..1.00 rows=1 width=4) (actual time=0.010..0.020 rows=1 loops=1)\nPlanning Time: 9.000 ms\nExecution Time: 9.500 ms";
+    let check = |name: &str, input: &str, wrappers: &[Wrapper]| {
+        let plans = parse_all(input).unwrap_or_else(|e| panic!("{name}: {e}"));
+        assert_eq!(plans.len(), 2, "{name}");
+        assert_same_tree(name, &plans[0]);
+        for plan in &plans {
+            assert_eq!(plan.source.wrappers, wrappers, "{name}");
+            assert!(plan.warnings.is_empty(), "{name}: {:?}", plan.warnings);
+        }
+        plans
+    };
+
+    // Text plans one after the other: each keeps its own summary.
+    let plans = check("two text plans", &format!("{text}\n\n{other}"), &[]);
+    assert_eq!(plans[1].root().node_type, "Seq Scan");
+    assert_eq!(plans[1].summary.execution_time, Some(9.5));
+    assert_eq!(
+        plans[0].summary.execution_time,
+        reference().summary.execution_time
+    );
+
+    // Labels between the plans are left out, and said to be.
+    let labelled = format!("Before:\n{text}\n\nAfter:\n{other}");
+    let plans = parse_all(&labelled).unwrap();
+    assert_eq!(plans.len(), 2);
+    assert_same_tree("labelled plans", &plans[0]);
+    for plan in &plans {
+        let warnings: Vec<&str> = plan.warnings.iter().map(|w| w.message.as_str()).collect();
+        assert_eq!(warnings, ["ignored 1 line(s) before the plan"]);
+    }
+    let first = parse(&labelled).unwrap();
+    let warnings: Vec<&str> = first.warnings.iter().map(|w| w.message.as_str()).collect();
+    assert_eq!(
+        warnings,
+        [
+            "ignored 1 line(s) before the plan",
+            "the input contains more than one plan; showing the first"
+        ]
+    );
+
+    // JSON: two documents, or one array of two plans.
+    let json = input("reference.json");
+    check("two JSON documents", &format!("{json}\n{json}"), &[]);
+    let array = format!(
+        "[{}, {}]",
+        json.trim().trim_start_matches('[').trim_end_matches(']'),
+        json.trim().trim_start_matches('[').trim_end_matches(']')
+    );
+    check("a JSON array of two plans", &array, &[]);
+    // What follows the plans and cannot be read is said to be left out.
+    let plans = parse_all(&format!("{json}\n{json}\n{{\"Plan\": ")).unwrap();
+    assert_eq!(plans.len(), 2);
+    assert_eq!(
+        plans[1].warnings[0].message,
+        "ignored text after the JSON plan"
+    );
+
+    // Markdown: every fence, whatever is around them.
+    check(
+        "two fences",
+        &format!("Before:\n\n```\n{text}\n```\n\nAfter:\n\n```sql\n{json}\n```\n"),
+        &[Wrapper::MarkdownFence],
+    );
+
+    // psql printing two EXPLAINs.
+    let table = input("psql-aligned.txt");
+    check(
+        "two psql tables",
+        &format!("db=> EXPLAIN ANALYZE ...;\n{table}\ndb=> EXPLAIN ANALYZE ...;\n{table}\n"),
+        &[Wrapper::PsqlTable],
+    );
+
+    // Every auto_explain entry of a log, each with its query text.
+    for (name, wrapper) in [
+        ("auto_explain-text.log", Wrapper::AutoExplainLog),
+        ("jsonlog-json.json", Wrapper::JsonLog),
+        ("csvlog-text.csv", Wrapper::CsvLog),
+    ] {
+        let log = input(name);
+        let plans = check(
+            name,
+            &format!("{}\n{}", log.trim_end(), log.trim_end()),
+            &[wrapper],
+        );
+        assert!(
+            plans.iter().all(|plan| plan.summary.query_text.is_some()),
+            "{name}"
+        );
+    }
+}
+
+#[test]
+fn parse_all_needs_one_plan_at_least() {
+    assert_eq!(parse_all("  \n"), Err(ParseError::Empty));
+    assert_eq!(parse_all("hello world"), Err(ParseError::NoPlan));
+    assert!(matches!(
+        parse_all("{\"no plan\": 1}"),
+        Err(ParseError::InvalidJson(_))
+    ));
+    // Parts without a plan are skipped.
+    let plans = parse_all(&format!(
+        "```\nnot a plan\n```\n```\n{}\n```",
+        input("reference.txt")
+    ))
+    .unwrap();
+    assert_eq!(plans.len(), 1);
 }
 
 #[test]
