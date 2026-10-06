@@ -17,6 +17,7 @@ use std::fmt;
 use crate::ir::{Format, Plan, Source, Warning, Wrapper};
 
 pub use log::{LogEntry, LogMeta};
+pub(crate) use normalize::normalize_all;
 
 /// Why an input could not be read as a plan at all. Smaller problems are
 /// reported as [warnings](crate::ir::Plan::warnings) on a usable plan.
