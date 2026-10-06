@@ -6,6 +6,17 @@ All notable changes to ExplainSQL. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- `explainsql anonymize`: a plan to share in a bug report or an issue, with
+  the names of tables, indexes, columns and other objects replaced
+  (`table_a`, `index_a`, `column_a`, …, partitions staying alike as
+  `table_b_1`, `table_b_2`) and literal values replaced (`'value_a'`, other
+  numbers), the same way everywhere they appear. Node types, figures and
+  findings stay as they were, and the plan compares and folds as before.
+  `--keep-names` replaces only the values; `--map FILE` writes what each
+  name and value became.
+
 ## [0.1.1] - 2026-10-06
 
 ### Added

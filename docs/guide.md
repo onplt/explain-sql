@@ -219,6 +219,22 @@ Statements whose plan changed come first, the costliest change first: the time t
 
 With `log_analyze`, every statement is instrumented, logged or not, which slows it down. On a busy server, set `auto_explain.log_timing = off`, or instrument a sample of statements with `auto_explain.sample_rate`.
 
+## Share a plan
+
+A plan tells a lot about a database: the names of its tables, columns and indexes, and the values a statement looked for. `explainsql anonymize` replaces them before a plan goes into a bug report, an issue or a chat:
+
+```sh
+explainsql anonymize plan.json > shared.json
+pbpaste | explainsql anonymize | pbcopy
+explainsql anonymize plan.txt --map names.json   # and keep what each name became
+```
+
+- **What changes.** Names of tables, indexes, CTEs, aliases, schemas, columns, constraints and triggers become `table_a`, `index_a`, `cte_a`, `alias_a`, `schema_a`, `column_a`, `constraint_a` and `trigger_a`, then `_b`, `_c` and so on. Names that differ only in their numbers, as partitions do, stay alike: `orders_2025_01` and `orders_2025_02` become `table_b_1` and `table_b_2`, so that the viewer still folds them and `explainsql diff` still matches them. String literals become `'value_a'`, `'value_b'`, … the same way, keeping a `LIKE` pattern's `%` at either end, and numbers in conditions become other numbers of the same form. The same name or value gets the same replacement everywhere, in every plan of the input. A statement's text (`Query Text`) is anonymized the same way, without its comments.
+- **What stays.** The node types, estimates, timings, buffers and every other figure, so the plan reads and analyzes as before: the anonymized plan gets the same findings, and compares with another plan as the original does. Function and type names, keywords, `$n` parameters and system names (`pg_catalog`, `public`, `pg_…` relations, `ctid`, the triggers of foreign keys) stay too.
+- **What it reads and prints.** Any input explainsql reads, with every plan it holds. The plans come out in the format they were written in, JSON or text, without what surrounded them: psql's table, log lines, a Markdown fence. When an input holds plans of both formats, each comes out in a Markdown fence. A line or a JSON property it does not know has every name and value in it replaced. If the anonymized plans do not read back with the same nodes, nothing is printed.
+
+`--keep-names` replaces only the values. `--map FILE` writes what each name and value became as JSON, to read an answer about the anonymized plan back; keep that file to yourself.
+
 ## Compare two plans
 
 A plan changed after an index, a statistics update, an upgrade or a rewrite of the query. `explainsql diff` tells what changed, node by node:
