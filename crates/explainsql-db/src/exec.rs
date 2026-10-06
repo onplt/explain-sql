@@ -13,7 +13,7 @@
 use std::time::Duration;
 
 use explainsql_core::scenario::Setting;
-use tokio_postgres::Client;
+use tokio_postgres::{Client, SimpleQueryMessage};
 
 use crate::{Error, Safety, describe};
 
@@ -190,6 +190,64 @@ pub(crate) async fn explain(
         settings,
     )
     .await
+}
+
+/// The generic plan of a statement with parameters (`$1`, `$2`, …) as the
+/// planner makes it for any value, without values and without running it:
+/// `EXPLAIN (GENERIC_PLAN)`, PostgreSQL 16 or later.
+///
+/// Sent with the extended query protocol, the statement's `$1` would be a
+/// parameter of the EXPLAIN itself, to be bound to a value that the planner
+/// then plans for. So the EXPLAIN goes with the simple query protocol,
+/// which leaves the parameters to GENERIC_PLAN. That protocol also runs
+/// several statements in one string: the statement is first parsed alone
+/// with the extended protocol, which refuses more than one, and nothing
+/// runs until it has been.
+pub(crate) async fn generic(
+    client: &Client,
+    sql: &str,
+    safety: Safety,
+    server_version: u32,
+) -> Result<String, Error> {
+    let sql = statement(sql)?;
+    let server = |error: tokio_postgres::Error| Error::Server(describe(&error));
+    client
+        .batch_execute("BEGIN READ ONLY")
+        .await
+        .map_err(server)?;
+    let result = async {
+        client
+            .batch_execute(&format!(
+                "SET LOCAL statement_timeout = {}",
+                safety.timeout.as_millis().max(1)
+            ))
+            .await?;
+        // One statement, or an error: parsed, not run.
+        drop(client.prepare(sql).await?);
+        client
+            .simple_query(&format!(
+                "EXPLAIN (GENERIC_PLAN, {}) {sql}",
+                options(Mode::Estimate, server_version)
+            ))
+            .await
+    }
+    .await;
+    // Always, whatever happened above.
+    let rollback = client.batch_execute("ROLLBACK").await;
+    let messages = result.map_err(server)?;
+    rollback.map_err(server)?;
+    let mut rows = messages.iter().filter_map(|message| match message {
+        SimpleQueryMessage::Row(row) => Some(row),
+        _ => None,
+    });
+    let text = rows
+        .next()
+        .and_then(|row| row.get(0))
+        .ok_or_else(|| Error::Server("EXPLAIN returned no plan".to_owned()))?;
+    let plan: serde_json::Value = serde_json::from_str(text).map_err(|error| {
+        Error::Server(format!("EXPLAIN returned a plan that is not JSON: {error}"))
+    })?;
+    Ok(plan.to_string())
 }
 
 /// Measures a statement `runs` times with EXPLAIN ANALYZE, after one more

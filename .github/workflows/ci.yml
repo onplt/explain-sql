@@ -51,20 +51,28 @@ jobs:
     runs-on: ubuntu-24.04
     env:
       EXPLAINSQL_TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/explainsql?sslmode=disable
+      # A role without pg_read_all_stats, to which pg_stat_statements hides
+      # other roles' statements.
+      EXPLAINSQL_TEST_READER_URL: postgresql://explainsql_reader:reader@localhost:5432/explainsql?sslmode=disable
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - name: Start PostgreSQL 16 with HypoPG and the fixture schema
+      - name: Start PostgreSQL 16 with HypoPG, pg_stat_statements and the fixture schema
         run: |
           sudo apt-get update
           sudo apt-get install -y postgresql-16 postgresql-16-hypopg
           sudo systemctl start postgresql
           sudo -u postgres psql -c "ALTER USER postgres PASSWORD 'postgres'"
+          # pg_stat_statements counts only when loaded at server start.
+          sudo -u postgres psql -c "ALTER SYSTEM SET shared_preload_libraries = 'pg_stat_statements'"
+          sudo systemctl restart postgresql
           sudo -u postgres createdb explainsql
           export PGPASSWORD=postgres
           psql -h localhost -U postgres -d explainsql -q -v ON_ERROR_STOP=1 -f fixtures/schema.sql
           psql -h localhost -U postgres -d explainsql -c "CREATE EXTENSION hypopg"
+          psql -h localhost -U postgres -d explainsql -c "CREATE EXTENSION pg_stat_statements"
+          psql -h localhost -U postgres -d explainsql -c "CREATE ROLE explainsql_reader LOGIN PASSWORD 'reader'"
       # One test at a time: building an index in one test waits for the
       # locks of another's rolled-back UPDATE.
       - run: cargo test --locked -p explainsql-db -p explainsql -- --test-threads=1

@@ -1,0 +1,44 @@
+---
+source: crates/explainsql-tui/tests/render.rs
+expression: "text(&explainsql_tui::render_list(&mut list, &theme, 120, 40))"
+---
+The costliest statements in app@db.internal:5432/shop, PostgreSQL 16.4
+By total execution time (pg_stat_statements). Enter plans it without running it.
+ Statements (4) ────────────────────────────────────────────────────────────────────────────────────────────────────────
+      Total  Share       Calls      Mean         Pages      Temp  Statement
+   13.5 min    81%      48,210   16.9 ms        24,170            SELECT o.id, o.amount FROM orders o WHERE o.customer_…
+    1.6 min   9.6%       1,204   80.0 ms       241,700     3,412  SELECT status, count(*) FROM orders GROUP BY status
+–   41.00 s   4.1%          12    3.42 s       300,000            VACUUM (ANALYZE) orders
+    12.90 s   1.3%     310,000  0.042 ms           120            UPDATE orders SET note = $1 WHERE id = $2
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ Statement ─────────────────────────────────────────────────────────────────────────────────────────────────────────────
+48,210 calls · 16.9 ms each · 144,630 rows · 24,170 pages, 90% from cache · query id 381774990
+SELECT o.id, o.amount FROM orders o WHERE o.customer_id = $1 ORDER BY o.created_at DESC LIMIT $2
+
+
+
+
+
+
+j/k move  Enter plan  p try values  q quit

@@ -8,6 +8,7 @@ mod check;
 mod connected;
 mod logs;
 mod params;
+mod top;
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use explainsql_core::Analysis;
@@ -36,7 +37,8 @@ use explainsql_core::report;
 ///
 /// explainsql diff BEFORE AFTER compares two plans of the same statement;
 /// explainsql check checks plans in continuous integration; explainsql logs
-/// tells when the plans in server logs changed.
+/// tells when the plans in server logs changed; explainsql top lists a
+/// database's costliest statements from pg_stat_statements.
 #[derive(Parser)]
 #[command(
     name = "explainsql",
@@ -198,6 +200,65 @@ enum Task {
     /// their text without literal values. sqlcommenter tags in the text say
     /// where in the application a statement comes from.
     Logs(LogsArgs),
+    /// List a database's costliest statements, from pg_stat_statements,
+    /// and plan one of them.
+    ///
+    /// In a terminal, Enter shows the plan of the selected statement,
+    /// estimated and without running it: on PostgreSQL 16 or later, a
+    /// statement with parameters ($1, as pg_stat_statements writes
+    /// constants) gets its generic plan (EXPLAIN GENERIC_PLAN). p tries
+    /// values for its parameters, as --params does, and shows the report;
+    /// before PostgreSQL 16, so does Enter. Elsewhere, or with --print, the
+    /// list is printed.
+    ///
+    /// The extension must be installed in the database (CREATE EXTENSION
+    /// pg_stat_statements) and loaded (shared_preload_libraries). Other
+    /// users' statements need the pg_read_all_stats role.
+    Top(TopArgs),
+}
+
+#[derive(Args)]
+struct TopArgs {
+    /// The database, as -d in connected mode; PG* variables, the service
+    /// file and ~/.pgpass apply as in psql.
+    #[arg(short = 'd', long, value_name = "DATABASE")]
+    dbname: Option<String>,
+
+    /// How many statements to list.
+    #[arg(long, value_name = "N", default_value_t = 20, value_parser = clap::value_parser!(u16).range(1..=1000))]
+    limit: u16,
+
+    /// Print the list instead of opening it, which is what happens anyway
+    /// when the output is not a terminal.
+    #[arg(long)]
+    print: bool,
+
+    /// Format of the printed list.
+    #[arg(long, value_enum, default_value_t = Format::Text)]
+    format: Format,
+
+    /// When to color the printed list.
+    #[arg(long, value_enum, default_value_t = Color::Auto)]
+    color: Color,
+
+    /// The terminal's background, for the list's and the viewer's colors.
+    #[arg(long, value_enum, default_value_t = Theme::Dark)]
+    theme: Theme,
+
+    /// When trying values: measure the plans where they differ, with
+    /// EXPLAIN ANALYZE in a transaction that is rolled back, rather than
+    /// only estimate them.
+    #[arg(long)]
+    measure: bool,
+
+    /// With --measure: also run statements that modify data or lock rows,
+    /// in a transaction that is rolled back.
+    #[arg(long)]
+    allow_dml: bool,
+
+    /// Stop each query after this many seconds.
+    #[arg(long, value_name = "SECONDS", default_value_t = 30)]
+    timeout: u64,
 }
 
 #[derive(Args)]
@@ -386,6 +447,7 @@ fn main() -> ExitCode {
         Some(Task::Diff(args)) => return diff(args),
         Some(Task::Check(args)) => return check::run(args),
         Some(Task::Logs(args)) => return logs::run(args),
+        Some(Task::Top(args)) => return top::run(args),
         None => {}
     }
     if cli.query_file.is_some() || cli.command.is_some() {

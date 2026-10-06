@@ -346,3 +346,62 @@ fn logs_reports() {
     assert_eq!(json["log"][0]["trace"], "4bf92f3577b34da6a3ce929d0e0e4736");
     assert_eq!(json["log"][0]["line"], 6);
 }
+
+/// The costliest statements of a database: one that took most of its time,
+/// one that spills, a command and another user's statement that cannot be
+/// planned.
+#[test]
+fn top_reports() {
+    use explainsql_core::top::{self, Entry};
+    let entry = |query: &str, calls: i64, total_ms: f64, read: i64, temp: i64| Entry {
+        queryid: (query != top::HIDDEN).then_some(calls * 7919),
+        query: query.to_owned(),
+        calls,
+        total_ms,
+        share: total_ms / 1_000_000.0,
+        mean_ms: total_ms / calls as f64,
+        rows: calls * 3,
+        shared_hit: read * 9,
+        shared_read: read,
+        temp_written: temp,
+        unplannable: top::unplannable(query, Some(1024)),
+    };
+    let entries = [
+        entry(
+            "SELECT o.id, o.amount\n  FROM orders o\n WHERE o.customer_id = $1\n ORDER BY o.created_at DESC\n LIMIT $2",
+            48_210,
+            812_400.0,
+            2_417,
+            0,
+        ),
+        entry(
+            "SELECT status, count(*) FROM orders GROUP BY status",
+            1_204,
+            96_300.0,
+            24_170,
+            3_412,
+        ),
+        entry("VACUUM (ANALYZE) orders", 12, 41_000.0, 30_000, 0),
+        entry(top::HIDDEN, 900, 20_100.0, 410, 0),
+    ];
+    let source = "app@db.internal:5432/shop, PostgreSQL 16.4";
+    insta::assert_snapshot!("top_text", report::top_text(&entries, source, false));
+    insta::assert_snapshot!("top_markdown", report::top_markdown(&entries, source));
+    let json: serde_json::Value =
+        serde_json::from_str(&report::top_json(&entries, source)).unwrap();
+    assert_eq!(json["source"], source);
+    assert_eq!(json["statements"][0]["calls"], 48_210);
+    assert_eq!(json["statements"][0]["share"], 0.8124);
+    assert!(json["statements"][0].get("unplannable").is_none());
+    assert_eq!(json["statements"][3]["queryid"], serde_json::Value::Null);
+    assert!(
+        json["statements"][3]["unplannable"]
+            .as_str()
+            .unwrap()
+            .contains("pg_read_all_stats")
+    );
+    assert!(
+        report::top_markdown(&[], source).contains("has counted none"),
+        "an empty database says so"
+    );
+}

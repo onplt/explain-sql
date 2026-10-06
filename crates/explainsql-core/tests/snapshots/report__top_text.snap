@@ -1,0 +1,13 @@
+---
+source: crates/explainsql-core/tests/report.rs
+expression: "report::top_text(&entries, source, false)"
+---
+The 4 costliest statements in app@db.internal:5432/shop, PostgreSQL 16.4, by total execution time
+
+#     Total  Share   Calls     Mean    Pages   Temp  Statement
+1  13.5 min    81%  48,210  16.9 ms   24,170         SELECT o.id, o.amount FROM orders o WHERE o.cu…
+2   1.6 min   9.6%   1,204  80.0 ms  241,700  3,412  SELECT status, count(*) FROM orders GROUP BY s…
+3   41.00 s   4.1%      12   3.42 s  300,000         VACUUM (ANALYZE) orders
+                                                     cannot be planned: VACUUM is a command without a plan
+4   20.10 s   2.0%     900  22.3 ms    4,100         <insufficient privilege>
+                                                     cannot be planned: another user's statement: its text needs the pg_read_all_stats role

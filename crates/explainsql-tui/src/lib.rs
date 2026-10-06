@@ -3,6 +3,7 @@
 
 mod app;
 mod theme;
+mod top;
 mod ui;
 
 use std::io::{self, Write};
@@ -15,6 +16,7 @@ use ratatui::crossterm::event::{self, KeyCode, KeyEventKind, KeyModifiers};
 
 pub use app::{App, Key, Live, Outcome};
 pub use theme::{Background, Depth, Theme};
+pub use top::{List, Picked};
 
 /// How the viewer looks.
 #[derive(Debug, Clone, Copy, Default)]
@@ -163,21 +165,8 @@ fn event_loop(
         {
             return Ok(());
         }
-        let key = match key.code {
-            KeyCode::Char(c) => Key::Char(c),
-            KeyCode::Up => Key::Up,
-            KeyCode::Down => Key::Down,
-            KeyCode::Left => Key::Left,
-            KeyCode::Right => Key::Right,
-            KeyCode::PageUp => Key::PageUp,
-            KeyCode::PageDown => Key::PageDown,
-            KeyCode::Home => Key::Home,
-            KeyCode::End => Key::End,
-            KeyCode::Enter => Key::Enter,
-            KeyCode::Esc => Key::Esc,
-            KeyCode::Tab | KeyCode::BackTab => Key::Tab,
-            KeyCode::Backspace => Key::Backspace,
-            _ => continue,
+        let Some(key) = key_of(key.code) else {
+            continue;
         };
         let page = app.tree_height.saturating_sub(1);
         match (app.handle(key, page), connection) {
@@ -243,6 +232,80 @@ fn event_loop(
             _ => {}
         }
     }
+}
+
+/// A key, independent of the terminal library.
+fn key_of(code: KeyCode) -> Option<Key> {
+    Some(match code {
+        KeyCode::Char(c) => Key::Char(c),
+        KeyCode::Up => Key::Up,
+        KeyCode::Down => Key::Down,
+        KeyCode::Left => Key::Left,
+        KeyCode::Right => Key::Right,
+        KeyCode::PageUp => Key::PageUp,
+        KeyCode::PageDown => Key::PageDown,
+        KeyCode::Home => Key::Home,
+        KeyCode::End => Key::End,
+        KeyCode::Enter => Key::Enter,
+        KeyCode::Esc => Key::Esc,
+        KeyCode::Tab | KeyCode::BackTab => Key::Tab,
+        KeyCode::Backspace => Key::Backspace,
+        _ => return None,
+    })
+}
+
+/// Shows the list of a database's costliest statements until the user
+/// picks one or quits. The terminal is restored before it returns, so that
+/// the caller can plan the statement and show it with [`run`].
+pub fn pick(list: &mut List, options: Options) -> io::Result<Picked> {
+    let theme = Theme::new(
+        options.background,
+        options.depth.unwrap_or_else(Depth::detect),
+    );
+    let mut terminal = ratatui::try_init()?;
+    let result = pick_loop(&mut terminal, list, &theme);
+    ratatui::try_restore()?;
+    result
+}
+
+fn pick_loop(
+    terminal: &mut ratatui::DefaultTerminal,
+    list: &mut List,
+    theme: &Theme,
+) -> io::Result<Picked> {
+    loop {
+        terminal.draw(|frame| top::draw(frame, list, theme))?;
+        let event::Event::Key(key) = event::read()? else {
+            // Resizes and other events just redraw.
+            continue;
+        };
+        if key.kind == KeyEventKind::Release {
+            continue;
+        }
+        if key.modifiers.contains(KeyModifiers::CONTROL)
+            && matches!(key.code, KeyCode::Char('c' | 'd'))
+        {
+            return Ok(Picked::Quit);
+        }
+        if let Some(picked) = key_of(key.code).and_then(|key| list.handle(key)) {
+            return Ok(picked);
+        }
+    }
+}
+
+/// Draws one frame of the list into a buffer, for tests.
+pub fn render_list(
+    list: &mut List,
+    theme: &Theme,
+    width: u16,
+    height: u16,
+) -> ratatui::buffer::Buffer {
+    let backend = ratatui::backend::TestBackend::new(width, height);
+    let mut terminal = ratatui::Terminal::new(backend).expect("a test backend never fails");
+    terminal
+        .draw(|frame| top::draw(frame, list, theme))
+        .expect("a test backend never fails");
+    terminal.backend().buffer().clone()
 }
 
 /// Asks the connection for an EXPLAIN ANALYZE of the current statement.
