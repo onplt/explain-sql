@@ -53,6 +53,7 @@ explainsql -d "$DATABASE_URL" -f app.sql --params --measure   # a statement with
 explainsql diff before.json after.json                 # what changed between two plans, node by node
 explainsql check -d "$DATABASE_URL" queries/           # in CI: fail when a plan got worse than its locked plan
 explainsql logs postgresql.json --changed              # auto_explain logs: when and how each statement's plan changed
+explainsql top -d "$DATABASE_URL"                      # the costliest statements (pg_stat_statements): pick one, see its plan
 explainsql anonymize plan.json > shared.json           # names and values replaced, to share a plan in an issue
 ```
 
@@ -88,7 +89,7 @@ Releases are made by pushing a version tag. The release workflow builds every ta
 
 ## Status
 
-Pre-alpha. Phases 0 to 4 are done: the fixture corpus, the parsers, the metrics engine and rules, the viewer, the index advisor, connected mode and the proof loop. Phase 5, release hardening, is done: version 0.1.0 is released with binaries for Linux, macOS and Windows. Feedback is welcome in the issues.
+Pre-alpha. Phases 0 to 4 are done: the fixture corpus, the parsers, the metrics engine and rules, the viewer, the index advisor, connected mode and the proof loop. Phase 5, release hardening, is done: version 0.1.0 was released with binaries for Linux, macOS and Windows. Version 0.2.0 fits it into team workflows: plan diffs, a CI gate with a GitHub Action, statements with parameters, server logs, pg_stat_statements and shareable plans. Feedback is welcome in the issues.
 
 ## License
 
