@@ -58,6 +58,11 @@ All notable changes to ExplainSQL. The format follows
 
 ### Changed
 
+- ES003 and ES004 name the `work_mem` a spilled sort or hash needs, from
+  what the plan shows, to set for the statement alone (`SET LOCAL work_mem
+  = '64MB'` in its transaction), and say what it may take: each sort, hash
+  and other operation that uses `work_mem` may take that much, in each
+  process that runs it, in every session that runs the statement at once.
 - In connected mode, a run compared with the previous one says what changed
   in the plan, or that it is the same plan.
 - Before and after comparisons lead with pages, then temporary files, then

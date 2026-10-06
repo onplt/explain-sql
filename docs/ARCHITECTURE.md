@@ -35,6 +35,7 @@ explain-sql/
 │  │  ├─ src/catalog.rs          # what the database says about the plan's tables
 │  │  ├─ src/check.rs            # the CI gate: findings, locked plans, explainsql.lock
 │  │  ├─ src/compare.rs          # before and after a change: pages first, then time
+│  │  ├─ src/memory.rs           # the work_mem a spill needs, and what it may take
 │  │  ├─ src/diff.rs             # two plans of a statement, node by node
 │  │  ├─ src/scenario.rs         # the planner settings explainsql may plan under
 │  │  ├─ src/fingerprint.rs      # the same scan or join in another plan; plan shapes

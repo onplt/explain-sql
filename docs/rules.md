@@ -14,8 +14,8 @@ Each rule lives in its own file, `crates/explainsql-core/src/rules/esNNN_*.rs`, 
 |---|---|---|
 | [ES001](rules/ES001.md) | Selective sequential scan | An index on the filtered columns, or rewriting a condition that wraps the column |
 | [ES002](rules/ES002.md) | Row misestimate | `ANALYZE`, `CREATE STATISTICS`, statistics target |
-| [ES003](rules/ES003.md) | Sort spilled to disk | Session-level `work_mem`, or an index matching the sort |
-| [ES004](rules/ES004.md) | Hash or aggregate spilled to disk | `work_mem` / `hash_mem_multiplier` |
+| [ES003](rules/ES003.md) | Sort spilled to disk | A `work_mem` for the statement, with what it may take, or an index matching the sort |
+| [ES004](rules/ES004.md) | Hash or aggregate spilled to disk | A `work_mem` for the statement, with what it may take, or `hash_mem_multiplier` |
 | [ES005](rules/ES005.md) | Expensive nested-loop inner side | Index on the inner join key |
 | [ES006](rules/ES006.md) | Index scan that filters most rows | Composite index |
 | [ES007](rules/ES007.md) | Index-only scan with many heap fetches | `VACUUM` (visibility map) |

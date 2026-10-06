@@ -20,8 +20,9 @@ Findings (1)
           Memory used: 173 kB
           Disk used: 7.3 MB
           Time in the node: 177.3 ms (91% of the runtime)
-          → Raise work_mem (or hash_mem_multiplier) for this query so that the aggregate's hash
-          table fits in memory.
+          → Raise work_mem (or hash_mem_multiplier) so that the aggregate's hash table fits in
+          memory. For this statement alone: SET LOCAL work_mem = '16MB' in its transaction. Every
+          session that runs the statement at the same time may take that much.
 
 Share and Time: time spent in each node itself, wall-clock. Rows: actual rows per loop, ×loops when
 it ran more than once. ▲/▼: actual rows above or below the estimate by 10× or more. Buffers: pages

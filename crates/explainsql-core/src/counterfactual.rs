@@ -19,7 +19,6 @@
 //! always in transactions that are rolled back.
 
 use serde::Serialize;
-use serde_json::Value;
 
 use crate::advisor::{Advice, AdviceKind};
 use crate::analysis::Analysis;
@@ -29,9 +28,10 @@ use crate::expr::{self, Access};
 use crate::fingerprint::{self, Relation};
 use crate::format;
 use crate::ir::{Node, NodeId, Plan, PredicateKind, Relationship};
+use crate::memory;
 use crate::metrics::{self, Metrics, Misestimate};
 use crate::rules::{Evidence, qualifier};
-use crate::scenario::{self, Setting};
+use crate::scenario::Setting;
 
 /// Share of the runtime from which a node is worth asking about.
 const MIN_SHARE: f64 = 0.1;
@@ -44,9 +44,6 @@ const MISESTIMATE: f64 = 10.0;
 /// sequence: SSDs, cloud volumes, a cache that holds the table.
 const FAST_RANDOM_PAGE_COST: &str = "1.1";
 const DEFAULT_RANDOM_PAGE_COST: f64 = 4.0;
-/// work_mem, in kilobytes: PostgreSQL's default, and the most suggested.
-const DEFAULT_WORK_MEM: u64 = 4 * 1024;
-const MAX_WORK_MEM: u64 = 1024 * 1024;
 /// A plan within this fraction of the planner's choice is a close call.
 const CLOSE_CALL: f64 = 0.1;
 
@@ -306,7 +303,7 @@ fn hot_share(plan: &Plan, analysis: &Analysis, node: &Node, measure: bool) -> Op
             });
             (flagged || misled).then(|| inclusive_share(analysis, node))?
         }
-        _ if measure && spill_needs(node).is_some() => inclusive_share(analysis, node),
+        _ if measure && memory::needed(node).is_some() => inclusive_share(analysis, node),
         _ => None,
     }
 }
@@ -387,7 +384,7 @@ fn question(
             })
         }
         _ if measure => {
-            let work_mem = memory(plan, node)?;
+            let work_mem = memory::work_mem(plan, node)?;
             Some(Question {
                 node: id,
                 topic: Topic::Memory {
@@ -430,67 +427,6 @@ fn random_page_cost(plan: &Plan) -> f64 {
     setting(plan, "random_page_cost")
         .and_then(|value| value.parse().ok())
         .unwrap_or(DEFAULT_RANDOM_PAGE_COST)
-}
-
-/// How much memory a spilled operation would need to stay in memory, in
-/// kilobytes, by what the plan shows.
-fn spill_needs(node: &Node) -> Option<f64> {
-    let number = |extra: &std::collections::BTreeMap<String, Value>, key: &str| {
-        extra.get(key).and_then(Value::as_f64)
-    };
-    match node.node_type.as_str() {
-        "Sort" => {
-            // On disk, sorted rows take about a third of the room they
-            // take in memory.
-            let disk = std::iter::once(&node.extra)
-                .chain(node.workers.iter().map(|worker| &worker.extra))
-                .filter(|extra| {
-                    extra.get("Sort Space Type").and_then(Value::as_str) == Some("Disk")
-                })
-                .filter_map(|extra| number(extra, "Sort Space Used"))
-                .fold(0.0, f64::max);
-            (disk > 0.0).then_some(disk * 3.0)
-        }
-        "Hash" => {
-            let batches = node
-                .extra_f64("Hash Batches")
-                .filter(|&batches| batches > 1.0)?;
-            // Each batch held about as much as the one in memory.
-            Some(node.extra_f64("Peak Memory Usage")? * batches * 1.25)
-        }
-        "Aggregate" if matches!(node.strategy.as_deref(), Some("Hashed" | "Mixed")) => {
-            let disk = node.extra_f64("Disk Usage").unwrap_or(0.0);
-            let batches = node.extra_f64("HashAgg Batches").unwrap_or(0.0);
-            (disk > 0.0 || batches > 1.0)
-                .then(|| (node.extra_f64("Peak Memory Usage").unwrap_or(0.0) + disk) * 2.0)
-        }
-        _ => None,
-    }
-}
-
-/// The work_mem to try for a spilled operation: a power of two megabytes,
-/// more than the plan ran with, and at most a gigabyte.
-fn memory(plan: &Plan, node: &Node) -> Option<String> {
-    let needed = spill_needs(node)?;
-    let current = setting(plan, "work_mem")
-        .and_then(scenario::kilobytes)
-        .unwrap_or(DEFAULT_WORK_MEM);
-    let mut megabytes: u64 = 1;
-    // Kilobytes in the range of u64 are exact enough as floats here.
-    #[allow(clippy::cast_precision_loss)]
-    while ((megabytes * 1024) as f64) < needed && megabytes * 1024 < MAX_WORK_MEM {
-        megabytes *= 2;
-    }
-    let kilobytes = megabytes * 1024;
-    #[allow(clippy::cast_precision_loss)]
-    let enough = kilobytes as f64 >= needed;
-    (enough && kilobytes > current).then(|| {
-        if megabytes >= 1024 {
-            format!("{}GB", megabytes / 1024)
-        } else {
-            format!("{megabytes}MB")
-        }
-    })
 }
 
 /// The conditions an index would have to serve: the scan's filter and, on

@@ -9,6 +9,7 @@ use serde_json::Value;
 use super::{Context, Finding, Rule, Severity, evidence};
 use crate::format;
 use crate::ir::Node;
+use crate::memory;
 
 pub const RULE: Rule = Rule {
     id: "ES004",
@@ -63,7 +64,8 @@ fn hash(context: &Context, node: &Node) -> Option<Finding> {
     let share = join
         .and_then(|join| context.inclusive_share(join))
         .or(context.share(node));
-    let mut action = "Raise work_mem (or hash_mem_multiplier) for this query so that the hash table fits in memory".to_owned();
+    let mut action =
+        "Raise work_mem (or hash_mem_multiplier) so that the hash table fits in memory".to_owned();
     match number(node, "Peak Memory Usage") {
         // Each batch held about as much as the one in memory.
         Some(memory) => action.push_str(&format!(
@@ -74,6 +76,7 @@ fn hash(context: &Context, node: &Node) -> Option<Finding> {
         )),
         None => action.push('.'),
     }
+    action.push_str(&suggestion(context, node));
     if underestimated_input(context, node) {
         action.push_str(" The planner expected far fewer rows from the input (ES002), so fixing that estimate may let it size the hash correctly.");
     }
@@ -111,7 +114,8 @@ fn aggregate(context: &Context, node: &Node) -> Option<Finding> {
         facts.push(evidence("Disk used", format::kilobytes(disk)));
     }
     facts.extend(context.time_evidence(node));
-    let mut action = "Raise work_mem (or hash_mem_multiplier) for this query so that the aggregate's hash table fits in memory.".to_owned();
+    let mut action = "Raise work_mem (or hash_mem_multiplier) so that the aggregate's hash table fits in memory.".to_owned();
+    action.push_str(&suggestion(context, node));
     if underestimated_input(context, node) {
         action.push_str(" The planner expected far fewer rows from the input (ES002).");
     }
@@ -127,6 +131,14 @@ fn aggregate(context: &Context, node: &Node) -> Option<Finding> {
         evidence: facts,
         action,
     })
+}
+
+/// ` For this statement alone: SET LOCAL work_mem = …`, when there is a
+/// work_mem to suggest.
+fn suggestion(context: &Context, node: &Node) -> String {
+    memory::advice(context.plan, context.metrics, node)
+        .map(|advice| format!(" {advice}"))
+        .unwrap_or_default()
 }
 
 fn underestimated_input(context: &Context, node: &Node) -> bool {

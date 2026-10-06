@@ -22,8 +22,10 @@ Findings (1)
           Batches: 128
           Memory used: 89 kB
           Written to disk: 508 pages (4.0 MB)
-          → Raise work_mem (or hash_mem_multiplier) for this query so that the hash table fits in
-          memory: the whole table takes roughly 11.1 MB, 128 batches of 89 kB.
+          → Raise work_mem (or hash_mem_multiplier) so that the hash table fits in memory: the whole
+          table takes roughly 11.1 MB, 128 batches of 89 kB. For this statement alone: SET LOCAL
+          work_mem = '16MB' in its transaction. Every session that runs the statement at the same
+          time may take that much.
 
 No index would help
   Seq Scan on order_items oi: it reads the whole table because the query needs every row; there is
