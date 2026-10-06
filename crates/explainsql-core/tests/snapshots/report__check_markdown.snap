@@ -2,6 +2,7 @@
 source: crates/explainsql-core/tests/report.rs
 expression: "report::check_markdown(&checked)"
 ---
+<!-- explainsql check -->
 ### explainsql check
 
 **1 of 3 plans failed.** 3 plans: 1 failed, 1 new, 1 passed.

@@ -156,6 +156,10 @@ fn try_run(args: &CheckArgs) -> Result<ExitCode, String> {
         CheckFormat::Json => report::check_json(&checked),
         CheckFormat::Sarif => report::check_sarif(&checked),
     };
+    if let Some(path) = &args.sarif {
+        fs::write(path, report::check_sarif(&checked))
+            .map_err(|error| format!("{path}: {error}"))?;
+    }
     if emit(&output) != ExitCode::SUCCESS {
         return Ok(ExitCode::from(ERROR));
     }

@@ -1,0 +1,4 @@
+Index Scan using orders_customer_id_idx on orders o  (cost=0.42..44.50 rows=10 width=20) (actual time=0.020..0.051 rows=10 loops=1)
+  Index Cond: (customer_id = 4242)
+  Buffers: shared hit=13
+Execution Time: 0.070 ms

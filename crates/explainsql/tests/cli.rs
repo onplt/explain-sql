@@ -555,7 +555,17 @@ fn checks_plans_against_their_locked_plans() {
             .iter()
             .any(|result| result["ruleId"] == "ES001" && result["level"] == "warning")
     );
-    let markdown = stdout(&check(&["--format", "md"]));
+    let sarif_path = dir.join("explainsql.sarif");
+    let output = check(&["--format", "md", "--sarif", sarif_path.to_str().unwrap()]);
+    assert_eq!(output.status.code(), Some(1), "{output:?}");
+    let markdown = stdout(&output);
+    assert!(
+        markdown.starts_with("<!-- explainsql check -->\n"),
+        "{markdown}"
+    );
+    let written: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&sarif_path).unwrap()).unwrap();
+    assert_eq!(written, sarif);
     assert!(markdown.contains("**The plan failed.**"), "{markdown}");
     assert!(
         markdown.contains("| `plans/customer.txt` | **Failed** |"),

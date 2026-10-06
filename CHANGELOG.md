@@ -16,6 +16,16 @@ All notable changes to ExplainSQL. The format follows
   findings stay as they were, and the plan compares and folds as before.
   `--keep-names` replaces only the values; `--map FILE` writes what each
   name and value became.
+- A GitHub Action (`uses: onplt/explain-sql@v0.2.0`): runs `explainsql check`
+  and writes the report on the pull request as one comment, updated in place
+  on later runs. See the guide.
+- `explainsql check --sarif FILE` writes the SARIF report beside a report in
+  another format.
+
+### Changed
+
+- `explainsql check --format md` starts with a hidden marker line and stays
+  under GitHub's limit for a comment, leading with the plans that failed.
 
 ## [0.1.1] - 2026-10-06
 

@@ -301,6 +301,62 @@ A GitHub Actions job, against the database the tests use:
     sarif_file: explainsql.sarif
 ```
 
+`--sarif FILE` writes the SARIF report too, beside a report in another format, so that one run gives both. `--format md` starts with the line `<!-- explainsql check -->`, hidden in a rendered comment, and stays under GitHub's limit for a comment: when the plans do not fit, those that failed come first, then those that changed, and the rest are counted.
+
+### The GitHub Action
+
+The repository is also a GitHub Action. It installs explainsql, runs `explainsql check`, and writes the report on the pull request as a comment, which later runs update in place: a check that fails posts or updates it, and one that passes changes a comment already there to say so, without posting a new one. The report is in the job summary too, and the job fails as the check does.
+
+```yaml
+on: pull_request
+permissions:
+  contents: read
+  pull-requests: write        # for the comment
+  security-events: write      # only with upload-sarif
+jobs:
+  plans:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports: ["5432:5432"]
+        options: --health-cmd pg_isready --health-interval 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v5
+      - run: psql "$DATABASE_URL" -f schema.sql   # the tables, and data shaped like production's
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/postgres
+      - uses: onplt/explain-sql@v0.2.0
+        with:
+          paths: queries/
+          database-url: postgresql://postgres:postgres@localhost:5432/postgres
+          fail-on: high
+          upload-sarif: true
+```
+
+Without `database-url`, `paths` are captured plan files and no database is needed.
+
+| Input | Default | |
+|---|---|---|
+| `paths` | | Plan files, or SQL files with `database-url`; directories are searched. Separated by spaces or new lines. |
+| `database-url` | | Run the SQL files against this database. |
+| `lock` | `explainsql.lock` | The file of locked plans. |
+| `fail-on` | | Also fail a plan with a finding at least this severe. |
+| `strict` | `false` | Also fail a plan whose shape changed. |
+| `args` | | More arguments for `explainsql check`, such as `--prove` or `--no-analyze`. |
+| `comment` | `true` | Comment on the pull request. |
+| `comment-key` | `default` | Tells this check's comment from another's, when a workflow checks several sets of plans. |
+| `upload-sarif` | `false` | Upload the report to code scanning. |
+| `version` | the action's | The explainsql release to install; by default the one the action is referenced by (`@v0.2.0`), or the latest. |
+| `binary` | | An explainsql binary to use instead of installing one. |
+| `github-token` | `github.token` | The token that writes the comment. |
+
+The outputs are `result` (`passed`, `failed` or `error`), `exit-code`, and the paths of the reports, `report` (Markdown) and `sarif`. The action runs on Linux and macOS runners, and needs explainsql 0.2.0 or later.
+
+A pull request from a fork gets no comment: its token cannot write one, and `pull_request_target`, whose token can, would run the fork's code with the repository's secrets. Its report is in the job summary.
+
 For a single plan, the main command takes `--fail-on` as well: `explainsql --print --fail-on high plan.json` exits with 1 when a finding is at least that severe.
 
 A plan from a database with a handful of rows says little: the planner reads such tables whole. Check against data shaped like production's. PostgreSQL 18 can also restore production's statistics (`pg_restore_relation_stats`, `pg_restore_attribute_stats`), although the planner still sees the size of each table on disk.
