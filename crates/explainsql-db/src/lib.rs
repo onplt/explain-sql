@@ -423,6 +423,46 @@ impl Database {
         self.classify(result, safety)
     }
 
+    /// The foreign keys of a single column from or to `table.column`.
+    pub fn references(
+        &self,
+        schema: Option<&str>,
+        table: &str,
+        column: &str,
+    ) -> Result<Vec<explainsql_core::requests::Reference>, Error> {
+        let safety = Safety::default();
+        let result = self.runtime.block_on(catalog::references(
+            &self.client,
+            schema,
+            table,
+            column,
+            safety,
+        ));
+        self.classify(result, safety)
+    }
+
+    /// The median time of a round trip to the server, `SELECT 1` sent and
+    /// its result back, over `samples` runs after one that is left out.
+    pub fn round_trip(&self, samples: usize) -> Result<Duration, Error> {
+        let client = &self.client;
+        let result = self.runtime.block_on(async {
+            let mut times = Vec::with_capacity(samples);
+            for warm_up in std::iter::once(true).chain(std::iter::repeat_n(false, samples.max(1))) {
+                let start = std::time::Instant::now();
+                client
+                    .simple_query("SELECT 1")
+                    .await
+                    .map_err(|error| Error::Server(describe(&error)))?;
+                if !warm_up {
+                    times.push(start.elapsed());
+                }
+            }
+            times.sort();
+            Ok(times[times.len() / 2])
+        });
+        self.classify(result, Safety::default())
+    }
+
     /// Turns a query cancellation into a timeout or a cancellation.
     fn classify<T>(&self, result: Result<T, Error>, safety: Safety) -> Result<T, Error> {
         match result {

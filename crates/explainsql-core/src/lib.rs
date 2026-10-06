@@ -32,6 +32,7 @@ pub mod metrics;
 pub mod params;
 pub mod pg;
 pub mod report;
+pub mod requests;
 pub mod rules;
 pub mod scenario;
 pub mod timeline;

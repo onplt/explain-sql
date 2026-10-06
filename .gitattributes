@@ -7,5 +7,6 @@ fixtures/schema.sql text eol=lf
 # Captured psql output and log files: byte-for-byte as captured.
 fixtures/inputs/** text eol=lf
 fixtures/logs/** text eol=lf
+fixtures/requests/** text eol=lf
 # Report snapshots compare byte for byte.
 crates/explainsql-core/tests/snapshots/*.snap text eol=lf

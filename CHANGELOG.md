@@ -6,6 +6,24 @@ All notable changes to ExplainSQL. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- `explainsql requests LOGS`: the statements of server logs grouped into
+  requests, by the trace id of their sqlcommenter `traceparent` tag, their
+  transaction or their session, and the loops in them: a statement run
+  again and again in one request with another value each time (N+1), or
+  with the same values. For each loop, the batched statement that does the
+  work of all its runs at once (`= ANY($1)`, or a `LATERAL` subquery over
+  `unnest($1)` when its rows must stay per value), and how to make the ORM
+  send it. With `-d`, the batched statement and the runs are measured, each
+  run rolled back, with the round trips they need, and the foreign key
+  behind the loop is named. Reads statement logging
+  (`log_min_duration_statement`, `log_statement` with `log_duration`) in
+  stderr, csvlog and jsonlog, values from the `parameters:` detail lines, or
+  auto_explain entries. See the guide.
+- Server log entries carry their session (`%c`) and virtual transaction
+  (`%v`), from jsonlog and csvlog fields or a stderr `log_line_prefix`; `explainsql logs --format json` shows them.
+
 ## [0.2.0] - 2026-10-06
 
 ### Added
