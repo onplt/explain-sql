@@ -11,8 +11,8 @@ use explainsql_core::catalog::Catalog;
 use explainsql_core::counterfactual::{self, Answer, Evaluation, Question, Target, Verdict};
 use explainsql_core::ir::Plan;
 use explainsql_core::scenario::Setting;
-use explainsql_core::{Analysis, advisor, catalog, compare};
-use explainsql_db::{Database, Error, Mode, Safety, Settings};
+use explainsql_core::{Analysis, advisor, catalog, compare, writes};
+use explainsql_db::{Database, Error, Mode, Reading, Safety, Settings};
 use explainsql_tui::{Command, Connection, Event};
 
 use crate::{Cli, Format, emit, interactive, params, report_for, viewer_options, with_findings};
@@ -80,6 +80,7 @@ fn try_run(cli: &Cli) -> Result<ExitCode, String> {
         }
         if cli.prove {
             prove_all(&db, &sql, &mut analysis, runs, safety);
+            prove_hot(&db, &sql, &mut analysis, safety);
         }
         if let Some(target) = &cli.why_not {
             let target = Target::parse(target);
@@ -246,20 +247,53 @@ fn plan_of(
     safety: Safety,
     locks: bool,
 ) -> Result<(Plan, Analysis, Option<Catalog>), String> {
-    let (json, capture) = if locks {
-        db.explain_locks(sql, mode, safety)
-    } else {
-        db.explain(sql, mode, safety).map(|json| (json, None))
-    }
-    .map_err(|error| error.to_string())?;
+    let reading = Reading {
+        locks,
+        writes: true,
+    };
+    let (json, observation) = db
+        .explain_reading(sql, mode, safety, reading)
+        .map_err(|error| error.to_string())?;
     let plan = explainsql_core::parse(&json).map_err(|error| error.to_string())?;
     let (mut analysis, catalog) = analyzed(db, &plan);
-    if let Some(capture) = capture {
+    if let Some(capture) = observation.locks {
         analysis
             .locks
             .push(explainsql_core::locks::footprint(&capture, &plan));
     }
+    analysis.writes = observation
+        .writes
+        .and_then(|capture| writes::xray(&capture, &plan, sql));
     Ok((plan, analysis, catalog))
+}
+
+/// Runs the statement again without the indexes that kept its updates from
+/// being HOT, dropped in a transaction that is rolled back.
+fn prove_hot(db: &Database, sql: &str, analysis: &mut Analysis, safety: Safety) {
+    let Some(xray) = analysis
+        .writes
+        .as_mut()
+        .filter(|xray| !xray.to_drop.is_empty())
+    else {
+        return;
+    };
+    if !safety.allow_ddl {
+        eprintln!(
+            "explainsql: cannot test the updates without the indexes that keep them from being HOT: pass --allow-ddl"
+        );
+        return;
+    }
+    let proof = db
+        .explain_without(sql, &xray.to_drop, safety)
+        .map_err(|error| error.to_string())
+        .and_then(|(json, capture)| {
+            let plan = explainsql_core::parse(&json).map_err(|error| error.to_string())?;
+            Ok((plan, capture))
+        });
+    match proof {
+        Ok((plan, capture)) => writes::proven(xray, &capture, &plan),
+        Err(error) => eprintln!("explainsql: cannot test the updates without the indexes: {error}"),
+    }
 }
 
 /// What the user should know about the runs, such as a measured run that

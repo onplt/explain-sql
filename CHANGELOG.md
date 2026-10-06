@@ -19,6 +19,15 @@ All notable changes to ExplainSQL. The format follows
   guide.
 - With `--locks`, `--measure` or `--prove`, a measured run that waited for
   another session's lock runs again, up to twice, with a note.
+- What a write costs, for a statement run with `--allow-dml`, and `W` in the
+  viewer: the rows each table got, read from the transaction's own counters
+  before the rollback, whether updates were HOT, the columns the statement
+  sets that kept them from it and the indexes that refer to them (unused
+  ones as a medium finding), the page-room and fillfactor note when no index
+  is to blame, and the index entries and WAL per row. From PostgreSQL 13,
+  `EXPLAIN ANALYZE` of a statement that writes includes `WAL`. With
+  `--prove --allow-ddl`, the statement runs again with those indexes dropped
+  in a transaction that is rolled back. See the guide.
 
 ## [0.2.0] - 2026-10-06
 

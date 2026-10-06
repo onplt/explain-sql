@@ -103,18 +103,24 @@ struct Cli {
     /// Connected mode: also run statements that modify data or lock rows.
     /// They run inside a transaction that is rolled back, but sequences,
     /// dblink calls and other effects outside the database are not undone.
+    /// The report then says what the writes cost: the rows each table got,
+    /// whether updates were HOT and which indexes kept them from it, the
+    /// index entries and the WAL written.
     #[arg(long)]
     allow_dml: bool,
 
     /// Connected mode: to test a suggested index without HypoPG, build it
     /// inside a transaction that is rolled back. Building blocks writes to
-    /// the table while it runs.
+    /// the table while it runs. With --prove, also drop the indexes that
+    /// keep updates from being HOT, which blocks reads and writes of the
+    /// table until the rollback.
     #[arg(long)]
     allow_ddl: bool,
 
     /// Connected mode, with --print: test each suggested index (with
     /// HypoPG, or with --allow-ddl by building it) and report before and
-    /// after.
+    /// after. With --allow-ddl, an update that was not HOT runs again
+    /// without the indexes that kept it from being HOT.
     #[arg(long)]
     prove: bool,
 

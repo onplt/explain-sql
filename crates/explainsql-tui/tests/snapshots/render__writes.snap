@@ -1,0 +1,34 @@
+---
+source: crates/explainsql-tui/tests/render.rs
+expression: "frame(&mut app, 100, 30)"
+---
+1.45 ms. 80% of it in Update on orders.
+Pl┌ Writes ──────────────────────────────────────────────────────────────────────────────────────┐
+ P│101 rows updated in orders, none of the updates HOT: 2 index entries and 307 B of WAL per row.│──
+  │  orders  101 updated (0 HOT, 12 to another page); 202 index entries in 2 indexes             │rs
+  │  WAL: 202 records, 1 full-page image, 30.3 kB.                                               │33
+  │                                                                                              │58
+ D│MEDIUM All 101 updates of orders were not HOT: the statement sets note (orders_note_idx),     │──
+Up│which an index refers to, so when the value changes, each such update writes a new entry in   │
+Ti│every index of the table: 2 index entries per row.                                            │
+Wi│→ orders_note_idx is not scanned since the statistics were reset: dropping it lets such       │
+Ro│updates be HOT when the page has room. Check the statistics of every server that runs queries │
+Es│first. --prove --allow-ddl drops orders_note_idx in a transaction that is rolled back and runs│
+Bu│the statement again.                                                                          │
+Re│                                                                                              │
+I/│                                                                                              │
+  │                                                                                              │
+  │                                                                                              │
+  │                                                                                              │
+  │                                                                                              │
+  │                                                                                              │
+  │                                                                                              │
+  │                                                                                              │
+  │                                                                                              │
+  │                                                                                              │
+  │                                                                                              │
+  │                                                                                              │
+  │                                                                                              │
+  │                                                                                              │
+  └ j/k scroll · any other key closes ───────────────────────────────────────────────────────────┘
+j/k move  h/l fold  / search  1-9 hotspots  Tab list  i advice  W writes  ? help  q quit

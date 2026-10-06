@@ -54,6 +54,7 @@ The top line is the verdict: the statement's time, where most of it went, and wh
 | `r`, `e`, `t`, `Esc` | Connected: run again, edit the query, test a suggestion, cancel |
 | `y` | Connected: ask the planner why it chose the selected node |
 | `L` | Connected: the locks the statement takes ([below](#what-the-statement-locks)) |
+| `W` | Connected: what the statement's writes cost ([below](#what-a-write-costs)) |
 | `?`, `q` | Help, quit |
 
 `F` shows the plan as an icicle: the root on top and each node in a box under its parent, as wide as the CPU time spent in it and below it, colored by its own share. Workers of a parallel plan add up under the node that gathers them, InitPlans, SubPlans and CTEs sit under the node they belong to, and time in triggers, outside the tree, is in the title. A plan without timing (`TIMING OFF`, or not run) is drawn by estimated cost, and the title says so. `k` `j` go to the parent and to the widest child, `h` `l` along the row, `Enter` zooms on a box to fill the width with it (`Enter` on that box again zooms out, `g` goes back to the whole plan). Nodes too narrow for a column are folded into their parent and shown as `…`; zooming opens them. The details, search and hotspots work as in the tree, and `F` goes back to it on the same node.
@@ -205,6 +206,44 @@ With `--no-analyze`, the locks are those that planning takes; `EXPLAIN ANALYZE` 
 **Measured runs that waited.** With `--locks`, `--measure` or `--prove`, the second connection also watches measured runs. A run that waited for another session's lock runs again, up to twice, and explainsql says so.
 
 **Safety.** It only reads: `pg_lock_status()`, `pg_locks`, `pg_stat_activity` and the catalog, inside the transaction that is rolled back. Reading `pg_locks` takes the lock manager's internal locks for a moment, twice per run. The second connection uses the same settings as the first.
+
+## What a write costs
+
+```sh
+explainsql -d shop -c "UPDATE orders SET status = 'shipped' WHERE id = 42" --allow-dml --print
+explainsql -d shop -f update.sql --allow-dml --allow-ddl --prove --print
+```
+
+In the viewer, press `W` once the measured plan is in.
+
+A statement that writes runs, with `--allow-dml`, inside the transaction that is rolled back. Before the rollback, explainsql reads what it wrote from the transaction's own counters (`pg_stat_xact_user_tables`) and the WAL it wrote from `EXPLAIN (ANALYZE, WAL)`:
+
+```text
+Writes
+  1 row updated in orders, not HOT: 2 index entries and 209 B of WAL per row.
+  orders  1 updated (0 HOT); 2 index entries in 2 indexes
+  WAL: 3 records, 209 B.
+
+  LOW     The update of orders was not HOT: the statement sets created_at (orders_created_at_idx),
+          which an index refers to, so when the value changes, each such update writes a new entry
+          in every index of the table: 2 index entries per row.
+```
+
+The report says:
+
+- **The rows each table got**, those of triggers and foreign-key cascades included.
+- **Whether updates were HOT.** An update is HOT (a heap-only tuple) when the new version of the row fits on the page of the old one and no index refers to a column whose value changed. Then no index gets an entry. Otherwise every index of the table gets one, for every row, with the WAL that comes with it, and VACUUM has dead index entries to clean up later.
+- **What kept them from being HOT.** The columns the statement sets (in `UPDATE … SET`, `INSERT … ON CONFLICT DO UPDATE` and `MERGE`) that an index refers to, in its keys, its `INCLUDE` list, its expressions or its predicate. From PostgreSQL 16, BRIN indexes do not count. An index nothing has scanned since the statistics were reset makes it a medium finding: dropping it would let such updates be HOT. When no index refers to a column the statement sets, the page had no room for the new version: the report says how many went to another page (from PostgreSQL 16) and gives the table's fillfactor.
+- **Index entries and WAL per row.** From PostgreSQL 13, explainsql adds `WAL` to `EXPLAIN ANALYZE` for statements that write. The first change to a page after a checkpoint writes the whole page to WAL; when full-page images are most of the records, the report says so, as the statement run again soon after writes far less.
+
+**The proof.** With `--prove --allow-ddl`, explainsql drops the indexes that kept the updates from being HOT inside a transaction, runs the statement again there, reads what it wrote, and rolls back, which brings the indexes back. It leaves out indexes that enforce a constraint and partitions' indexes that belong to an index of the partitioned table. Dropping an index locks its table against reads and writes until the rollback, so explainsql gives up after waiting 2 seconds for the lock.
+
+```text
+Without orders_created_at_idx (dropped in a transaction that was rolled back): 1 of 1 update HOT,
+no index entries, 81 B of WAL per row.
+```
+
+The writes are read for a statement run as it is, not with `--params`. In JSON, they are under `writes`.
 
 ## The costliest statements
 

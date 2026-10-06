@@ -134,6 +134,8 @@ pub struct App {
     pub help: bool,
     /// The locks overlay, open at this line.
     pub locks: Option<u16>,
+    /// The writes overlay, open at this line.
+    pub writes: Option<u16>,
     /// A one-line notice in the status bar.
     pub message: Option<String>,
     /// Set in connected mode.
@@ -183,6 +185,19 @@ fn page_lines(page: usize) -> u16 {
     u16::try_from(page.max(1)).unwrap_or(u16::MAX)
 }
 
+/// An overlay open at `line` after `key`: scrolled, or closed by any key
+/// that does not scroll.
+fn scrolled(line: u16, key: Key, page: usize) -> Option<u16> {
+    match key {
+        Key::Down | Key::Char('j') => Some(line.saturating_add(1)),
+        Key::Up | Key::Char('k') => Some(line.saturating_sub(1)),
+        Key::PageDown => Some(line.saturating_add(page_lines(page))),
+        Key::PageUp => Some(line.saturating_sub(page_lines(page))),
+        Key::Home | Key::Char('g') => Some(0),
+        _ => None,
+    }
+}
+
 impl App {
     pub fn new(plan: Plan, analysis: Analysis) -> Self {
         let mut app = App {
@@ -207,6 +222,7 @@ impl App {
             search: None,
             help: false,
             locks: None,
+            writes: None,
             message: None,
             live: None,
             confirm: None,
@@ -248,6 +264,13 @@ impl App {
             self.focus = Focus::Tree;
         }
         self.panel = Panel::Findings;
+        // An overlay open on what the new run has not read closes.
+        if self.analysis.locks.is_empty() {
+            self.locks = None;
+        }
+        if self.analysis.writes.is_none() {
+            self.writes = None;
+        }
         // The new plan has other nodes: the icicle starts again at the root.
         if self.icicle.is_some() {
             self.icicle = Some(NodeId(0));
@@ -447,15 +470,11 @@ impl App {
             return Outcome::Continue;
         }
         if let Some(line) = self.locks {
-            self.locks = match key {
-                Key::Down | Key::Char('j') => Some(line.saturating_add(1)),
-                Key::Up | Key::Char('k') => Some(line.saturating_sub(1)),
-                Key::PageDown => Some(line.saturating_add(page_lines(page))),
-                Key::PageUp => Some(line.saturating_sub(page_lines(page))),
-                Key::Home | Key::Char('g') => Some(0),
-                // Any other key closes it.
-                _ => None,
-            };
+            self.locks = scrolled(line, key, page);
+            return Outcome::Continue;
+        }
+        if let Some(line) = self.writes {
+            self.writes = scrolled(line, key, page);
             return Outcome::Continue;
         }
         if let Some(confirm) = self.confirm.take() {
@@ -497,6 +516,21 @@ impl App {
                     );
                 } else {
                     self.message = Some("The locks of this run could not be read.".to_owned());
+                }
+            }
+            Key::Char('W') => {
+                if self.analysis.writes.is_some() {
+                    self.writes = Some(0);
+                } else if self.live.is_none() {
+                    self.message = Some(
+                        "Not connected: W shows what a statement's writes cost in connected mode (explainsql -d … --allow-dml -f query.sql)."
+                            .to_owned(),
+                    );
+                } else {
+                    self.message = Some(
+                        "No rows written: W shows what the writes cost once a statement that writes has run (r, with --allow-dml)."
+                            .to_owned(),
+                    );
                 }
             }
             Key::Tab => {

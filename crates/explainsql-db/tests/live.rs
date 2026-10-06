@@ -927,3 +927,121 @@ fn watches_what_a_run_waits_for() {
         "{footprint:#?}"
     );
 }
+
+#[test]
+fn reads_what_a_write_costs() {
+    use explainsql_core::locks::{self, QualifiedName};
+    use explainsql_core::writes;
+    use explainsql_db::Reading;
+    let Some(db) = database() else { return };
+    let reading = Reading {
+        locks: true,
+        writes: true,
+    };
+    // The row on the last page, which has room for its new version once
+    // rolled-back versions are pruned.
+    let sql = "UPDATE orders SET created_at = created_at + interval '1 second' WHERE id = 200000";
+    // Twice: the counters of the first run's transaction, which the
+    // backend may not have reported yet, are not counted in the second's.
+    let mut xray = None;
+    for _ in 0..2 {
+        let (json, observation) = db
+            .explain_reading(sql, Mode::Analyze, allow_dml(), reading)
+            .unwrap();
+        let plan = explainsql_core::parse(&json).unwrap();
+        let capture = observation.writes.unwrap();
+        let xray = xray.insert(writes::xray(&capture, &plan, sql).unwrap());
+        let table = &xray.tables[0];
+        assert_eq!(xray.tables.len(), 1, "{xray:#?}");
+        assert_eq!(table.table, "orders");
+        assert_eq!((table.updated, table.hot_updated), (1, 0), "{xray:#?}");
+        // The primary key and orders_created_at_idx each get an entry.
+        assert_eq!(table.index_entries, 2);
+        assert_eq!(table.blocking[0].column, "created_at");
+        assert_eq!(table.blocking[0].indexes, ["orders_created_at_idx"]);
+        assert_eq!(
+            xray.to_drop,
+            [QualifiedName::new("public", "orders_created_at_idx")]
+        );
+        assert!(xray.wal.is_some_and(|wal| wal.records > 0));
+        // Reading the counters before the statement takes no lock that
+        // counts among the statement's.
+        let capture = observation.locks.unwrap();
+        let footprint = locks::footprint(&capture, &plan);
+        assert_eq!(footprint.tables[0].table, "orders");
+        assert!(
+            capture
+                .relations
+                .iter()
+                .all(|relation| !relation.schema.starts_with("pg_")),
+            "{:?}",
+            capture.relations
+        );
+    }
+
+    // Dropping the index needs --allow-ddl.
+    let without = [QualifiedName::new("public", "orders_created_at_idx")];
+    assert!(matches!(
+        db.explain_without(sql, &without, allow_dml()),
+        Err(Error::Refused(_))
+    ));
+    let ddl = Safety {
+        allow_ddl: true,
+        ..allow_dml()
+    };
+    let (json, capture) = db.explain_without(sql, &without, ddl).unwrap();
+    let table = &capture.tables[0];
+    assert_eq!(table.indexes.len(), 1, "{capture:#?}");
+    assert_eq!((table.updated, table.hot_updated), (1, 1), "{capture:#?}");
+    let mut xray = xray.unwrap();
+    writes::proven(&mut xray, &capture, &explainsql_core::parse(&json).unwrap());
+    let proof = xray.proof.unwrap();
+    assert_eq!(
+        (proof.hot_updated, proof.index_entries),
+        (1, 0),
+        "{proof:#?}"
+    );
+    // The index came back with the rollback.
+    let (_, observation) = db
+        .explain_reading(sql, Mode::Analyze, allow_dml(), reading)
+        .unwrap();
+    assert_eq!(observation.writes.unwrap().tables[0].indexes.len(), 2);
+
+    // An update of a column no index refers to.
+    let note = "UPDATE orders SET note = note || 'x' WHERE id = 200000";
+    let (json, observation) = db
+        .explain_reading(note, Mode::Analyze, allow_dml(), reading)
+        .unwrap();
+    let xray = writes::xray(
+        &observation.writes.unwrap(),
+        &explainsql_core::parse(&json).unwrap(),
+        note,
+    )
+    .unwrap();
+    assert!(xray.tables[0].blocking.is_empty(), "{xray:#?}");
+    assert!(xray.to_drop.is_empty());
+
+    // Rows inserted into a table without indexes.
+    let insert = "INSERT INTO audit_log SELECT i, 'import', now() FROM generate_series(1, 10) AS i";
+    let (json, observation) = db
+        .explain_reading(insert, Mode::Analyze, allow_dml(), reading)
+        .unwrap();
+    let xray = writes::xray(
+        &observation.writes.unwrap(),
+        &explainsql_core::parse(&json).unwrap(),
+        insert,
+    )
+    .unwrap();
+    assert_eq!(xray.tables[0].inserted, 10);
+    assert_eq!(xray.tables[0].index_entries, 0);
+    assert!(xray.summary.starts_with("10 rows inserted into audit_log"));
+
+    // Nothing written: a query, or a plan that was not run.
+    for (sql, mode) in [
+        ("SELECT * FROM orders WHERE id = 1", Mode::Analyze),
+        (sql, Mode::Estimate),
+    ] {
+        let (_, observation) = db.explain_reading(sql, mode, allow_dml(), reading).unwrap();
+        assert!(observation.writes.is_none());
+    }
+}

@@ -265,6 +265,64 @@ fn locks_overlay() {
     assert!(app.locks.is_none());
 }
 
+#[test]
+fn writes_overlay() {
+    use explainsql_core::locks::QualifiedName;
+    use explainsql_core::writes::{self, IndexColumns, TableWrites, WriteCapture};
+    let mut app = plan("update_by_pk");
+    app.handle(Key::Char('W'), 10);
+    assert!(app.writes.is_none());
+    assert!(app.message.as_deref().unwrap().starts_with("Not connected"));
+
+    // The same run, with the WAL it wrote.
+    let path =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/pg/16/update_by_pk.txt");
+    let text = std::fs::read_to_string(path).unwrap().replacen(
+        "written=1\n",
+        "written=1\n  WAL: records=202 fpi=1 bytes=31000\n",
+        1,
+    );
+    let plan = explainsql_core::parse(&text).unwrap();
+    let index = |name: &str, column: &str, scans, enforces| IndexColumns {
+        name: QualifiedName::new("public", name),
+        columns: vec![column.to_owned()],
+        summarizing: false,
+        partial: false,
+        enforces,
+        inherited: false,
+        scans: Some(scans),
+    };
+    let capture = WriteCapture {
+        tables: vec![TableWrites {
+            table: QualifiedName::new("public", "orders"),
+            inserted: 0,
+            updated: 101,
+            deleted: 0,
+            hot_updated: 0,
+            newpage_updated: Some(12),
+            fillfactor: None,
+            indexes: vec![
+                index("orders_pkey", "id", 9000, true),
+                index("orders_note_idx", "note", 0, false),
+            ],
+        }],
+        server_version: 160_004,
+    };
+    let mut analysis = explainsql_core::analyze(&plan);
+    analysis.writes = writes::xray(
+        &capture,
+        &plan,
+        "UPDATE orders SET note = upper(note) WHERE id BETWEEN 1000 AND 1100",
+    );
+    let mut app = App::new(plan, analysis);
+    app.handle(Key::Char('W'), 10);
+    insta::assert_snapshot!("writes", frame(&mut app, 100, 30));
+    app.handle(Key::Char('j'), 10);
+    assert_eq!(app.writes, Some(1));
+    app.handle(Key::Esc, 10);
+    assert!(app.writes.is_none());
+}
+
 /// A plan of 5,000 nodes that cannot be folded into groups: building the
 /// viewer and drawing a frame stay fast enough for typing.
 #[test]

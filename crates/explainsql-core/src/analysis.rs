@@ -10,6 +10,7 @@ use crate::locks::Footprint;
 use crate::metrics::{self, Metrics};
 use crate::params::Sensitivity;
 use crate::rules::{self, Finding};
+use crate::writes::Xray;
 
 /// The metrics, the findings and the verdict for a plan.
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -36,6 +37,10 @@ pub struct Analysis {
     /// those of an execution of the generic plan and of a custom plan.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub locks: Vec<Footprint>,
+    /// What the statement's writes cost: rows, HOT updates, index entries
+    /// and WAL (connected mode, a statement that writes, measured).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub writes: Option<Xray>,
 }
 
 /// Computes the metrics and runs the rules.
@@ -52,6 +57,7 @@ pub fn analyze(plan: &Plan) -> Analysis {
         counterfactuals: Vec::new(),
         parameters: None,
         locks: Vec::new(),
+        writes: None,
     }
 }
 
