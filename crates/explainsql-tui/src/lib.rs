@@ -2,6 +2,7 @@
 //! details of each node and the findings, in the terminal.
 
 mod app;
+mod icicle;
 mod theme;
 mod top;
 mod ui;

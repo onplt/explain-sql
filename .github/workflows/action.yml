@@ -1,0 +1,98 @@
+name: Action
+
+# Runs the explainsql action (action.yml) from this checkout, with the
+# explainsql built from it, on the plans in action/test: a check that fails
+# posts a comment on the pull request, and one that passes updates it.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - action.yml
+      - action/**
+      - .github/workflows/action.yml
+      - crates/explainsql/src/check.rs
+      - crates/explainsql-core/src/check.rs
+      - crates/explainsql-core/src/report.rs
+  pull_request:
+    paths:
+      - action.yml
+      - action/**
+      - .github/workflows/action.yml
+      - crates/explainsql/src/check.rs
+      - crates/explainsql-core/src/check.rs
+      - crates/explainsql-core/src/report.rs
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  action:
+    name: action (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --locked -p explainsql
+
+      - name: A plan worse than its locked one
+        id: regressed
+        continue-on-error: true
+        uses: ./
+        with:
+          paths: action/test/regressed/plans
+          lock: action/test/regressed/explainsql.lock
+          binary: target/debug/explainsql
+          comment: ${{ matrix.os == 'ubuntu-latest' }}
+          comment-key: self-test
+
+      - name: The plan as locked
+        id: unchanged
+        uses: ./
+        with:
+          paths: |
+            action/test/unchanged/plans
+          lock: action/test/unchanged/explainsql.lock
+          binary: target/debug/explainsql
+          comment: ${{ matrix.os == 'ubuntu-latest' }}
+          comment-key: self-test
+
+      - name: The outputs are what the plans call for
+        env:
+          REGRESSED: ${{ steps.regressed.outcome }}
+          REGRESSED_RESULT: ${{ steps.regressed.outputs.result }}
+          REGRESSED_CODE: ${{ steps.regressed.outputs.exit-code }}
+          REGRESSED_REPORT: ${{ steps.regressed.outputs.report }}
+          REGRESSED_SARIF: ${{ steps.regressed.outputs.sarif }}
+          UNCHANGED_RESULT: ${{ steps.unchanged.outputs.result }}
+          UNCHANGED_CODE: ${{ steps.unchanged.outputs.exit-code }}
+        run: |
+          set -x
+          test "$REGRESSED" = failure
+          test "$REGRESSED_RESULT" = failed
+          test "$REGRESSED_CODE" = 1
+          head -n 1 "$REGRESSED_REPORT" | grep -qx '<!-- explainsql check -->'
+          grep -qF "| \`plans/customer.txt\` | **Failed** |" "$REGRESSED_REPORT"
+          jq -e '.runs[0].results | any(.ruleId == "plan-worse")' "$REGRESSED_SARIF"
+          test "$UNCHANGED_RESULT" = passed
+          test "$UNCHANGED_CODE" = 0
+
+      - name: The comment was posted, then updated
+        if: >-
+          matrix.os == 'ubuntu-latest' && github.event_name == 'pull_request'
+          && github.event.pull_request.head.repo.full_name == github.repository
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          bodies="$(gh api --paginate "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" \
+            --jq '.[] | select(.body | contains("<!-- explainsql-action: self-test -->")) | .body')"
+          test "$(grep -c 'explainsql-action: self-test' <<< "$bodies")" = 1
+          grep -q 'No plan failed' <<< "$bodies"

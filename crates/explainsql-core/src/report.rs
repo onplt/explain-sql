@@ -626,77 +626,168 @@ pub fn check_text(checked: &[Checked], color: bool) -> String {
     out
 }
 
+/// The first line of [`check_markdown`]: invisible in a rendered comment, it
+/// lets a script find the comment it posted before and update it.
+pub const CHECK_MARKER: &str = "<!-- explainsql check -->";
+
+/// The most [`check_markdown`] writes, in bytes. GitHub takes comments of up
+/// to 65,536 characters; this leaves room for a line a script adds.
+pub const CHECK_MARKDOWN_LIMIT: usize = 64_000;
+
 /// The checks of a CI run as Markdown, for a pull request comment: a table
 /// of the plans, then what changed in each plan that failed or changed.
+/// It fits in [`CHECK_MARKDOWN_LIMIT`]: when the plans do not, the ones that
+/// failed come first, then those that changed, and the rest are counted.
 pub fn check_markdown(checked: &[Checked]) -> String {
+    check_markdown_within(checked, CHECK_MARKDOWN_LIMIT)
+}
+
+/// [`check_markdown`] within `limit` bytes.
+pub fn check_markdown_within(checked: &[Checked], limit: usize) -> String {
     let failed = checked
         .iter()
         .filter(|item| item.status == Status::Failed)
         .count();
-    let mut out = String::from("### explainsql check\n\n");
+    let mut head = format!("{CHECK_MARKER}\n### explainsql check\n\n");
     let headline = match (failed, checked.len()) {
         (0, _) => "No plan failed.".to_owned(),
         (1, 1) => "The plan failed.".to_owned(),
         (failed, total) => format!("{failed} of {total} plans failed."),
     };
-    out.push_str(&format!("**{headline}** {}\n\n", check::summary(checked)));
-    out.push_str("| Plan | Result | Shape | Why |\n|---|---|---|---|\n");
-    for item in checked {
-        let why = item
-            .reasons
-            .first()
-            .or(item.notes.first())
-            .map(|text| escape(text))
-            .unwrap_or_default();
-        out.push_str(&format!(
-            "| `{}` | {} | {} | {} |\n",
-            item.name.replace('`', "'"),
-            match item.status {
-                Status::Failed => "**Failed**",
-                Status::New => "New",
-                Status::Passed => "Passed",
-            },
-            match &item.diff {
-                Some(diff) if !diff.shapes.same() => {
-                    format!("`{}` → `{}`", diff.shapes.before, diff.shapes.after)
-                }
-                _ => format!("`{}`", item.shape),
-            },
-            why
-        ));
+    head.push_str(&format!("**{headline}** {}\n\n", check::summary(checked)));
+    head.push_str("| Plan | Result | Shape | Why |\n|---|---|---|---|\n");
+    let rows: Vec<String> = checked.iter().map(check_row).collect();
+    let details: Vec<Option<String>> = checked.iter().map(check_details).collect();
+
+    let whole = head.len()
+        + rows.iter().map(String::len).sum::<usize>()
+        + details.iter().flatten().map(String::len).sum::<usize>();
+    if whole <= limit {
+        let mut out = head;
+        rows.iter().for_each(|row| out.push_str(row));
+        details.iter().flatten().for_each(|text| out.push_str(text));
+        return out;
     }
-    for item in checked {
-        let changed = item
-            .diff
-            .as_ref()
-            .filter(|diff| !diff.shapes.same() || item.status == Status::Failed);
-        if item.status != Status::Failed && changed.is_none() {
-            continue;
+
+    // Too long: the plans that matter most first, and as many as fit, with
+    // room kept for the line that counts the rest.
+    let mut order: Vec<usize> = (0..checked.len()).collect();
+    order.sort_by_key(|&index| {
+        let item = &checked[index];
+        match item.status {
+            Status::Failed => 0,
+            _ if details[index].is_some() => 1,
+            Status::New => 2,
+            Status::Passed => 3,
         }
-        out.push_str(&format!(
-            "\n<details><summary><code>{}</code>: {}</summary>\n\n",
-            escape(&item.name),
-            if item.status == Status::Failed {
-                "why it failed"
+    });
+    let budget = limit.saturating_sub(head.len() + 200);
+    let mut used = 0;
+    let (mut shown, mut folded, mut unfolded) = (Vec::new(), Vec::new(), 0);
+    for &index in &order {
+        if used + rows[index].len() > budget {
+            break;
+        }
+        used += rows[index].len();
+        shown.push(index);
+        if let Some(text) = &details[index] {
+            if used + text.len() <= budget {
+                used += text.len();
+                folded.push(index);
             } else {
-                "what changed"
-            }
-        ));
-        for reason in &item.reasons {
-            out.push_str(&format!("- {}\n", escape(reason)));
-        }
-        if item.status == Status::Failed {
-            for fix in fixes(item) {
-                out.push_str(&format!("- **Fix:** {}\n", escape(&fix)));
+                unfolded += 1;
             }
         }
-        if let (Some(diff), Some(baseline)) = (changed, &item.baseline) {
-            out.push('\n');
-            out.push_str(&diff_markdown(baseline, &item.plan, diff));
-        }
-        out.push_str("\n</details>\n");
     }
+    let mut out = head;
+    shown.iter().for_each(|&index| out.push_str(&rows[index]));
+    folded
+        .iter()
+        .for_each(|&index| out.push_str(details[index].as_deref().unwrap_or_default()));
+    let left_out = checked.len() - shown.len();
+    let mut parts = Vec::new();
+    if left_out > 0 {
+        parts.push(format!(
+            "{left_out} more plan{} left out of the table",
+            plural(left_out)
+        ));
+    }
+    if unfolded > 0 {
+        parts.push(format!(
+            "the details of {unfolded} plan{} left out",
+            plural(unfolded)
+        ));
+    }
+    out.push_str(&format!(
+        "\n_To fit in a comment, {}: `explainsql check` prints them all._\n",
+        parts.join(", and ")
+    ));
     out
+}
+
+fn plural(count: usize) -> &'static str {
+    if count == 1 { "" } else { "s" }
+}
+
+/// A plan's row in the Markdown table of [`check_markdown`].
+fn check_row(item: &Checked) -> String {
+    let why = item
+        .reasons
+        .first()
+        .or(item.notes.first())
+        .map(|text| escape(text))
+        .unwrap_or_default();
+    format!(
+        "| `{}` | {} | {} | {} |\n",
+        item.name.replace('`', "'"),
+        match item.status {
+            Status::Failed => "**Failed**",
+            Status::New => "New",
+            Status::Passed => "Passed",
+        },
+        match &item.diff {
+            Some(diff) if !diff.shapes.same() => {
+                format!("`{}` → `{}`", diff.shapes.before, diff.shapes.after)
+            }
+            _ => format!("`{}`", item.shape),
+        },
+        why
+    )
+}
+
+/// What failed or changed in a plan, folded, for [`check_markdown`]; none
+/// for a plan that passed unchanged or is new.
+fn check_details(item: &Checked) -> Option<String> {
+    let changed = item
+        .diff
+        .as_ref()
+        .filter(|diff| !diff.shapes.same() || item.status == Status::Failed);
+    if item.status != Status::Failed && changed.is_none() {
+        return None;
+    }
+    let mut out = format!(
+        "\n<details><summary><code>{}</code>: {}</summary>\n\n",
+        escape(&item.name),
+        if item.status == Status::Failed {
+            "why it failed"
+        } else {
+            "what changed"
+        }
+    );
+    for reason in &item.reasons {
+        out.push_str(&format!("- {}\n", escape(reason)));
+    }
+    if item.status == Status::Failed {
+        for fix in fixes(item) {
+            out.push_str(&format!("- **Fix:** {}\n", escape(&fix)));
+        }
+    }
+    if let (Some(diff), Some(baseline)) = (changed, &item.baseline) {
+        out.push('\n');
+        out.push_str(&diff_markdown(baseline, &item.plan, diff));
+    }
+    out.push_str("\n</details>\n");
+    Some(out)
 }
 
 /// The costliest statements of a database, as pg_stat_statements counts

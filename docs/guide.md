@@ -50,9 +50,12 @@ The top line is the verdict: the statement's time, where most of it went, and wh
 | `c` | Copy the suggested `CREATE INDEX` (OSC 52: works over SSH and in tmux) |
 | `x`, `w`, `b` | Time including children, CPU time, buffers |
 | `J` `K` | Scroll the details |
+| `F` | The icicle view in place of the tree (below) |
 | `r`, `e`, `t`, `Esc` | Connected: run again, edit the query, test a suggestion, cancel |
 | `y` | Connected: ask the planner why it chose the selected node |
 | `?`, `q` | Help, quit |
+
+`F` shows the plan as an icicle: the root on top and each node in a box under its parent, as wide as the CPU time spent in it and below it, colored by its own share. Workers of a parallel plan add up under the node that gathers them, InitPlans, SubPlans and CTEs sit under the node they belong to, and time in triggers, outside the tree, is in the title. A plan without timing (`TIMING OFF`, or not run) is drawn by estimated cost, and the title says so. `k` `j` go to the parent and to the widest child, `h` `l` along the row, `Enter` zooms on a box to fill the width with it (`Enter` on that box again zooms out, `g` goes back to the whole plan). Nodes too narrow for a column are folded into their parent and shown as `…`; zooming opens them. The details, search and hotspots work as in the tree, and `F` goes back to it on the same node.
 
 Colors follow the terminal: true color, 256 or 16 colors, or none with `NO_COLOR`. `--theme light` suits light backgrounds.
 
@@ -245,6 +248,22 @@ Statements whose plan changed come first, the costliest change first: the time t
 
 With `log_analyze`, every statement is instrumented, logged or not, which slows it down. On a busy server, set `auto_explain.log_timing = off`, or instrument a sample of statements with `auto_explain.sample_rate`.
 
+## Share a plan
+
+A plan tells a lot about a database: the names of its tables, columns and indexes, and the values a statement looked for. `explainsql anonymize` replaces them before a plan goes into a bug report, an issue or a chat:
+
+```sh
+explainsql anonymize plan.json > shared.json
+pbpaste | explainsql anonymize | pbcopy
+explainsql anonymize plan.txt --map names.json   # and keep what each name became
+```
+
+- **What changes.** Names of tables, indexes, CTEs, aliases, schemas, columns, constraints and triggers become `table_a`, `index_a`, `cte_a`, `alias_a`, `schema_a`, `column_a`, `constraint_a` and `trigger_a`, then `_b`, `_c` and so on. Names that differ only in their numbers, as partitions do, stay alike: `orders_2025_01` and `orders_2025_02` become `table_b_1` and `table_b_2`, so that the viewer still folds them and `explainsql diff` still matches them. String literals become `'value_a'`, `'value_b'`, … the same way, keeping a `LIKE` pattern's `%` at either end, and numbers in conditions become other numbers of the same form. The same name or value gets the same replacement everywhere, in every plan of the input. A statement's text (`Query Text`) is anonymized the same way, without its comments.
+- **What stays.** The node types, estimates, timings, buffers and every other figure, so the plan reads and analyzes as before: the anonymized plan gets the same findings, and compares with another plan as the original does. Function and type names, keywords, `$n` parameters and system names (`pg_catalog`, `public`, `pg_…` relations, `ctid`, the triggers of foreign keys) stay too.
+- **What it reads and prints.** Any input explainsql reads, with every plan it holds. The plans come out in the format they were written in, JSON or text, without what surrounded them: psql's table, log lines, a Markdown fence. When an input holds plans of both formats, each comes out in a Markdown fence. A line or a JSON property it does not know has every name and value in it replaced. If the anonymized plans do not read back with the same nodes, nothing is printed.
+
+`--keep-names` replaces only the values. `--map FILE` writes what each name and value became as JSON, to read an answer about the anonymized plan back; keep that file to yourself.
+
 ## Compare two plans
 
 A plan changed after an index, a statistics update, an upgrade or a rewrite of the query. `explainsql diff` tells what changed, node by node:
@@ -310,6 +329,62 @@ A GitHub Actions job, against the database the tests use:
   with:
     sarif_file: explainsql.sarif
 ```
+
+`--sarif FILE` writes the SARIF report too, beside a report in another format, so that one run gives both. `--format md` starts with the line `<!-- explainsql check -->`, hidden in a rendered comment, and stays under GitHub's limit for a comment: when the plans do not fit, those that failed come first, then those that changed, and the rest are counted.
+
+### The GitHub Action
+
+The repository is also a GitHub Action. It installs explainsql, runs `explainsql check`, and writes the report on the pull request as a comment, which later runs update in place: a check that fails posts or updates it, and one that passes changes a comment already there to say so, without posting a new one. The report is in the job summary too, and the job fails as the check does.
+
+```yaml
+on: pull_request
+permissions:
+  contents: read
+  pull-requests: write        # for the comment
+  security-events: write      # only with upload-sarif
+jobs:
+  plans:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports: ["5432:5432"]
+        options: --health-cmd pg_isready --health-interval 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v5
+      - run: psql "$DATABASE_URL" -f schema.sql   # the tables, and data shaped like production's
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/postgres
+      - uses: onplt/explain-sql@v0.2.0
+        with:
+          paths: queries/
+          database-url: postgresql://postgres:postgres@localhost:5432/postgres
+          fail-on: high
+          upload-sarif: true
+```
+
+Without `database-url`, `paths` are captured plan files and no database is needed.
+
+| Input | Default | |
+|---|---|---|
+| `paths` | | Plan files, or SQL files with `database-url`; directories are searched. Separated by spaces or new lines. |
+| `database-url` | | Run the SQL files against this database. |
+| `lock` | `explainsql.lock` | The file of locked plans. |
+| `fail-on` | | Also fail a plan with a finding at least this severe. |
+| `strict` | `false` | Also fail a plan whose shape changed. |
+| `args` | | More arguments for `explainsql check`, such as `--prove` or `--no-analyze`. |
+| `comment` | `true` | Comment on the pull request. |
+| `comment-key` | `default` | Tells this check's comment from another's, when a workflow checks several sets of plans. |
+| `upload-sarif` | `false` | Upload the report to code scanning. |
+| `version` | the action's | The explainsql release to install; by default the one the action is referenced by (`@v0.2.0`), or the latest. |
+| `binary` | | An explainsql binary to use instead of installing one. |
+| `github-token` | `github.token` | The token that writes the comment. |
+
+The outputs are `result` (`passed`, `failed` or `error`), `exit-code`, and the paths of the reports, `report` (Markdown) and `sarif`. The action runs on Linux and macOS runners, and needs explainsql 0.2.0 or later.
+
+A pull request from a fork gets no comment: its token cannot write one, and `pull_request_target`, whose token can, would run the fork's code with the repository's secrets. Its report is in the job summary.
 
 For a single plan, the main command takes `--fail-on` as well: `explainsql --print --fail-on high plan.json` exits with 1 when a finding is at least that severe.
 

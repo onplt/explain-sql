@@ -1,0 +1,44 @@
+---
+source: crates/explainsql-tui/tests/render.rs
+expression: "frame(&mut app, 120, 40)"
+---
+82.4 ms. 34% of it in Parallel Hash Join.
+Planning 0.668 ms · Execution 82.4 ms · Buffers 4,372 pages, 64% from cache
+ Plan · icicle by CPU time ───────────────────────────────────────────────────┌ Details ────────────────────────────────
+▏Finalize GroupAggregate 236.4 ms                                             │Finalize GroupAggregate
+▏Gather Merge 236.4 ms                                                        │Time in node: 0.008 ms (0.010% of the
+▏Sort 231.1 ms                                                                │runtime)
+▏Partial HashAggregate 231.0 ms                                               │With children: 82.3 ms
+▏Parallel Hash Join 187.7 ms                                                  │Rows: 5 per loop
+▏Paral…▏Parallel Hash 80.6 ms                                                 │Estimate: 5 rows; cost 8406.26..8406.48,
+       ▏Parall…                                                               │width 17
+                                                                              │Buffers: shared hit 2,781, read 1,591
+                                                                              │Read by the node itself: 0 pages
+                                                                              │Group Key: o.status
+                                                                              │Output: o.status, count(*)
+                                                                              │
+                                                                              │
+                                                                              │
+                                                                              │
+                                                                              │
+                                                                              │
+                                                                              │
+                                                                              │
+                                                                              │
+                                                                              │
+                                                                              │
+                                                                              │
+                                                                              │
+                                                                              │
+                                                                              │
+                                                                              │
+                                                                              │
+                                                                              │
+                                                                              │
+                                                                              │
+                                                                              │
+                                                                              │
+                                                                              │
+                                                                              │
+                                                                              │
+k/j parent, child  h/l along the row  Enter zoom in or out  g whole plan  F tree  ? help  q quit

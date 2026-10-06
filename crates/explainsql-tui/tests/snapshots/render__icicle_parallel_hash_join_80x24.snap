@@ -1,0 +1,28 @@
+---
+source: crates/explainsql-tui/tests/render.rs
+expression: "frame(&mut app, 80, 24)"
+---
+82.4 ms. 34% of it in Parallel Hash Join.
+Planning 0.668 ms · Execution 82.4 ms · Buffers 4,372 pages, 64% from cache
+ Plan · icicle by CPU time ─────────────────────────────────────────────────────
+▏Finalize GroupAggregate 236.4 ms
+▏Gather Merge 236.4 ms
+▏Sort 231.1 ms
+▏Partial HashAggregate 231.0 ms
+▏Parallel Hash Join 187.7 ms
+▏Parall…▏Parallel Hash 80.6 ms
+        ▏Parall…
+
+ Details ───────────────────────────────────────────────────────────────────────
+Finalize GroupAggregate
+Time in node: 0.008 ms (0.010% of the runtime)
+With children: 82.3 ms
+Rows: 5 per loop
+Estimate: 5 rows; cost 8406.26..8406.48, width 17
+Buffers: shared hit 2,781, read 1,591
+Read by the node itself: 0 pages
+Group Key: o.status
+Output: o.status, count(*)
+
+
+k/j parent, child  h/l along the row  Enter zoom in or out  g whole plan  F tree

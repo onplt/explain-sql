@@ -1,0 +1,44 @@
+---
+source: crates/explainsql-tui/tests/render.rs
+expression: "frame(&mut app, 120, 40)"
+---
+63.3 ms. 45% of it in Seq Scan on orders, which reads 200,000 rows to keep 1,000.
+Planning 0.312 ms · Execution 63.3 ms · Buffers 4,834 pages, 100% from cache
+ Plan · icicle by CPU time ───────────────────────────────────────────────────┌ Details ────────────────────────────────
+▏Seq Scan on orders 63.2 ms                                                   │Seq Scan on orders
+▏[InitPlan 1 (returns $0)] Aggregate 34.7 …                                   │Time in node: 28.5 ms (45% of the
+▏Seq Scan on or…                                                              │runtime)
+                                                                              │With children: 63.2 ms
+                                                                              │Rows: 1,000 per loop
+                                                                              │Estimate: 66,667 rows, 67× fewer in fact;
+                                                                              │cost 4917.01..9834.01, width 10
+                                                                              │Removed by filter: 199,000 per loop
+                                                                              │Buffers: shared hit 4,834
+                                                                              │Read by the node itself: 2,417 pages
+                                                                              │
+                                                                              │Filter: (orders.amount > $0)
+                                                                              │Output: orders.id, orders.amount
+                                                                              │
+                                                                              │MEDIUM ES001 Selective sequential scan
+                                                                              │On Seq Scan on orders
+                                                                              │Seq Scan on orders reads 200,000 rows to
+                                                                              │keep 1,000.
+                                                                              │Rows kept: 1,000 of 200,000 (0.50%)
+                                                                              │Filter: (orders.amount > $0)
+                                                                              │Table size: 4,834 pages (37.8 MB)
+                                                                              │Time in the node: 28.5 ms (45% of the
+                                                                              │runtime)
+                                                                              │→ An index on orders (amount) would let
+                                                                              │PostgreSQL read only the matching rows.
+                                                                              │Docs:
+                                                                              │https://onplt.github.io/explain-sql/rules
+                                                                              │/ES001.html
+                                                                              │
+                                                                              │LOW    ES002 Row misestimate
+                                                                              │On Seq Scan on orders
+                                                                              │Seq Scan on orders returned 1,000 rows
+                                                                              │where the planner expected 66,667: 67×
+ Findings (2) │ Advice (2) · Tab to browse, f/i to switch ──────────────────────────────────────────────────────────────
+MEDIUM ES001 Selective sequential scan: Seq Scan on orders reads 200,000 rows to keep 1,000
+LOW    ES002 Row misestimate: Seq Scan on orders returned 1,000 rows where the planner expected 66,667: 67× fewer
+k/j parent, child  h/l along the row  Enter zoom in or out  g whole plan  F tree  ? help  q quit

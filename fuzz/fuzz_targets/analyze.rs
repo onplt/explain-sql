@@ -1,5 +1,5 @@
 //! Feeds arbitrary input to the parser and analyzes and reports whatever
-//! plan comes out; none of it may panic.
+//! plan comes out, and anonymizes the input; none of it may panic.
 //!
 //! cargo +nightly fuzz run analyze fuzz/corpus/parse fixtures/pg/18 fixtures/inputs
 
@@ -15,4 +15,5 @@ fuzz_target!(|data: &[u8]| {
         let _ = explainsql_core::report::markdown(&plan, &analysis);
         let _ = explainsql_core::report::json(&plan, &analysis);
     }
+    let _ = explainsql_core::anonymize::anonymize(&input, Default::default());
 });

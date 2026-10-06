@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "plans": {
+    "plans/customer.txt": {
+      "shape": "5bfa6998127d5b02",
+      "pages": 13,
+      "cost": 44.5,
+      "plan": "Index Scan using orders_customer_id_idx on orders o  (cost=0.42..44.50 rows=10 width=20) (actual time=0.020..0.051 rows=10 loops=1)\n  Index Cond: (customer_id = 4242)\n  Buffers: shared hit=13\nExecution Time: 0.070 ms\n"
+    }
+  }
+}

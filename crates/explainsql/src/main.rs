@@ -37,8 +37,9 @@ use explainsql_core::report;
 ///
 /// explainsql diff BEFORE AFTER compares two plans of the same statement;
 /// explainsql check checks plans in continuous integration; explainsql logs
-/// tells when the plans in server logs changed; explainsql top lists a
-/// database's costliest statements from pg_stat_statements.
+/// tells when the plans in server logs changed; explainsql anonymize
+/// prepares a plan for sharing; explainsql top lists a database's
+/// costliest statements from pg_stat_statements.
 #[derive(Parser)]
 #[command(
     name = "explainsql",
@@ -200,6 +201,18 @@ enum Task {
     /// their text without literal values. sqlcommenter tags in the text say
     /// where in the application a statement comes from.
     Logs(LogsArgs),
+    /// Replace what a plan tells about the data and the schema, to share it
+    /// in a bug report or an issue: names of tables, indexes, columns and
+    /// other objects become table_a, index_a, column_a, …, and literal
+    /// values become 'value_a' or other numbers, the same way everywhere
+    /// they appear. Names that differ only in their numbers, as partitions
+    /// do, stay alike (table_b_1, table_b_2). Node types, estimates,
+    /// timings and buffers stay, so the plan reads and analyzes as before.
+    ///
+    /// Prints the plans of FILE, in the format they were written in, without
+    /// what surrounded them (psql output, log lines, code fences). Function
+    /// and type names, keywords and $n parameters are kept.
+    Anonymize(AnonymizeArgs),
     /// List a database's costliest statements, from pg_stat_statements,
     /// and plan one of them.
     ///
@@ -215,6 +228,23 @@ enum Task {
     /// pg_stat_statements) and loaded (shared_preload_libraries). Other
     /// users' statements need the pg_read_all_stats role.
     Top(TopArgs),
+}
+
+#[derive(Args)]
+struct AnonymizeArgs {
+    /// The plan file; standard input when missing or `-`.
+    file: Option<String>,
+
+    /// Keep the names of tables, columns and other objects; replace only
+    /// literal values.
+    #[arg(long)]
+    keep_names: bool,
+
+    /// Write what each name and value became to this JSON file, to read
+    /// answers about the anonymized plan back. Keep it to yourself: it
+    /// holds the originals.
+    #[arg(long, value_name = "FILE")]
+    map: Option<String>,
 }
 
 #[derive(Args)]
@@ -351,6 +381,11 @@ struct CheckArgs {
     #[arg(long, value_enum, default_value_t = CheckFormat::Text)]
     format: CheckFormat,
 
+    /// Also write the report as SARIF to this file, for code scanning
+    /// beside a report in another format.
+    #[arg(long, value_name = "FILE", conflicts_with = "update")]
+    sarif: Option<String>,
+
     /// When to color the text report.
     #[arg(long, value_enum, default_value_t = Color::Auto)]
     color: Color,
@@ -447,6 +482,7 @@ fn main() -> ExitCode {
         Some(Task::Diff(args)) => return diff(args),
         Some(Task::Check(args)) => return check::run(args),
         Some(Task::Logs(args)) => return logs::run(args),
+        Some(Task::Anonymize(args)) => return anonymize(args),
         Some(Task::Top(args)) => return top::run(args),
         None => {}
     }
@@ -525,6 +561,38 @@ pub(crate) fn with_findings(cli: &Cli, analysis: &Analysis, code: ExitCode) -> E
     } else {
         code
     }
+}
+
+/// `explainsql anonymize`: prints the plans with their names and values
+/// replaced.
+fn anonymize(args: &AnonymizeArgs) -> ExitCode {
+    let input = match read_input(args.file.as_deref(), false) {
+        Ok(input) => input,
+        Err(error) => {
+            eprintln!("error: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let options = explainsql_core::anonymize::Options {
+        keep_names: args.keep_names,
+    };
+    let anonymized = match explainsql_core::anonymize::anonymize(&input, options) {
+        Ok(anonymized) => anonymized,
+        Err(error) => {
+            eprintln!("error: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
+    if let Some(path) = &args.map {
+        let mut json =
+            serde_json::to_string_pretty(&anonymized.mapping).expect("the mapping serializes");
+        json.push('\n');
+        if let Err(error) = fs::write(path, json) {
+            eprintln!("error: {path}: {error}");
+            return ExitCode::FAILURE;
+        }
+    }
+    emit(&anonymized.text)
 }
 
 /// `explainsql diff`: reads both plans and prints how they differ.
