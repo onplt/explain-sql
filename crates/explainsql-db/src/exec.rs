@@ -9,12 +9,18 @@
 //! A statement can be planned under planner settings (`enable_seqscan =
 //! off`, `work_mem = 64MB`): only those [`Setting::check`] accepts, set with
 //! `set_config(…, true)` inside the transaction, so they end with it.
+//!
+//! Between the `EXPLAIN` and the rollback, the transaction still holds the
+//! locks the statement took: a run can read them there ([`Observe`]), and
+//! a second connection can watch what the statement waits on as it runs.
 
 use std::time::Duration;
 
+use explainsql_core::locks::{Capture, Stage, Waits};
 use explainsql_core::scenario::Setting;
 use tokio_postgres::{Client, SimpleQueryMessage};
 
+use crate::locks::{self, Watch};
 use crate::{Error, Safety, describe};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -163,31 +169,43 @@ pub(crate) async fn explain(
     safety: Safety,
     server_version: u32,
 ) -> Result<String, Error> {
+    let observe = Observe::nothing(server_version);
+    explain_observed(client, sql, mode, settings, safety, observe)
+        .await
+        .map(|(plan, _)| plan)
+}
+
+/// The plan of a statement, and what was observed of its last run: the
+/// estimated one, or the one that ran with `EXPLAIN ANALYZE`.
+pub(crate) async fn explain_observed(
+    client: &Client,
+    sql: &str,
+    mode: Mode,
+    settings: &[Setting],
+    safety: Safety,
+    observe: Observe<'_>,
+) -> Result<(String, Observed), Error> {
     let sql = statement(sql)?;
     check(settings)?;
+    let server_version = observe.server_version;
+    let estimate = format!(
+        "EXPLAIN ({}) {sql}",
+        options(Mode::Estimate, server_version)
+    );
     // Planned under the settings: whether the statement writes does not
     // depend on them.
-    let estimated = run(
-        client,
-        &format!(
-            "EXPLAIN ({}) {sql}",
-            options(Mode::Estimate, server_version)
-        ),
-        true,
-        safety.timeout,
-        settings,
-    )
-    .await?;
     if mode == Mode::Estimate {
-        return Ok(estimated);
+        return run_observed(client, &estimate, true, safety.timeout, settings, observe).await;
     }
+    let estimated = run(client, &estimate, true, safety.timeout, settings).await?;
     let writes = allowed_writes(&estimated, safety)?;
-    run(
+    run_observed(
         client,
         &format!("EXPLAIN ({}) {sql}", options(Mode::Analyze, server_version)),
         writes == Writes::No,
         safety.timeout,
         settings,
+        observe,
     )
     .await
 }
@@ -253,7 +271,9 @@ pub(crate) async fn generic(
 /// Measures a statement `runs` times with EXPLAIN ANALYZE, after one more
 /// run that only warms the cache, so that each measured run finds what the
 /// statement reads already cached, as the others do. Each run happens in
-/// its own transaction that is rolled back.
+/// its own transaction that is rolled back. Watched, a measured run that
+/// waited for another session's lock is run again, with a note.
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn measure(
     client: &Client,
     sql: &str,
@@ -261,6 +281,8 @@ pub(crate) async fn measure(
     runs: usize,
     safety: Safety,
     server_version: u32,
+    watch: Option<&Watch>,
+    notes: &mut Vec<String>,
 ) -> Result<Vec<String>, Error> {
     let sql = statement(sql)?;
     check(settings)?;
@@ -279,14 +301,25 @@ pub(crate) async fn measure(
     let explain = format!("EXPLAIN ({}) {sql}", options(Mode::Analyze, server_version));
     let mut plans = Vec::with_capacity(runs.max(1));
     for warm_up in std::iter::once(true).chain(std::iter::repeat_n(false, runs.max(1))) {
-        let plan = run(
-            client,
-            &explain,
-            writes == Writes::No,
-            safety.timeout,
-            settings,
-        )
-        .await?;
+        let observe = Observe {
+            watch: watch.filter(|_| !warm_up),
+            ..Observe::nothing(server_version)
+        };
+        let mut tries = 0;
+        let plan = loop {
+            let (plan, observed) = run_observed(
+                client,
+                &explain,
+                writes == Writes::No,
+                safety.timeout,
+                settings,
+                observe,
+            )
+            .await?;
+            if !locks::again(observed.waits.as_ref(), &mut tries, notes) {
+                break plan;
+            }
+        };
         if !warm_up {
             plans.push(plan);
         }
@@ -321,6 +354,34 @@ pub(crate) async fn apply(
     Ok(())
 }
 
+/// What to observe of a run besides its plan.
+#[derive(Clone, Copy)]
+pub(crate) struct Observe<'a> {
+    /// Read the locks the statement took, before the rollback.
+    pub locks: Option<Stage>,
+    /// Sample what the statement waits on as it runs.
+    pub watch: Option<&'a Watch>,
+    pub server_version: u32,
+}
+
+impl Observe<'_> {
+    pub(crate) fn nothing(server_version: u32) -> Self {
+        Observe {
+            locks: None,
+            watch: None,
+            server_version,
+        }
+    }
+}
+
+/// What was observed of a run.
+#[derive(Debug, Default)]
+pub(crate) struct Observed {
+    /// `None` also when they could not be read.
+    pub locks: Option<Capture>,
+    pub waits: Option<Waits>,
+}
+
 /// Runs one EXPLAIN inside a transaction that is rolled back, and returns
 /// its JSON.
 async fn run(
@@ -330,6 +391,30 @@ async fn run(
     timeout: Duration,
     settings: &[Setting],
 ) -> Result<String, Error> {
+    // The server version matters only to read locks.
+    run_observed(
+        client,
+        explain,
+        read_only,
+        timeout,
+        settings,
+        Observe::nothing(0),
+    )
+    .await
+    .map(|(plan, _)| plan)
+}
+
+/// Runs one EXPLAIN inside a transaction that is rolled back, and returns
+/// its JSON and what was observed: the locks are read after the EXPLAIN,
+/// before the rollback releases them.
+pub(crate) async fn run_observed(
+    client: &Client,
+    explain: &str,
+    read_only: bool,
+    timeout: Duration,
+    settings: &[Setting],
+    observe: Observe<'_>,
+) -> Result<(String, Observed), Error> {
     let server = |error: tokio_postgres::Error| Error::Server(describe(&error));
     client
         .batch_execute(if read_only {
@@ -347,18 +432,54 @@ async fn run(
             ))
             .await?;
         apply(client, settings).await?;
-        client.query(explain, &[]).await
+        in_transaction(client, observe, client.query(explain, &[])).await
     }
     .await;
     // Always, whatever happened above.
     let rollback = client.batch_execute("ROLLBACK").await;
-    let rows = result.map_err(server)?;
+    let (rows, observed) = result.map_err(server)?;
     rollback.map_err(server)?;
     let row = rows
         .first()
         .ok_or_else(|| Error::Server("EXPLAIN returned no plan".to_owned()))?;
     let plan: serde_json::Value = row.try_get(0).map_err(server)?;
-    Ok(plan.to_string())
+    Ok((plan.to_string(), observed))
+}
+
+/// Runs the EXPLAIN of an open transaction, watched if asked, and then
+/// reads the locks if asked. Locks that cannot be read are left out
+/// rather than failing the run.
+pub(crate) async fn in_transaction<T>(
+    client: &Client,
+    observe: Observe<'_>,
+    explain: impl Future<Output = Result<T, tokio_postgres::Error>>,
+) -> Result<(T, Observed), tokio_postgres::Error> {
+    let sampler = match observe.watch {
+        Some(watch) => {
+            let pid: i32 = client
+                .query_one("SELECT pg_catalog.pg_backend_pid()", &[])
+                .await?
+                .get(0);
+            Some(watch.start(pid))
+        }
+        None => None,
+    };
+    let result = explain.await;
+    let waits = match sampler {
+        Some(sampler) => sampler.stop().await,
+        None => None,
+    };
+    let rows = result?;
+    let mut locks = match observe.locks {
+        Some(stage) => locks::capture(client, stage, observe.server_version)
+            .await
+            .ok(),
+        None => None,
+    };
+    if let Some(locks) = &mut locks {
+        locks.waits.clone_from(&waits);
+    }
+    Ok((rows, Observed { locks, waits }))
 }
 
 #[cfg(test)]

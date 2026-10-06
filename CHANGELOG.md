@@ -6,6 +6,20 @@ All notable changes to ExplainSQL. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- `--locks` in connected mode, and `L` in the viewer: the locks the
+  statement takes, read inside the transaction that is rolled back. How
+  many fall outside the fast path, the tables, partitions and indexes they
+  come from (indexes nothing uses named), the commands that would wait for
+  them, other sessions' conflicting locks right now, and, from a second
+  connection that samples `pg_stat_activity`, what the statement waited on
+  as it ran. With `--params` or `--bind`, the locks of an execution of the
+  generic plan, which locks every partition, and of a custom plan. See the
+  guide.
+- With `--locks`, `--measure` or `--prove`, a measured run that waited for
+  another session's lock runs again, up to twice, with a note.
+
 ## [0.2.0] - 2026-10-06
 
 ### Added

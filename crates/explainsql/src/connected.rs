@@ -41,6 +41,10 @@ fn try_run(cli: &Cli) -> Result<ExitCode, String> {
         timeout: Duration::from_secs(cli.timeout.max(1)),
     };
     let runs = usize::from(cli.runs);
+    // Measured runs that waited for another session's lock run again.
+    if cli.locks || cli.measure || cli.prove {
+        db.watch_waits();
+    }
     if cli.params || !cli.bind.is_empty() {
         let trying = params::Trying {
             measure: cli.measure,
@@ -49,7 +53,11 @@ fn try_run(cli: &Cli) -> Result<ExitCode, String> {
         };
         let (plan, sensitivity) = params::sensitivity(&db, &sql, &cli.bind, trying)?;
         let (mut analysis, _) = analyzed(&db, &plan);
+        if cli.locks {
+            analysis.locks = params::locks(&db, &sql, &sensitivity, trying);
+        }
         analysis.parameters = Some(sensitivity);
+        print_notes(&db);
         return Ok(with_findings(
             cli,
             &analysis,
@@ -66,7 +74,10 @@ fn try_run(cli: &Cli) -> Result<ExitCode, String> {
         } else {
             Mode::Analyze
         };
-        let (plan, mut analysis, catalog) = plan_of(&db, &sql, mode, safety)?;
+        let (plan, mut analysis, catalog) = plan_of(&db, &sql, mode, safety, cli.locks)?;
+        if cli.locks && analysis.locks.is_empty() {
+            eprintln!("explainsql: cannot read the locks the statement took");
+        }
         if cli.prove {
             prove_all(&db, &sql, &mut analysis, runs, safety);
         }
@@ -90,6 +101,7 @@ fn try_run(cli: &Cli) -> Result<ExitCode, String> {
                 Err(error) => eprintln!("explainsql: cannot ask the planner: {error}"),
             }
         }
+        print_notes(&db);
         return Ok(with_findings(
             cli,
             &analysis,
@@ -97,8 +109,9 @@ fn try_run(cli: &Cli) -> Result<ExitCode, String> {
         ));
     }
 
-    // The estimated plan at once; EXPLAIN ANALYZE in the background.
-    let (plan, analysis, _) = plan_of(&db, &sql, Mode::Estimate, safety)?;
+    // The estimated plan at once; EXPLAIN ANALYZE in the background. The
+    // viewer shows the locks of each with L.
+    let (plan, analysis, _) = plan_of(&db, &sql, Mode::Estimate, safety, true)?;
     let hypopg = has_hypopg(&db);
     let canceller = db.canceller();
     let database = db.description().to_owned();
@@ -156,7 +169,7 @@ fn try_run(cli: &Cli) -> Result<ExitCode, String> {
                 }
             };
             if estimate_first {
-                match plan_of(&db, &sql, Mode::Estimate, safety) {
+                match plan_of(&db, &sql, Mode::Estimate, safety, true) {
                     Ok((plan, analysis, _)) => {
                         let _ = replies.send(Event::Plan {
                             plan: Box::new(plan),
@@ -170,7 +183,7 @@ fn try_run(cli: &Cli) -> Result<ExitCode, String> {
                     }
                 }
             }
-            let event = match plan_of(&db, &sql, Mode::Analyze, safety) {
+            let event = match plan_of(&db, &sql, Mode::Analyze, safety, true) {
                 Ok((plan, analysis, _)) => Event::Plan {
                     plan: Box::new(plan),
                     analysis: Box::new(analysis),
@@ -224,19 +237,37 @@ pub(crate) fn placeholder_list(sql: &str) -> Option<(String, usize)> {
 }
 
 /// Runs EXPLAIN, analyzes the plan, and checks the advice against the
-/// catalog, which it returns when it could be read.
+/// catalog, which it returns when it could be read. With `locks`, the
+/// analysis has the locks the run took, when they could be read.
 fn plan_of(
     db: &Database,
     sql: &str,
     mode: Mode,
     safety: Safety,
+    locks: bool,
 ) -> Result<(Plan, Analysis, Option<Catalog>), String> {
-    let json = db
-        .explain(sql, mode, safety)
-        .map_err(|error| error.to_string())?;
+    let (json, capture) = if locks {
+        db.explain_locks(sql, mode, safety)
+    } else {
+        db.explain(sql, mode, safety).map(|json| (json, None))
+    }
+    .map_err(|error| error.to_string())?;
     let plan = explainsql_core::parse(&json).map_err(|error| error.to_string())?;
-    let (analysis, catalog) = analyzed(db, &plan);
+    let (mut analysis, catalog) = analyzed(db, &plan);
+    if let Some(capture) = capture {
+        analysis
+            .locks
+            .push(explainsql_core::locks::footprint(&capture, &plan));
+    }
     Ok((plan, analysis, catalog))
+}
+
+/// What the user should know about the runs, such as a measured run that
+/// waited for another session's lock.
+fn print_notes(db: &Database) {
+    for note in db.take_notes() {
+        eprintln!("explainsql: {note}");
+    }
 }
 
 /// The analysis of a plan, with its advice checked against the catalog

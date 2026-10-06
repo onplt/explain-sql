@@ -53,6 +53,7 @@ The top line is the verdict: the statement's time, where most of it went, and wh
 | `F` | The icicle view in place of the tree (below) |
 | `r`, `e`, `t`, `Esc` | Connected: run again, edit the query, test a suggestion, cancel |
 | `y` | Connected: ask the planner why it chose the selected node |
+| `L` | Connected: the locks the statement takes ([below](#what-the-statement-locks)) |
 | `?`, `q` | Help, quit |
 
 `F` shows the plan as an icicle: the root on top and each node in a box under its parent, as wide as the CPU time spent in it and below it, colored by its own share. Workers of a parallel plan add up under the node that gathers them, InitPlans, SubPlans and CTEs sit under the node they belong to, and time in triggers, outside the tree, is in the title. A plan without timing (`TIMING OFF`, or not run) is drawn by estimated cost, and the title says so. `k` `j` go to the parent and to the widest child, `h` `l` along the row, `Enter` zooms on a box to fill the width with it (`Enter` on that box again zooms out, `g` goes back to the whole plan). Nodes too narrow for a column are folded into their parent and shown as `…`; zooming opens them. The details, search and hotspots work as in the tree, and `F` goes back to it on the same node.
@@ -178,6 +179,32 @@ Either way, each execution is planned again, which costs planning time. An index
 
 - Values are tried one parameter at a time, so how columns depend on each other is not taken into account.
 - A parameter inside an expression (`lower(email) = $1`), an array (`= ANY($1)`) or a `SET` clause gets no value from the statistics. Give one with `--bind`.
+
+## What the statement locks
+
+```sh
+explainsql -d shop -f report.sql --locks --print
+explainsql -d shop -c 'SELECT * FROM events WHERE created_at > $1' --bind 1=2025-12-20 --locks --print
+```
+
+In the viewer, press `L`.
+
+`EXPLAIN` never shows locks. But the transaction explainsql rolls back still holds the statement's locks after the `EXPLAIN`, so explainsql reads them there, from `pg_lock_status()`, just before the rollback releases them. The report says:
+
+- **How many relation locks the statement takes, table by table:** the table, its partitions and its indexes. The planner locks every index of every table it plans, used or not, and every partition it cannot rule out while planning, such as when the partition key is compared with `now()`.
+- **How many fall outside the fast path.** A backend takes weak relation locks (`AccessShareLock`, `RowShareLock`, `RowExclusiveLock`) in fast-path slots of its own: 16 before PostgreSQL 18, and from 18 as many as `max_locks_per_transaction` sets, 64 by default. The others go to the shared lock table. Many sessions running such a statement at once contend for it (wait event `LWLock:LockManager`), and slow each other down. The remedy is to take fewer locks: drop the indexes nothing uses, or let the planner rule out partitions.
+- **Indexes nothing uses:** locked by every run, not used by this plan, not scanned since the statistics were reset, and enforcing no constraint. Replicas count their own scans, so check theirs before dropping one.
+- **What would wait for these locks:** the commands whose locks conflict with the statement's, such as `ALTER TABLE` on its tables or `REINDEX` of any of the indexes it locks, those the plan does not use included. While such a command waits for a long statement, every later run of the statement waits behind it, so the report recommends a `lock_timeout` for schema changes.
+- **Other sessions' locks that conflict right now**, such as a migration already waiting behind statements like this one.
+- **What the statement waited on as it ran.** A second connection samples `pg_stat_activity` every 10 ms while `EXPLAIN ANALYZE` runs, for the backend and its parallel workers. When the statement waited for another session's lock, the report says how long, and who held it: that time is not the plan's.
+
+With `--no-analyze`, the locks are those that planning takes; `EXPLAIN ANALYZE` adds those of running.
+
+**Statements with parameters.** With `--params` or `--bind`, the report shows the locks of one execution of the generic plan and of one custom plan, with the values the parameters are held at. explainsql prepares the statement and makes its plan in one transaction, then executes it in a second, whose locks it reads: PostgreSQL does not plan a cached generic plan again, and locks every partition in it before run-time pruning drops those the values rule out, while a custom plan locks only the partitions the planner keeps. So as partitions accumulate, every execution of the generic plan takes more locks. Without `--measure`, the plans do not run, and the generic plan's count leaves out the indexes its scans open when it does.
+
+**Measured runs that waited.** With `--locks`, `--measure` or `--prove`, the second connection also watches measured runs. A run that waited for another session's lock runs again, up to twice, and explainsql says so.
+
+**Safety.** It only reads: `pg_lock_status()`, `pg_locks`, `pg_stat_activity` and the catalog, inside the transaction that is rolled back. Reading `pg_locks` takes the lock manager's internal locks for a moment, twice per run. The second connection uses the same settings as the first.
 
 ## The costliest statements
 

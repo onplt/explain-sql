@@ -7,7 +7,9 @@
 
 use explainsql_core::compare;
 use explainsql_core::ir::Plan;
+use explainsql_core::locks::{self, Footprint, Note, Stage};
 use explainsql_core::params::{self, Sample, Sensitivity, Trial, Tried};
+use explainsql_core::rules::Severity;
 use explainsql_core::scenario::Setting;
 use explainsql_db::{Cache, Database, Error, Mode, Safety};
 
@@ -164,6 +166,60 @@ pub(crate) fn sensitivity(
         None => generic,
     };
     Ok((plan, sensitivity))
+}
+
+/// `--locks`: the locks of an execution of the generic plan and of a
+/// custom plan, with the values the parameters are held at, compared.
+/// With `--measure` each runs; else each is planned and its executor
+/// started, but not run.
+pub(crate) fn locks(
+    db: &Database,
+    sql: &str,
+    sensitivity: &Sensitivity,
+    trying: Trying,
+) -> Vec<Footprint> {
+    let placeholders = params::placeholders(sql);
+    let values: Vec<Option<String>> = sensitivity
+        .parameters
+        .iter()
+        .map(|parameter| parameter.held.clone())
+        .collect();
+    let mode = if trying.measure {
+        Mode::Analyze
+    } else {
+        Mode::Estimate
+    };
+    let mut footprints = Vec::new();
+    for cache in [Cache::Generic, Cache::Custom] {
+        let read = db
+            .prepared_locks(&placeholders.sql, cache, &values, mode, trying.safety)
+            .map_err(|error| error.to_string())
+            .and_then(|(json, capture)| {
+                let plan = explainsql_core::parse(&json).map_err(|error| error.to_string())?;
+                Ok(locks::footprint(&capture, &plan))
+            });
+        match read {
+            Ok(mut footprint) => {
+                if footprint.stage == Stage::Generic && mode == Mode::Estimate {
+                    footprint.notes.push(Note {
+                        severity: Severity::Low,
+                        summary: "The generic plan was not run: when it runs, it also locks the indexes its scans read.".to_owned(),
+                        action: Some("--measure runs it and counts them.".to_owned()),
+                    });
+                }
+                footprints.push(footprint);
+            }
+            Err(error) => eprintln!(
+                "explainsql: cannot read the locks of {} plan: {error}",
+                match cache {
+                    Cache::Generic => "the generic",
+                    Cache::Custom => "a custom",
+                }
+            ),
+        }
+    }
+    locks::compare_executions(&mut footprints);
+    footprints
 }
 
 /// Both plans measured with a trial's values, or the custom plan alone

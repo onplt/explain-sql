@@ -206,6 +206,65 @@ fn why_not_card() {
     insta::assert_snapshot!("why_not_120x50", frame(&mut app, 120, 50));
 }
 
+/// The locks overlay, scrolled and closed; L without locks says why.
+#[test]
+fn locks_overlay() {
+    use explainsql_core::locks::{
+        self, Capture, Held, QualifiedName, Relation, RelationKind, Stage,
+    };
+    let mut app = plan("seq_scan_selective");
+    app.handle(Key::Char('L'), 10);
+    assert!(app.locks.is_none());
+    assert!(app.message.as_deref().unwrap().starts_with("Not connected"));
+
+    let relation = |oid, name: &str, kind, scans, enforces| Relation {
+        oid,
+        schema: "public".to_owned(),
+        name: name.to_owned(),
+        kind,
+        table: QualifiedName::new("public", "orders"),
+        root: None,
+        scans,
+        enforces,
+    };
+    let held = |oid| Held {
+        locktype: "relation".to_owned(),
+        relation: Some(oid),
+        mode: "AccessShareLock".to_owned(),
+        granted: true,
+        fastpath: true,
+    };
+    let capture = Capture {
+        stage: Stage::Ran,
+        held: vec![held(1), held(2), held(3), held(4)],
+        relations: vec![
+            relation(1, "orders", RelationKind::Table, None, false),
+            relation(2, "orders_pkey", RelationKind::Index, Some(9000), true),
+            relation(
+                3,
+                "orders_customer_id_idx",
+                RelationKind::Index,
+                Some(120),
+                false,
+            ),
+            relation(4, "orders_note_idx", RelationKind::Index, Some(0), false),
+        ],
+        others: Vec::new(),
+        fast_path_slots: 16,
+        max_locks_per_transaction: Some(64),
+        server_version: 160_004,
+        stats_reset: Some("2026-03-02 09:00:00+00".to_owned()),
+        waits: None,
+    };
+    app.analysis.locks = vec![locks::footprint(&capture, &app.plan)];
+    app.handle(Key::Char('L'), 10);
+    insta::assert_snapshot!("locks", frame(&mut app, 100, 30));
+    app.handle(Key::Char('j'), 10);
+    assert_eq!(app.locks, Some(1));
+    app.handle(Key::Esc, 10);
+    assert!(app.locks.is_none());
+}
+
 /// A plan of 5,000 nodes that cannot be folded into groups: building the
 /// viewer and drawing a frame stay fast enough for typing.
 #[test]

@@ -50,6 +50,7 @@ explainsql -d "$DATABASE_URL" -f slow.sql              # run it: estimated plan,
 explainsql -d "$DATABASE_URL" -f slow.sql --print --prove   # and test each suggested index
 explainsql -d "$DATABASE_URL" -f slow.sql --print --why-not --measure   # why the planner chose its plan
 explainsql -d "$DATABASE_URL" -f app.sql --params --measure   # a statement with $1 or ?: is the generic plan bad for some values?
+explainsql -d "$DATABASE_URL" -f slow.sql --print --locks      # the locks it takes, past the fast path, and what would wait for them
 explainsql diff before.json after.json                 # what changed between two plans, node by node
 explainsql check -d "$DATABASE_URL" queries/           # in CI: fail when a plan got worse than its locked plan
 explainsql logs postgresql.json --changed              # auto_explain logs: when and how each statement's plan changed

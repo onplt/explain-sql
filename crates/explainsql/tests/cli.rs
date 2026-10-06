@@ -374,7 +374,69 @@ fn asking_why_needs_a_database() {
     assert!(!output.status.success());
     assert!(
         String::from_utf8_lossy(&output.stderr)
-            .contains("--why-not, --params and --measure ask the database")
+            .contains("--why-not, --params, --measure and --locks ask the database")
+    );
+}
+
+/// `--locks`, against the database named by `EXPLAINSQL_TEST_DATABASE_URL`;
+/// skipped without it.
+#[test]
+fn connected_mode_reports_the_locks() {
+    let Ok(url) = std::env::var("EXPLAINSQL_TEST_DATABASE_URL") else {
+        eprintln!("EXPLAINSQL_TEST_DATABASE_URL is not set; skipping");
+        return;
+    };
+    let recent = "SELECT * FROM events WHERE created_at > now() - interval '1 day'";
+    let output = run(
+        &[
+            "-d", &url, "-c", recent, "--locks", "--print", "--color", "never",
+        ],
+        None,
+    );
+    assert!(output.status.success(), "{output:?}");
+    let text = stdout(&output);
+    for expected in [
+        "Locks the statement takes",
+        "26 relation locks on 1 table, 10 of them outside the fast path (16 slots).",
+        "12 partitions (the plan has none), 13 indexes",
+        "LOCK TABLE on events",
+    ] {
+        assert!(text.contains(expected), "{expected}: {text}");
+    }
+
+    // With --params, an execution of the generic plan and of a custom plan.
+    let output = run(
+        &[
+            "-d",
+            &url,
+            "-c",
+            "SELECT * FROM events WHERE created_at > $1",
+            "--bind",
+            "1=2025-12-20",
+            "--locks",
+            "--format",
+            "json",
+        ],
+        None,
+    );
+    assert!(output.status.success(), "{output:?}");
+    let report: serde_json::Value = serde_json::from_str(&stdout(&output)).unwrap();
+    let locks = report["locks"].as_array().unwrap();
+    assert_eq!(locks.len(), 2, "{report}");
+    assert_eq!(locks[0]["stage"], "generic");
+    assert_eq!(locks[0]["tables"][0]["partitions"], 12);
+    assert_eq!(locks[1]["stage"], "custom");
+    assert_eq!(locks[1]["tables"][0]["partitions"], 1);
+    assert!(
+        locks[0]["notes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|note| note["summary"]
+                .as_str()
+                .unwrap()
+                .contains("a custom plan for the same values takes 4")),
+        "{report}"
     );
 }
 
