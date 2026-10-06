@@ -6,6 +6,7 @@ use std::{env, fs, io};
 
 mod check;
 mod connected;
+mod logs;
 mod params;
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
@@ -34,7 +35,8 @@ use explainsql_core::report;
 /// compared with the generic plan.
 ///
 /// explainsql diff BEFORE AFTER compares two plans of the same statement;
-/// explainsql check checks plans in continuous integration.
+/// explainsql check checks plans in continuous integration; explainsql logs
+/// tells when the plans in server logs changed.
 #[derive(Parser)]
 #[command(
     name = "explainsql",
@@ -185,6 +187,55 @@ enum Task {
     /// not run): time alone, for the same pages, does not fail it. --update
     /// locks the plans as they are.
     Check(CheckArgs),
+    /// Read auto_explain plans from server logs: which plans each statement
+    /// got, when its plan changed, what changed and what it cost, the
+    /// costliest change first.
+    ///
+    /// FILES are server logs with auto_explain entries, plans in JSON or
+    /// text: stderr with any log_line_prefix, csvlog or jsonlog; `-` reads
+    /// standard input. Statements are told apart by their query identifier
+    /// (compute_query_id, logged with auto_explain.log_verbose), or else by
+    /// their text without literal values. sqlcommenter tags in the text say
+    /// where in the application a statement comes from.
+    Logs(LogsArgs),
+}
+
+#[derive(Args)]
+struct LogsArgs {
+    /// Server logs with auto_explain entries; `-` for standard input.
+    #[arg(required = true, value_name = "FILES")]
+    files: Vec<String>,
+
+    /// Only entries from this time on, written as the log prints times
+    /// (2026-10-06 06:00), or 30m, 24h, 7d back from the last entry.
+    #[arg(long, value_name = "TIME")]
+    since: Option<String>,
+
+    /// Only entries up to this time.
+    #[arg(long, value_name = "TIME")]
+    until: Option<String>,
+
+    /// Only the statement with this query identifier, or whose text
+    /// contains this.
+    #[arg(long, value_name = "ID|TEXT")]
+    query: Option<String>,
+
+    /// Only statements that ran in this trace: the trace id of a
+    /// sqlcommenter traceparent tag.
+    #[arg(long, value_name = "TRACE_ID")]
+    trace: Option<String>,
+
+    /// Only statements whose plan changed.
+    #[arg(long)]
+    changed: bool,
+
+    /// Report format.
+    #[arg(long, value_enum, default_value_t = Format::Text)]
+    format: Format,
+
+    /// When to color the text report.
+    #[arg(long, value_enum, default_value_t = Color::Auto)]
+    color: Color,
 }
 
 #[derive(Args)]
@@ -334,6 +385,7 @@ fn main() -> ExitCode {
     match &cli.task {
         Some(Task::Diff(args)) => return diff(args),
         Some(Task::Check(args)) => return check::run(args),
+        Some(Task::Logs(args)) => return logs::run(args),
         None => {}
     }
     if cli.query_file.is_some() || cli.command.is_some() {

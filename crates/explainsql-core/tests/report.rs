@@ -329,3 +329,20 @@ Execution Time: 67.123 ms",
     assert_eq!(json["parameters"]["parameters"][1]["clause"], "limit");
     assert_eq!(json["parameters"]["rows"][1]["measured"]["change"], "worse");
 }
+
+/// The plans of a log over time: an index dropped, and a prepared statement
+/// that switched to its generic plan.
+#[test]
+fn logs_reports() {
+    let text = read(&common::fixtures().join("logs/postgresql.log"));
+    let (entries, _) = explainsql_core::parse_log(&text).unwrap();
+    let timeline = explainsql_core::timeline::timeline(&entries);
+    insta::assert_snapshot!("logs_text", report::logs_text(&entries, &timeline, false));
+    insta::assert_snapshot!("logs_markdown", report::logs_markdown(&entries, &timeline));
+    let json: serde_json::Value =
+        serde_json::from_str(&report::logs_json(&entries, &timeline)).unwrap();
+    assert_eq!(json["statements"].as_array().unwrap().len(), 3);
+    assert_eq!(json["log"].as_array().unwrap().len(), 32);
+    assert_eq!(json["log"][0]["trace"], "4bf92f3577b34da6a3ce929d0e0e4736");
+    assert_eq!(json["log"][0]["line"], 6);
+}

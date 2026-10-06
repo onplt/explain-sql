@@ -122,7 +122,7 @@ fn scan(
 
 /// The length of a quoted literal or identifier at the start of `text`,
 /// doubled quotes included; to the end of the text when it is not closed.
-fn quoted(text: &str, quote: char, escapes: bool) -> usize {
+pub(crate) fn quoted(text: &str, quote: char, escapes: bool) -> usize {
     let mut chars = text.char_indices().skip(1);
     while let Some((at, c)) = chars.next() {
         if escapes && c == '\\' {
@@ -139,7 +139,7 @@ fn quoted(text: &str, quote: char, escapes: bool) -> usize {
 }
 
 /// The length of a block comment, which may nest.
-fn block_comment(text: &str) -> usize {
+pub(crate) fn block_comment(text: &str) -> usize {
     let mut depth = 0;
     let mut at = 0;
     while at < text.len() {
@@ -161,7 +161,7 @@ fn block_comment(text: &str) -> usize {
 
 /// The length of a dollar-quoted string (`$$…$$`, `$tag$…$tag$`) at the
 /// start of `text`, if one starts there.
-fn dollar_quote(text: &str) -> Option<usize> {
+pub(crate) fn dollar_quote(text: &str) -> Option<usize> {
     let tag_length = text[1..].find('$').filter(|&end| {
         let tag = &text[1..=end];
         tag.chars().all(|c| c.is_alphanumeric() || c == '_')
@@ -1186,7 +1186,7 @@ pub fn show_typed(value: Option<&str>, type_name: Option<&str>) -> String {
 /// A plan in brief: how it reads the tables the parameters are compared
 /// with, partitions of them included, or its root when it reads none of
 /// them.
-fn brief(plan: &Plan, tables: &[String]) -> Brief {
+pub(crate) fn brief(plan: &Plan, tables: &[String]) -> Brief {
     let patterns: Vec<String> = tables
         .iter()
         .map(|table| fingerprint::blank_numbers(table))

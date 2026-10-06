@@ -52,6 +52,7 @@ explainsql -d "$DATABASE_URL" -f slow.sql --print --why-not --measure   # why th
 explainsql -d "$DATABASE_URL" -f app.sql --params --measure   # a statement with $1 or ?: is the generic plan bad for some values?
 explainsql diff before.json after.json                 # what changed between two plans, node by node
 explainsql check -d "$DATABASE_URL" queries/           # in CI: fail when a plan got worse than its locked plan
+explainsql logs postgresql.json --changed              # auto_explain logs: when and how each statement's plan changed
 ```
 
 The [user guide](https://github.com/onplt/explain-sql/blob/main/docs/guide.md) covers the viewer's keys, the pager mode, connected mode and its safety rules, and testing suggestions. The [rule catalog](https://github.com/onplt/explain-sql/blob/main/docs/rules.md) explains every finding, with an example from real plans. Both are also published as the [documentation site](https://onplt.github.io/explain-sql/).

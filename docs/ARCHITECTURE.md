@@ -27,7 +27,7 @@ explain-sql/
 ├─ crates/
 │  ├─ explainsql-core/           # no I/O, no async, WASM-compatible
 │  │  ├─ src/ir.rs               # the plan IR
-│  │  ├─ src/pg/                 # PostgreSQL front end: normalize, json, text, raw, lower
+│  │  ├─ src/pg/                 # PostgreSQL front end: normalize, json, text, raw, lower; log entries
 │  │  ├─ src/metrics.rs          # inclusive and exclusive time and buffers, misestimates
 │  │  ├─ src/expr.rs             # reads the conditions printed in plans
 │  │  ├─ src/rules/              # one file per rule
@@ -41,17 +41,19 @@ explain-sql/
 │  │  ├─ src/fingerprint.rs      # the same scan or join in another plan; plan shapes
 │  │  ├─ src/counterfactual.rs   # why the planner chose its plan: questions and answers
 │  │  ├─ src/params.rs           # statements with parameters: values to try, generic and custom plans
+│  │  ├─ src/timeline.rs         # plans over time from server logs: statements, plan changes, tags
 │  │  ├─ src/analysis.rs         # metrics + findings + the one-sentence verdict
 │  │  ├─ src/report.rs           # static reports: text, Markdown, JSON
 │  │  └─ tests/                  # corpus, inputs, metrics, rules, report snapshots, robustness
 │  ├─ explainsql-db/             # tokio-postgres + rustls: safe executor, prepared statements, catalog reader, HypoPG/rollback prover
 │  ├─ explainsql-tui/            # Ratatui app: state, views, keymap, theme
-│  └─ explainsql/                # binary: clap CLI, mode dispatch (tui | print | pager | json), diff, check
+│  └─ explainsql/                # binary: clap CLI, mode dispatch (tui | print | pager | json), diff, check, logs
 ├─ fixtures/
 │  ├─ schema.sql                 # deterministic dataset
 │  ├─ scenarios/<name>.sql       # one statement plus expectations (rules, advice) per scenario
 │  ├─ pg/{12..18}/               # generated plans: <name>.json, <name>.txt, manifest.json
-│  └─ inputs/                    # one plan in each form it arrives in: psql output, server logs
+│  ├─ inputs/                    # one plan in each form it arrives in: psql output, server logs
+│  └─ logs/                      # a session's auto_explain entries in stderr, csvlog and jsonlog
 ├─ fuzz/                         # cargo-fuzz target for the parsers (its own workspace; needs nightly)
 ├─ tools/cross-check/            # compares exclusive times with pev2 and explain.depesz.com
 ├─ docs/                         # the documentation site (mdBook): guide, rule catalog, design documents
@@ -356,6 +358,24 @@ A statement with parameters has two kinds of plans. A custom plan is made for th
 - **Order and verdict.** Structural changes come first, then the others, each by weight: the larger share of the statement's time, pages or estimated cost its nodes take in either plan. The verdict is `compare.rs`'s comparison of the totals followed by the first structural change, or "the plan is the same" when the shapes are.
 - **Reports.** Text, Markdown and JSON (`report::diff_*`): the verdict, the shapes, the changes with their evidence, and the plan after with changed nodes marked `~` and new ones `+`. The JSON report is the diff with the label of every node of both plans.
 - **Tests.** `diff.rs` covers each kind of change on small plans. `tests/diff.rs` checks that every corpus plan matches itself and its other format node for node, that scans find their relation in another version, that any two plans compare, and what changed from PostgreSQL 12 to 18 in three scenarios; `tests/report.rs` snapshots the text and Markdown reports, and `tests/cli.rs` runs `explainsql diff`.
+
+## Plans over time: server logs
+
+`explainsql logs` reads the plans auto_explain logged and tells, for each statement, which plans it got and when its plan changed. Reading is in `pg/log.rs`, the analysis in `timeline.rs`, both pure; the binary filters and prints.
+
+- **Entries** (`pg::parse_log`). One pass over a jsonlog, a csvlog or a stderr log finds every auto_explain message (`duration: … ms  plan:`) and what the log says about it:
+  - jsonlog and csvlog: the record's fields (time, process, user, database, application, query id);
+  - stderr: the line prefix, read for a time, a `[pid]`, `user@db` or `user=,db=,app=`;
+  - the duration, kept in thousandths of a millisecond so that entries compare exactly;
+  - auto_explain's `Query Text:` and, from PostgreSQL 16, its `Query Parameters:` line (a key of JSON plans).
+
+  The plan itself goes through the parsers like any other. An entry whose plan cannot be read is a warning on its line. The robustness tests feed the captured logs cut and mangled.
+- **Statements.** Entries are ordered by time, as the log prints it; the time zone is left out, as a log's entries share one. Entries are grouped by the query identifier of the plan, or else of the log record: for an `EXECUTE`, the record's identifier is that of the `EXECUTE`, the plan's that of the prepared query. Without one, entries are grouped by the text: comments, a leading `PREPARE name (types) AS`, literal values and parameters left out, an `IN` list one `?`.
+- **Plan changes.** A statement's entries form runs of the same [shape](#plan-diff). Where one run ends and another begins, `diff.rs` compares the last plan of the one with the first of the other. The change also records the runs' median durations, whether another process ran the plan after, and whether the plan after is a generic plan: one that keeps the parameters (`$1`) of a parameterized statement, the plan before not. A statement with four runs or more, and more than twice as many runs as plans, alternates.
+- **Order.** Statements whose plan changed come first, by what their costliest change added: the median duration after minus before, times the runs after. The others follow by their total time.
+- **sqlcommenter** (`timeline::tags`). The tags of the last comment that holds only `key='value'` pairs are decoded (percent-encoding, `\'`). The statement keeps them, the trace context left out. `--trace` matches the trace id of `traceparent`.
+- **Reports** (`report::logs_*`). Text and Markdown: each statement with its plans and changes, and for a switch to a generic plan, the `--params` and `--bind` command that tests it. JSON: the timeline, and every entry with what the log says, its shape and its trace, without the plans.
+- **Tests.** `fixtures/logs/` holds a real session, logged by PostgreSQL 16 in the three formats at once (see its README): an index dropped by a migration, a stable report, and a prepared statement that switches to its generic plan. `tests/logs.rs` checks that the three formats give the same entries and timeline. `timeline.rs` covers texts, tags and times on small inputs, `tests/report.rs` snapshots the reports, and `tests/cli.rs` runs the filters.
 
 ## Checks in CI
 

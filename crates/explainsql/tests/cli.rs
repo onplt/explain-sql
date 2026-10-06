@@ -656,3 +656,70 @@ fn checks_statements_against_a_database() {
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// The plans of server logs over time, from the logs captured in the three
+/// formats PostgreSQL writes.
+#[test]
+fn tells_when_plans_in_logs_changed() {
+    let log = fixture("logs/postgresql.log");
+    let json = |args: &[&str]| -> serde_json::Value {
+        let mut all = vec!["logs", log.to_str().unwrap(), "--format", "json"];
+        all.extend_from_slice(args);
+        let output = run(&all, None);
+        assert!(output.status.success(), "{output:?}");
+        serde_json::from_str(&stdout(&output)).unwrap()
+    };
+    let report = json(&[]);
+    let statements = report["statements"].as_array().unwrap();
+    assert_eq!(statements.len(), 3);
+    assert_eq!(statements[0]["prepared"], "latest");
+    assert_eq!(statements[0]["changes"][0]["generic"], true);
+    assert_eq!(statements[2]["pattern"], "stable");
+
+    // Only the statements whose plan changed, or one of them by its tags.
+    assert_eq!(
+        json(&["--changed"])["statements"].as_array().unwrap().len(),
+        2
+    );
+    let report = json(&["--query", "OrderController"]);
+    assert_eq!(report["statements"].as_array().unwrap().len(), 1);
+    assert_eq!(report["statements"][0]["runs"], 12);
+    // Entries from a time on: the second run of the session.
+    let report = json(&["--since", "2026-10-06 06:35:13.900"]);
+    assert_eq!(report["entries"], 16);
+
+    // The text report leads with the costliest change, and with --trace,
+    // says which plan the trace ran.
+    let output = run(
+        &[
+            "logs",
+            log.to_str().unwrap(),
+            "--trace",
+            "4bf92f3577b34da6a3ce929d0e0e4736",
+            "--color",
+            "never",
+        ],
+        None,
+    );
+    assert!(output.status.success(), "{output:?}");
+    let text = stdout(&output);
+    assert!(
+        text.starts_with(
+            "Trace 4bf92f3577b34da6a3ce929d0e0e4736: SELECT id, status, amount FROM orders"
+        ),
+        "{text}"
+    );
+    assert!(text.contains("ran plan 1 of 2"), "{text}");
+
+    // A time it cannot read, and a file that is not a log.
+    let output = run(
+        &["logs", log.to_str().unwrap(), "--since", "yesterday"],
+        None,
+    );
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("give a time"));
+    let plan = fixture("pg/16/seq_scan_selective.txt");
+    let output = run(&["logs", plan.to_str().unwrap()], None);
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("no EXPLAIN plan found"));
+}

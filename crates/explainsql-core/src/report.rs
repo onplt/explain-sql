@@ -12,7 +12,9 @@ use crate::format;
 use crate::ir::{NodeId, Plan};
 use crate::metrics;
 use crate::params::{self, Parameter, Sensitivity};
+use crate::pg::{LogEntry, LogMeta};
 use crate::rules::{Finding, Severity};
+use crate::timeline::{Pattern, PlanChange, Statement, Timeline};
 
 /// Node labels longer than this are shortened in the plan table.
 const MAX_NODE_WIDTH: usize = 64;
@@ -203,6 +205,362 @@ pub fn diff_markdown(before: &Plan, after: &Plan, diff: &PlanDiff) -> String {
     }
     out.push_str("\n`~` a node that changed, `+` a node only the plan after has.\n");
     out
+}
+
+/// A log's statements and the plans they got, for a terminal: those whose
+/// plan changed first, each with its plans and where they changed.
+pub fn logs_text(entries: &[LogEntry], timeline: &Timeline, color: bool) -> String {
+    let paint = Paint(color);
+    let mut out = String::new();
+    out.push_str(&paint.bold(&wrap(&logs_headline(timeline), 0)));
+    out.push('\n');
+    for statement in &timeline.statements {
+        out.push('\n');
+        out.push_str(&format!(
+            "{}  {}\n",
+            paint.pattern(statement.pattern),
+            statement.text
+        ));
+        out.push_str(&paint.dim(&wrap(&statement_facts(statement), 13)));
+        out.push('\n');
+        if statement.plans.len() > 1 {
+            for (number, plan) in statement.plans.iter().enumerate() {
+                out.push_str(&wrap(&plan_line(number, plan), 13));
+                out.push('\n');
+            }
+        }
+        for (index, change) in statement.changes.iter().enumerate() {
+            let again = statement.changes[..index]
+                .iter()
+                .any(|earlier| earlier.from == change.from && earlier.to == change.to);
+            out.push_str(&format!(
+                "  {}\n",
+                paint.bold(&when(entries, timeline, change.after))
+            ));
+            out.push_str(&wrap(&change_line(statement, change, again), 13));
+            out.push('\n');
+            if again {
+                continue;
+            }
+            out.push_str(&wrap(&change.verdict, 13));
+            out.push('\n');
+            for detail in &change.details {
+                out.push_str(&paint.dim(&wrap(detail, 13)));
+                out.push('\n');
+            }
+            if let Some(action) = generic_action(change) {
+                out.push_str(&wrap(&format!("→ {action}"), 13));
+                out.push('\n');
+            }
+        }
+    }
+    out
+}
+
+/// A log's statements and the plans they got, as Markdown.
+pub fn logs_markdown(entries: &[LogEntry], timeline: &Timeline) -> String {
+    let mut out = format!(
+        "### explainsql logs\n\n{}\n\n",
+        escape(&logs_headline(timeline))
+    );
+    out.push_str(
+        "| Statement | Runs | Time in all | Plans | Changes |\n|---|---:|---:|---:|---:|\n",
+    );
+    for statement in &timeline.statements {
+        out.push_str(&format!(
+            "| {} `{}`{} | {} | {} | {} | {} |\n",
+            statement.pattern.label(),
+            statement.text.replace('`', "'").replace('|', "\\|"),
+            statement
+                .prepared
+                .as_ref()
+                .map(|name| format!(" (prepared as {})", escape(name)))
+                .unwrap_or_default(),
+            format::grouped(i64::try_from(statement.runs).unwrap_or(i64::MAX)),
+            statement.total.map(format::duration).unwrap_or_default(),
+            statement.plans.len(),
+            statement.changes.len()
+        ));
+    }
+    for statement in timeline
+        .statements
+        .iter()
+        .filter(|statement| statement.pattern != Pattern::Stable)
+    {
+        out.push_str(&format!(
+            "\n#### {}: `{}`\n\n{}\n\n",
+            statement.pattern.label(),
+            statement.text.replace('`', "'"),
+            escape(&statement_facts(statement))
+        ));
+        for (number, plan) in statement.plans.iter().enumerate() {
+            out.push_str(&format!(
+                "{}\n",
+                escape(&format!("- {}", plan_line(number, plan)))
+            ));
+        }
+        out.push('\n');
+        for (index, change) in statement.changes.iter().enumerate() {
+            let again = statement.changes[..index]
+                .iter()
+                .any(|earlier| earlier.from == change.from && earlier.to == change.to);
+            out.push_str(&format!(
+                "- **{}**: {}\n",
+                escape(&when(entries, timeline, change.after)),
+                escape(&change_line(statement, change, again))
+            ));
+            if again {
+                continue;
+            }
+            out.push_str(&format!("  - {}\n", escape(&change.verdict)));
+            for detail in &change.details {
+                out.push_str(&format!("  - {}\n", escape(detail)));
+            }
+            if let Some(action) = generic_action(change) {
+                out.push_str(&format!("  - **Action:** {}\n", escape(&action)));
+            }
+        }
+    }
+    out
+}
+
+/// A log's statements and the plans they got as JSON, with what the log
+/// says about each entry; the plans themselves are left out.
+pub fn logs_json(entries: &[LogEntry], timeline: &Timeline) -> String {
+    #[derive(Serialize)]
+    struct Entry<'a> {
+        #[serde(flatten)]
+        meta: &'a LogMeta,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        parameters: Option<&'a str>,
+        /// The trace id of its sqlcommenter traceparent tag.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        trace: Option<String>,
+        shape: String,
+    }
+    #[derive(Serialize)]
+    struct Report<'a> {
+        #[serde(flatten)]
+        timeline: &'a Timeline,
+        log: Vec<Entry<'a>>,
+    }
+    let report = Report {
+        timeline,
+        log: entries
+            .iter()
+            .map(|entry| Entry {
+                meta: &entry.meta,
+                parameters: entry.parameters.as_deref(),
+                trace: entry
+                    .plan
+                    .summary
+                    .query_text
+                    .as_deref()
+                    .map(crate::timeline::tags)
+                    .and_then(|tags| {
+                        tags.get("traceparent")
+                            .and_then(|parent| crate::timeline::trace_id(parent))
+                            .map(str::to_owned)
+                    }),
+                shape: crate::fingerprint::id(&entry.plan),
+            })
+            .collect(),
+    };
+    let mut out = serde_json::to_string_pretty(&report).expect("the report serializes");
+    out.push('\n');
+    out
+}
+
+/// `32 plans of 3 statements, from … to …. The plans of 2 statements changed.`
+fn logs_headline(timeline: &Timeline) -> String {
+    let changed = timeline
+        .statements
+        .iter()
+        .filter(|statement| statement.pattern != Pattern::Stable)
+        .count();
+    let count = timeline.statements.len();
+    let mut text = format!(
+        "{} plan{} of {} statement{}",
+        format::grouped(i64::try_from(timeline.entries).unwrap_or(i64::MAX)),
+        if timeline.entries == 1 { "" } else { "s" },
+        count,
+        if count == 1 { "" } else { "s" }
+    );
+    if let (Some(from), Some(to)) = (&timeline.from, &timeline.to) {
+        text.push_str(&format!(", from {from} to {to}"));
+    }
+    text.push_str(match (changed, count) {
+        (0, 1) => ". It kept its plan.",
+        (0, _) => ". Every statement kept its plan.",
+        (1, 1) => ". Its plan changed.",
+        _ => "",
+    });
+    if changed > 0 && count > 1 {
+        text.push_str(&format!(
+            ". The plan of {changed} of them changed{}.",
+            if changed == 1 {
+                ""
+            } else {
+                ", the costliest first"
+            }
+        ));
+    }
+    text
+}
+
+/// `prepared as latest · query id … · 16 runs, 468.2 ms in all · shop-batch
+/// · controller=OrderController, action=latest`.
+fn statement_facts(statement: &Statement) -> String {
+    let mut facts = Vec::new();
+    if let Some(name) = &statement.prepared {
+        facts.push(format!("prepared as {name}"));
+    }
+    if let Some(id) = statement.query_id {
+        facts.push(format!("query id {id}"));
+    }
+    let runs = format!(
+        "{} run{}",
+        format::grouped(i64::try_from(statement.runs).unwrap_or(i64::MAX)),
+        if statement.runs == 1 { "" } else { "s" }
+    );
+    facts.push(match statement.total {
+        Some(total) => format!("{runs}, {} in all", format::duration(total)),
+        None => runs,
+    });
+    if !statement.applications.is_empty() {
+        facts.push(statement.applications.join(", "));
+    }
+    if !statement.tags.is_empty() {
+        facts.push(
+            statement
+                .tags
+                .iter()
+                .map(|(key, value)| format!("{key}={value}"))
+                .collect::<Vec<_>>()
+                .join(", "),
+        );
+    }
+    facts.join(" · ")
+}
+
+/// `plan 2  Index Scan Backward using … on orders · the generic plan · 6
+/// runs, median 57.9 ms`.
+fn plan_line(number: usize, plan: &crate::timeline::PlanUse) -> String {
+    let mut text = format!("plan {}  {}", number + 1, plan.access);
+    if plan.generic {
+        text.push_str(" · the generic plan");
+    }
+    text.push_str(&format!(
+        " · {} run{}",
+        format::grouped(i64::try_from(plan.runs).unwrap_or(i64::MAX)),
+        if plan.runs == 1 { "" } else { "s" }
+    ));
+    if let Some(median) = plan.median {
+        text.push_str(&format!(", median {}", format::duration(median)));
+    }
+    text
+}
+
+/// When an entry ran, and where it is: `06:35:13.659 UTC, line 264`. The
+/// date is left out when the log holds one day.
+fn when(entries: &[LogEntry], timeline: &Timeline, index: usize) -> String {
+    let meta = &entries[index].meta;
+    let one_day = match (&timeline.from, &timeline.to) {
+        (Some(from), Some(to)) => from.get(..10) == to.get(..10),
+        _ => false,
+    };
+    let time = meta
+        .timestamp
+        .as_deref()
+        .map(|stamp| match stamp.split_once(' ') {
+            Some((_, time)) if one_day => time.to_owned(),
+            _ => stamp.to_owned(),
+        });
+    let place = match &meta.file {
+        Some(file) => format!("{file}:{}", meta.line),
+        None => format!("line {}", meta.line),
+    };
+    match time {
+        Some(time) => format!("{time}, {place}"),
+        None => place,
+    }
+}
+
+/// `plan 1 → plan 2 after 5 runs: the generic plan, with $1 = '777', $2 =
+/// '10'; median 13.2 ms → 58.7 ms (4.4× slower)`.
+fn change_line(statement: &Statement, change: &PlanChange, again: bool) -> String {
+    let number = |shape: &str| {
+        statement
+            .plans
+            .iter()
+            .position(|plan| plan.shape == shape)
+            .map_or(0, |index| index + 1)
+    };
+    let mut text = format!(
+        "plan {} → plan {}{} after {} run{}",
+        number(&change.from),
+        number(&change.to),
+        if again { " again" } else { "" },
+        format::grouped(i64::try_from(change.runs_before).unwrap_or(i64::MAX)),
+        if change.runs_before == 1 { "" } else { "s" }
+    );
+    if change.new_session {
+        text.push_str(", in another session");
+    }
+    if change.generic {
+        text.push_str(": the generic plan");
+        if let Some(parameters) = &change.parameters {
+            text.push_str(&format!(", with {parameters}"));
+        }
+    }
+    if let (Some(before), Some(after)) = (change.median_before, change.median_after) {
+        text.push_str(&format!(
+            "; median {} → {}",
+            format::duration(before),
+            format::duration(after)
+        ));
+        if before > 0.0 && after > 0.0 {
+            let (ratio, word) = if after >= before {
+                (after / before, "slower")
+            } else {
+                (before / after, "faster")
+            };
+            if ratio >= 1.1 {
+                text.push_str(&format!(" ({} {word})", format::factor(ratio)));
+            }
+        }
+    }
+    text
+}
+
+/// What to do when a prepared statement switched to its generic plan.
+fn generic_action(change: &PlanChange) -> Option<String> {
+    if !change.generic {
+        return None;
+    }
+    let binds: Vec<String> = change
+        .parameters
+        .as_deref()
+        .map(|parameters| {
+            parameters
+                .split(", $")
+                .filter_map(|pair| {
+                    let (number, value) = pair.trim_start_matches('$').split_once(" = ")?;
+                    let value = value.strip_prefix('\'')?.strip_suffix('\'')?;
+                    Some(format!("--bind {number}={}", value.replace("''", "'")))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let mut action = "PostgreSQL switched to the generic plan after five executions. With the statement in a file, explainsql -d DATABASE -f FILE --params --measure shows which values the generic plan suits and what to do".to_owned();
+    if !binds.is_empty() {
+        action.push_str(&format!(
+            "; with {}, it compares the generic plan with the custom plan for these values",
+            binds.join(" ")
+        ));
+    }
+    action.push('.');
+    Some(action)
 }
 
 /// A plan diff as JSON: the diff, with the labels of the nodes it names.
@@ -1399,6 +1757,16 @@ impl Paint {
             params::Verdict::Sensitive => self.wrap("1;31", label),
             params::Verdict::Insensitive | params::Verdict::Harmless => self.wrap("32", label),
             params::Verdict::Unknown => self.wrap("2", label),
+        }
+    }
+
+    /// Whether a statement's plan changed, padded to line the statements up.
+    fn pattern(&self, pattern: Pattern) -> String {
+        let label = format!("{:<11}", pattern.label());
+        match pattern {
+            Pattern::Changed => self.wrap("1;33", &label),
+            Pattern::Alternating => self.wrap("33", &label),
+            Pattern::Stable => self.wrap("2", &label),
         }
     }
 

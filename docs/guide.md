@@ -176,6 +176,49 @@ Either way, each execution is planned again, which costs planning time. An index
 - Values are tried one parameter at a time, so how columns depend on each other is not taken into account.
 - A parameter inside an expression (`lower(email) = $1`), an array (`= ANY($1)`) or a `SET` clause gets no value from the statistics. Give one with `--bind`.
 
+## Find plan changes in server logs
+
+"It was fast yesterday" is often a plan that changed: after an `ANALYZE`, as the data grew, when a prepared statement switched to its generic plan, or after an upgrade. With [auto_explain](https://www.postgresql.org/docs/current/auto-explain.html), the server logs the plans it ran, and `explainsql logs` reads them: which plans each statement got, when its plan changed, what changed, and what it cost.
+
+```sh
+explainsql logs /var/log/postgresql/postgresql-16-main.log
+explainsql logs postgresql.json --changed --since 24h
+explainsql logs postgresql.csv --query OrderController --format md > incident.md
+explainsql logs postgresql.log --trace 4bf92f3577b34da6a3ce929d0e0e4736
+```
+
+**Reading the logs.**
+
+- **Formats.** Logs in any of the server's formats: stderr with any `log_line_prefix`, csvlog or jsonlog. Plans can be in text or JSON format, and several files can be read together. `-` reads standard input.
+- **What each entry says.** From jsonlog and csvlog records, and from the common stderr prefixes (`%m [%p] %u@%d`, or `user=%u,db=%d,app=%a`), explainsql takes the time, the process, the user, the database and the application. It also reads the duration, the query text and, from PostgreSQL 16, the values a prepared statement ran with.
+
+**Telling statements apart.** A statement is known by its query identifier, which the plans carry when `compute_query_id` is on and auto_explain logs with `log_verbose`. Without one, a statement is known by its text, with its comments, literal values and parameters left out. A prepared statement is known by its query, not by the `PREPARE` around it.
+
+**For each statement**, the report shows:
+
+- its plans, each with how its tables are read, how many runs it had and their median duration;
+- each change of plan: when it happened, after how many runs, whether in another session, the median duration before and after, how the plan after compares (pages first, as `explainsql diff` says it), and what changed.
+
+Statements whose plan changed come first, the costliest change first: the time the plan after added over the runs it had. A statement whose plans go back and forth many times is marked `ALTERNATING`: often a plan that depends on the values.
+
+**Generic plans.** A plan that keeps a prepared statement's parameters (`$1`) is its generic plan. The report says when a statement switched to one, with the values it ran with. Those values feed [`--params` and `--bind`](#statements-with-parameters), which tell which values the generic plan suits.
+
+**sqlcommenter tags** in the statements, such as `/*controller='OrderController',action='latest',traceparent='00-…'*/`, say where in the application a statement comes from. Libraries for Spring and Hibernate, Django, Rails and others add them. The report lists the tags, and filters can use them:
+
+- `--query` takes a query identifier, or text found in the statement, the name it was prepared under, or its tags.
+- `--trace` takes the trace id of a `traceparent` tag. It keeps the statements that ran in the trace, and says which plan each of the trace's runs got.
+
+**Other filters.** `--changed` keeps only statements whose plan changed. `--since` and `--until` take a time as the log prints it (`2026-10-06 06:00`), or a span back from the log's last entry (`30m`, `24h`, `7d`).
+
+**Setting up auto_explain.** Load it for the whole server with `shared_preload_libraries = 'auto_explain'`, or for one session with `LOAD 'auto_explain'`. Then set:
+
+- `auto_explain.log_min_duration` to the duration from which to log, `0` for every statement;
+- `auto_explain.log_analyze`, `log_buffers` and `log_settings` on;
+- `auto_explain.log_verbose` on, with `compute_query_id = on`, for the query identifier;
+- `auto_explain.log_format` as you like.
+
+With `log_analyze`, every statement is instrumented, logged or not, which slows it down. On a busy server, set `auto_explain.log_timing = off`, or instrument a sample of statements with `auto_explain.sample_rate`.
+
 ## Compare two plans
 
 A plan changed after an index, a statistics update, an upgrade or a rewrite of the query. `explainsql diff` tells what changed, node by node:

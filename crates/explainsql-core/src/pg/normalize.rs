@@ -191,7 +191,7 @@ fn unwrap_all(
 /// Unifies line endings and removes a byte order mark, non-breaking spaces
 /// and trailing spaces. Tabs are kept: a lone tab is an empty continuation
 /// line in a server log.
-fn clean(input: &str) -> String {
+pub(super) fn clean(input: &str) -> String {
     let input = input.strip_prefix('\u{feff}').unwrap_or(input);
     let mut text = String::with_capacity(input.len());
     for line in input.split('\n') {
@@ -306,12 +306,24 @@ fn csvlog_bodies(text: &str) -> Option<Vec<String>> {
 /// commas, line breaks and doubled quotes. A quote left open at the end of
 /// the text closes the last record.
 fn csv_records(text: &str) -> Vec<Vec<String>> {
+    csv_records_at(text)
+        .into_iter()
+        .map(|(_, record)| record)
+        .collect()
+}
+
+/// CSV records, each with the 1-based line it starts on.
+pub(super) fn csv_records_at(text: &str) -> Vec<(usize, Vec<String>)> {
     let mut records = Vec::new();
     let mut record = Vec::new();
     let mut field = String::new();
     let mut quoted = false;
+    let (mut line, mut start) = (1, 1);
     let mut chars = text.chars().peekable();
     while let Some(c) = chars.next() {
+        if c == '\n' {
+            line += 1;
+        }
         match c {
             '"' if quoted && chars.peek() == Some(&'"') => {
                 field.push('"');
@@ -321,13 +333,14 @@ fn csv_records(text: &str) -> Vec<Vec<String>> {
             ',' if !quoted => record.push(std::mem::take(&mut field)),
             '\n' if !quoted => {
                 record.push(std::mem::take(&mut field));
-                records.push(std::mem::take(&mut record));
+                records.push((start, std::mem::take(&mut record)));
+                start = line;
             }
             _ => field.push(c),
         }
     }
     record.push(field);
-    records.push(record);
+    records.push((start, record));
     records
 }
 
@@ -384,7 +397,7 @@ fn unquote(text: &str) -> Option<String> {
 }
 
 /// What follows `plan:` in an auto_explain message.
-fn auto_explain_body(message: &str) -> Option<&str> {
+pub(super) fn auto_explain_body(message: &str) -> Option<&str> {
     let start = message.find("plan:\n")?;
     message[..start]
         .contains("duration: ")
@@ -434,7 +447,7 @@ fn log_bodies(text: &str) -> Option<Vec<String>> {
 }
 
 /// Whether a line starts with a timestamp such as `2026-10-04 16:13:21`.
-fn starts_log_entry(line: &str) -> bool {
+pub(super) fn starts_log_entry(line: &str) -> bool {
     let bytes = line.as_bytes();
     bytes.len() > 10
         && bytes[..4].iter().all(u8::is_ascii_digit)
@@ -445,8 +458,16 @@ fn starts_log_entry(line: &str) -> bool {
 /// Separates auto_explain's `Query Text:` from a text plan. JSON plans carry
 /// the query text inside the plan.
 fn split_query_text(body: &str) -> (String, Option<String>) {
+    let (plan, query, _) = split_entry(body);
+    (plan, query)
+}
+
+/// Separates auto_explain's `Query Text:` and, from PostgreSQL 16, its
+/// `Query Parameters:` from a text plan: the plan, the query text and the
+/// parameters. JSON plans carry both inside the plan.
+pub(super) fn split_entry(body: &str) -> (String, Option<String>, Option<String>) {
     if body.trim_start().starts_with(['{', '[']) || !body.starts_with("Query Text: ") {
-        return (body.to_owned(), None);
+        return (body.to_owned(), None, None);
     }
     // auto_explain always shows costs, so the plan starts at the first line
     // with a cost estimate; the query text may span several lines before it.
@@ -455,9 +476,23 @@ fn split_query_text(body: &str) -> (String, Option<String>) {
         .iter()
         .position(|line| line.contains("  (cost="))
         .unwrap_or(lines.len());
-    let query = lines[..start].join("\n");
+    let (query, parameters) = match lines[..start]
+        .iter()
+        .position(|line| line.starts_with("Query Parameters: "))
+    {
+        Some(at) => (
+            &lines[..at],
+            Some(
+                lines[at]
+                    .trim_start_matches("Query Parameters: ")
+                    .to_owned(),
+            ),
+        ),
+        None => (&lines[..start], None),
+    };
+    let query = query.join("\n");
     let query = query.trim_start_matches("Query Text: ").trim().to_owned();
-    (lines[start..].join("\n"), Some(query))
+    (lines[start..].join("\n"), Some(query), parameters)
 }
 
 /// psql's expanded output (`\x`): `-[ RECORD n ]` lines and `QUERY PLAN | …`.
@@ -590,7 +625,7 @@ fn strip_continuation(row: &str) -> &str {
 
 /// Drops lines before the first node of a text plan (a prompt, the EXPLAIN
 /// command, log lines) and removes indentation shared by the whole plan.
-fn start_at_plan(text: &str, warnings: &mut Vec<Warning>) -> String {
+pub(super) fn start_at_plan(text: &str, warnings: &mut Vec<Warning>) -> String {
     let lines: Vec<&str> = text.lines().collect();
     let first = lines
         .iter()
@@ -758,6 +793,15 @@ mod tests {
         let (plan, query) = split_query_text(body);
         assert_eq!(plan, "Result  (cost=0.00..0.01 rows=1 width=4)");
         assert_eq!(query.as_deref(), Some("SELECT *\nFROM t"));
+        // The parameters of a prepared statement, from PostgreSQL 16.
+        let body = "Query Text: PREPARE p (integer) AS\n  SELECT $1\nQuery Parameters: $1 = '7'\nResult  (cost=0.00..0.01 rows=1 width=4)";
+        let (plan, query, parameters) = split_entry(body);
+        assert_eq!(plan, "Result  (cost=0.00..0.01 rows=1 width=4)");
+        assert_eq!(
+            query.as_deref(),
+            Some("PREPARE p (integer) AS\n  SELECT $1")
+        );
+        assert_eq!(parameters.as_deref(), Some("$1 = '7'"));
     }
 
     #[test]

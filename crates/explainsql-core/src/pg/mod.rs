@@ -6,6 +6,7 @@
 //! ```
 
 mod json;
+mod log;
 mod lower;
 mod normalize;
 mod raw;
@@ -13,7 +14,9 @@ mod text;
 
 use std::fmt;
 
-use crate::ir::{Format, Plan, Source};
+use crate::ir::{Format, Plan, Source, Warning, Wrapper};
+
+pub use log::{LogEntry, LogMeta};
 
 /// Why an input could not be read as a plan at all. Smaller problems are
 /// reported as [warnings](crate::ir::Plan::warnings) on a usable plan.
@@ -118,4 +121,53 @@ pub fn parse_all(input: &str) -> Result<Vec<Plan>, ParseError> {
         }));
     }
     Ok(plans)
+}
+
+/// Reads every auto_explain entry of a server log, in the log's order: a
+/// jsonlog, a csvlog, or a stderr log with any line prefix, its plans in
+/// JSON or text. An entry whose plan cannot be read is left out, with a
+/// warning on its line.
+pub fn parse_log(input: &str) -> Result<(Vec<LogEntry>, Vec<Warning>), ParseError> {
+    let text = normalize::clean(input);
+    if text.trim().is_empty() {
+        return Err(ParseError::Empty);
+    }
+    let records = log::records(&text).ok_or(ParseError::NoPlan)?;
+    let mut entries = Vec::with_capacity(records.len());
+    let mut skipped = Vec::new();
+    for record in records {
+        let line = record.meta.line;
+        match log::entry(record) {
+            Ok(entry) => entries.push(entry),
+            Err(error) => skipped.push(Warning {
+                line: Some(line),
+                message: format!("an auto_explain entry could not be read: {error}"),
+            }),
+        }
+    }
+    if entries.is_empty() {
+        return Err(ParseError::NoPlan);
+    }
+    Ok((entries, skipped))
+}
+
+/// Parses the text of a plan that no wrapper surrounds any more.
+fn parse_unwrapped(text: &str, wrappers: Vec<Wrapper>) -> Result<Plan, ParseError> {
+    if text.trim().is_empty() {
+        return Err(ParseError::Empty);
+    }
+    let mut warnings = Vec::new();
+    let (raw, format) = if text.trim_start().starts_with(['[', '{']) {
+        let raw = json::parse(text, &mut warnings).map_err(ParseError::InvalidJson)?;
+        (raw, Format::Json)
+    } else {
+        let text = normalize::start_at_plan(text, &mut warnings);
+        let raw = text::parse(&text, &mut warnings).ok_or(ParseError::NoPlan)?;
+        (raw, Format::Text)
+    };
+    let plan = lower::lower(raw, Source { format, wrappers }, warnings);
+    if plan.nodes.is_empty() {
+        return Err(ParseError::NoPlan);
+    }
+    Ok(plan)
 }

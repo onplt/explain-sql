@@ -33,6 +33,7 @@ pub mod pg;
 pub mod report;
 pub mod rules;
 pub mod scenario;
+pub mod timeline;
 
 pub use analysis::{Analysis, analyze};
-pub use pg::{ParseError, parse, parse_all};
+pub use pg::{ParseError, parse, parse_all, parse_log};

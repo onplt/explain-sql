@@ -44,6 +44,20 @@ All notable changes to ExplainSQL. The format follows
   failed. Exit codes 0, 1 and 2; text, Markdown, JSON or SARIF.
 - `--fail-on SEVERITY`: with a printed report, exit with 1 when a finding is
   at least that severe.
+- `explainsql logs FILES`: the plans auto_explain logged, and for each
+  statement, which plans it got, when its plan changed, after how many runs
+  and in which session, the median duration before and after, how the plan
+  after compares and what changed, the costliest change first. Reads
+  stderr logs with any line prefix, csvlog and jsonlog, plans in text or
+  JSON. Statements are told apart by their query identifier, or by their
+  text without literal values. A switch to a prepared statement's generic
+  plan is named, with the values it ran with (PostgreSQL 16+) and the
+  `--params --bind` command that tests it. sqlcommenter tags say where a
+  statement comes from. `--changed`, `--query`, `--trace`, `--since` and
+  `--until` narrow the report; text, Markdown or JSON.
+- `parse_log`: every auto_explain entry of a server log, with its time,
+  process, user, database, application, duration, query identifier and
+  parameters.
 - ES013, planner settings force the plan: the plan was made with an
   `enable_*` setting off, as left on in a session or set for a role or a
   database, or the planner used a node such a setting disables because it
