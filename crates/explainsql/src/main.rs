@@ -290,6 +290,11 @@ struct CheckArgs {
     #[arg(long, value_enum, default_value_t = CheckFormat::Text)]
     format: CheckFormat,
 
+    /// Also write the report as SARIF to this file, for code scanning
+    /// beside a report in another format.
+    #[arg(long, value_name = "FILE", conflicts_with = "update")]
+    sarif: Option<String>,
+
     /// When to color the text report.
     #[arg(long, value_enum, default_value_t = Color::Auto)]
     color: Color,

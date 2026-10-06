@@ -205,6 +205,67 @@ fn check_reports() {
     );
 }
 
+/// A pull request comment has a limit: when the plans do not fit, those
+/// that failed come first and the rest are counted.
+#[test]
+fn check_markdown_fits_in_a_comment() {
+    use explainsql_core::check::{Policy, check};
+    let indexed = "Index Scan using orders_customer_id_idx on orders o  (cost=0.42..44.50 rows=10 width=20) (actual time=0.020..0.051 rows=10 loops=1)\n  Index Cond: (customer_id = 4242)\n  Buffers: shared hit=13\nExecution Time: 0.070 ms";
+    let scanned = read(&plan_path(16, "seq_scan_selective", "txt"));
+    let (indexed, scanned) = (parse(indexed).unwrap(), parse(&scanned).unwrap());
+    let mut checked = Vec::new();
+    for n in 0..200 {
+        checked.push(check(
+            &format!("queries/passed{n:03}.sql"),
+            indexed.clone(),
+            analyze(&indexed),
+            Some(indexed.clone()),
+            Policy::default(),
+        ));
+    }
+    for n in 0..3 {
+        checked.push(check(
+            &format!("queries/failed{n}.sql"),
+            scanned.clone(),
+            analyze(&scanned),
+            Some(indexed.clone()),
+            Policy::default(),
+        ));
+    }
+
+    // All of it fits under GitHub's limit.
+    let whole = report::check_markdown(&checked);
+    assert!(whole.starts_with(report::CHECK_MARKER), "{whole}");
+    assert!(whole.len() <= report::CHECK_MARKDOWN_LIMIT);
+    assert!(!whole.contains("To fit in a comment"), "{whole}");
+    assert!(whole.contains("| `queries/passed000.sql` |"));
+
+    // Under a tighter limit, the failed plans lead and the rest is counted.
+    let limit = 6_000;
+    let short = report::check_markdown_within(&checked, limit);
+    assert!(short.len() <= limit, "{} > {limit}", short.len());
+    assert!(short.starts_with(report::CHECK_MARKER), "{short}");
+    assert!(short.contains("**3 of 203 plans failed.**"), "{short}");
+    let first_row = short.lines().find(|line| line.starts_with("| `")).unwrap();
+    assert!(
+        first_row.starts_with("| `queries/failed0.sql` | **Failed**"),
+        "{short}"
+    );
+    assert!(
+        short.contains("<code>queries/failed0.sql</code>: why it failed"),
+        "{short}"
+    );
+    let shown = short.lines().filter(|line| line.starts_with("| `")).count();
+    assert!(shown < checked.len());
+    assert!(
+        short.contains(&format!(
+            "{} more plans left out of the table",
+            checked.len() - shown
+        )),
+        "{short}"
+    );
+}
+
 /// How the plan of a statement with parameters depends on their values: a
 /// customer's latest orders, whose generic plan walks the whole index of
 /// dates for a customer with few orders.

@@ -1,0 +1,134 @@
+name: explainsql check
+description: Check SQL query plans against their locked plans, and comment plan regressions on pull requests.
+author: onplt
+branding:
+  icon: activity
+  color: blue
+
+inputs:
+  paths:
+    description: >
+      Plan files, or with database-url, SQL files; directories are searched
+      for *.json and *.txt plans, or *.sql statements. One or more, separated
+      by spaces or new lines.
+    required: true
+  database-url:
+    description: >
+      Run the SQL files against this database (as explainsql -d). Without it,
+      the paths are plan files.
+    required: false
+    default: ""
+  lock:
+    description: The file of locked plans.
+    required: false
+    default: explainsql.lock
+  fail-on:
+    description: Also fail a plan with a finding at least this severe (high, medium or low).
+    required: false
+    default: ""
+  strict:
+    description: Also fail a plan whose shape changed from its locked plan, even when it is not worse.
+    required: false
+    default: "false"
+  args:
+    description: More arguments for explainsql check, such as --prove, --no-analyze or --allow-dml.
+    required: false
+    default: ""
+  comment:
+    description: >
+      On a pull request, write the report as a comment, updated in place on
+      later runs.
+    required: false
+    default: "true"
+  comment-key:
+    description: >
+      Tells this check's comment from another's when a workflow checks
+      several sets of plans.
+    required: false
+    default: default
+  upload-sarif:
+    description: Upload the report to code scanning (needs the security-events write permission).
+    required: false
+    default: "false"
+  version:
+    description: >
+      The explainsql release to install, such as 0.2.0. By default the
+      release the action was referenced by (onplt/explain-sql@v0.2.0), or the
+      latest one.
+    required: false
+    default: ""
+  binary:
+    description: An explainsql binary to use instead of installing a release.
+    required: false
+    default: ""
+  github-token:
+    description: The token that writes the comment (needs the pull-requests write permission).
+    required: false
+    default: ${{ github.token }}
+
+outputs:
+  result:
+    description: passed, failed or error.
+    value: ${{ steps.check.outputs.result }}
+  exit-code:
+    description: The exit code of explainsql check (0 passed, 1 failed, 2 error).
+    value: ${{ steps.check.outputs.exit-code }}
+  report:
+    description: The Markdown report.
+    value: ${{ steps.check.outputs.report }}
+  sarif:
+    description: The SARIF report.
+    value: ${{ steps.check.outputs.sarif }}
+
+runs:
+  using: composite
+  steps:
+    - name: Install explainsql
+      id: install
+      shell: bash
+      env:
+        INPUT_VERSION: ${{ inputs.version }}
+        INPUT_BINARY: ${{ inputs.binary }}
+        ACTION_REF: ${{ github.action_ref }}
+      run: bash "$GITHUB_ACTION_PATH/action/install.sh"
+
+    - name: Check the plans
+      id: check
+      shell: bash
+      env:
+        EXPLAINSQL: ${{ steps.install.outputs.binary }}
+        INPUT_PATHS: ${{ inputs.paths }}
+        INPUT_DATABASE_URL: ${{ inputs.database-url }}
+        INPUT_LOCK: ${{ inputs.lock }}
+        INPUT_FAIL_ON: ${{ inputs.fail-on }}
+        INPUT_STRICT: ${{ inputs.strict }}
+        INPUT_ARGS: ${{ inputs.args }}
+      run: bash "$GITHUB_ACTION_PATH/action/check.sh"
+
+    - name: Comment on the pull request
+      if: always() && inputs.comment == 'true' && steps.check.outputs.report != '' && github.event.pull_request.number
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+        REPORT: ${{ steps.check.outputs.report }}
+        RESULT: ${{ steps.check.outputs.result }}
+        KEY: ${{ inputs.comment-key }}
+        PR_NUMBER: ${{ github.event.pull_request.number }}
+        HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+        HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        REPOSITORY: ${{ github.repository }}
+      run: bash "$GITHUB_ACTION_PATH/action/comment.sh"
+
+    - name: Upload to code scanning
+      if: always() && inputs.upload-sarif == 'true' && steps.check.outputs.sarif != ''
+      uses: github/codeql-action/upload-sarif@v3
+      with:
+        sarif_file: ${{ steps.check.outputs.sarif }}
+        category: explainsql-${{ inputs.comment-key }}
+
+    - name: Fail when a plan failed
+      if: always() && steps.check.outputs.exit-code != '0'
+      shell: bash
+      env:
+        CODE: ${{ steps.check.outputs.exit-code }}
+      run: exit "${CODE:-2}"
