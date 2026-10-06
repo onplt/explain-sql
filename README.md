@@ -98,7 +98,7 @@ The full documentation lives at **[onplt.github.io/explain-sql](https://onplt.gi
 - [Command-line reference](https://github.com/onplt/explain-sql/blob/main/docs/reference.md): every command, option, environment variable and exit code.
 - [Rule catalog](https://github.com/onplt/explain-sql/blob/main/docs/rules.md): what each finding means, when it stays silent, with an example from a real plan.
 - [Troubleshooting](https://github.com/onplt/explain-sql/blob/main/docs/troubleshooting.md): common questions and surprises.
-- Design: the [vision](https://github.com/onplt/explain-sql/blob/main/docs/VISION.md), the [architecture](https://github.com/onplt/explain-sql/blob/main/docs/ARCHITECTURE.md) and the [roadmap](https://github.com/onplt/explain-sql/blob/main/docs/ROADMAP.md).
+- [Architecture](https://github.com/onplt/explain-sql/blob/main/docs/ARCHITECTURE.md): how the crates fit together.
 - [Changelog](https://github.com/onplt/explain-sql/blob/main/CHANGELOG.md).
 
 ## Contributing
@@ -114,7 +114,7 @@ The [contributing guide](https://github.com/onplt/explain-sql/blob/main/docs/con
 
 ## Status
 
-ExplainSQL is young but complete for its first scope. Version 0.1 shipped the diagnosis, the viewer, the index advisor and the proof loop. Version 0.2 brought it into team workflows: plan diffs, a CI gate and GitHub Action, statements with parameters, server logs, pg_stat_statements, the icicle view and plan anonymization. Lock footprints, the cost of writes and N+1 detection are on `main` for the next release. Feedback and issues are very welcome.
+ExplainSQL is young but complete for its first scope. Version 0.1 shipped the diagnosis, the viewer, the index advisor and the proof loop. Version 0.2 brought it into team workflows: plan diffs, a CI gate and GitHub Action, statements with parameters, server logs, pg_stat_statements, the icicle view and plan anonymization. Version 0.3 adds lock footprints, the cost of writes and N+1 detection in requests. Feedback and issues are very welcome.
 
 ## License
 

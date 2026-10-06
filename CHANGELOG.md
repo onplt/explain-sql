@@ -6,6 +6,8 @@ All notable changes to ExplainSQL. The format follows
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-10-06
+
 ### Added
 
 - `explainsql requests LOGS`: the statements of server logs grouped into
