@@ -55,6 +55,7 @@ explainsql diff before.json after.json                 # what changed between tw
 explainsql check -d "$DATABASE_URL" queries/           # in CI: fail when a plan got worse than its locked plan
 explainsql logs postgresql.json --changed              # auto_explain logs: when and how each statement's plan changed
 explainsql top -d "$DATABASE_URL"                      # the costliest statements (pg_stat_statements): pick one, see its plan
+explainsql requests postgresql.log -d "$DATABASE_URL"  # N+1 loops in each request of the logs, and the batched statement, measured
 explainsql anonymize plan.json > shared.json           # names and values replaced, to share a plan in an issue
 ```
 
