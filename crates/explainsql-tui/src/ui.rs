@@ -671,6 +671,19 @@ fn node_lines<'a>(app: &App, theme: &Theme) -> Vec<Line<'a>> {
             ));
         }
     }
+    // Below a hundredth of a millisecond, I/O timing is rounding.
+    if let Some(io) = metrics.exclusive_io_time.filter(|&io| io >= 0.01) {
+        let share = metrics
+            .exclusive_cpu_time
+            .filter(|&time| time > 0.0)
+            .map(|time| format!(", {} of its time", format::percent((io / time).min(1.0))))
+            .unwrap_or_default();
+        lines.push(field(
+            theme,
+            "I/O by the node itself",
+            format!("{}{share}", format::duration(io)),
+        ));
+    }
     let predicates: Vec<_> = PredicateKind::ALL
         .iter()
         .flat_map(|&kind| {

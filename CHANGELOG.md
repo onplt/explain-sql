@@ -44,6 +44,12 @@ All notable changes to ExplainSQL. The format follows
   failed. Exit codes 0, 1 and 2; text, Markdown, JSON or SARIF.
 - `--fail-on SEVERITY`: with a printed report, exit with 1 when a finding is
   at least that severe.
+- I/O time, from plans captured with `track_io_timing`: among the
+  statement's facts when it takes a tenth of the time or more, in the
+  verdict when reading pages that were not in shared buffers took half of
+  it (the cache was cold), and for each node in the viewer's details. It is
+  compared with the time of every process, so that parallel plans read
+  right.
 - `--params` in connected mode: how the plan of a statement with parameters
   (`$1`, or JDBC's `?`) depends on their values. explainsql prepares the
   statement as an application does, tries values from the columns'

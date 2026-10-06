@@ -19,6 +19,7 @@ Rows: 300,000 per loop × 10 loops = 3,000,000
 Estimate: 300,000 rows; cost 0.00..4911.00, width 8
 Buffers: shared hit 1,600, read 17,510
 Read by the node itself: 19,110 pages
+I/O by the node itself: 23.6 ms, 12% of its time
 Output: oi.id, oi.order_id, oi.product_id, oi.quantity, oi.unit_price
 
 HIGH   ES001 Selective sequential scan
@@ -27,7 +28,6 @@ Seq Scan on order_items oi reads 3,000,000 rows over 10 loops, and the join filt
 them.
 Rows kept: 14 of 3,000,000 (<0.001%)
 Join filter: (o.id = oi.order_id)
-Table size: 1,911 pages (14.9 MB)
  Findings (2) │ Advice (1) · Tab to browse, f/i to switch ──────────────────────────────────────────
 HIGH   ES001 Selective sequential scan: Seq Scan on order_items oi reads 3,000,000 rows over 10 loo…
 HIGH   ES005 Expensive nested-loop inner side: Nested Loop repeats Seq Scan on order_items oi 10 ti…

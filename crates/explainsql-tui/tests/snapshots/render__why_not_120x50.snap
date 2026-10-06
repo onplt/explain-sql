@@ -32,6 +32,8 @@ Planning 0.337 ms · Execution 35.4 ms · Buffers 2,417 pages, 64% from cache
                                                                               │Removed by filter: 199,726 per loop
                                                                               │Buffers: shared hit 1,550, read 867
                                                                               │Read by the node itself: 2,417 pages
+                                                                              │I/O by the node itself: 1.41 ms, 4.0% of
+                                                                              │its time
                                                                               │
                                                                               │Filter: (date_trunc('day'::text,
                                                                               │orders.created_at) = '2024-06-01
@@ -47,8 +49,6 @@ Planning 0.337 ms · Execution 35.4 ms · Buffers 2,417 pages, 64% from cache
                                                                               │Filter: (date_trunc('day'::text,
                                                                               │orders.created_at) = '2024-06-01
                                                                               │00:00:00+00'::timestamp with time zone)
-                                                                              │Table size: 2,417 pages (18.9 MB)
-                                                                              │Time in the node: 35.3 ms (100% of the
  Findings (1) │ Advice (1) · Tab to browse, f/i to switch ──────────────────────────────────────────────────────────────
 HIGH   ES001 Selective sequential scan: Seq Scan on orders reads 200,000 rows to keep 274
 j/k move  h/l fold  / search  1-9 hotspots  Tab list  i advice  ? help  q quit

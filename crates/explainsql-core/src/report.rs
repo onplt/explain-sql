@@ -20,6 +20,9 @@ const MAX_NODE_WIDTH: usize = 64;
 const LINE_WIDTH: usize = 100;
 const BAR_WIDTH: usize = 10;
 
+/// I/O from this share of the time is among the statement's facts.
+const MENTIONED_IO: f64 = 0.1;
+
 /// Misestimates from this factor are marked in the plan table.
 const MARKED_MISESTIMATE: f64 = 10.0;
 
@@ -1139,6 +1142,18 @@ pub fn facts(plan: &Plan, analysis: &Analysis) -> Vec<String> {
                 ", {} written to temporary files",
                 format::kilobytes(buffers.temp_written as f64 * 8.0)
             ));
+        }
+        facts.push(text);
+    }
+    // I/O worth a mention: a tenth of the time, or without timing, a
+    // millisecond.
+    if let Some(io) = statement.io.filter(|io| {
+        io.share
+            .map_or(io.total() >= 1.0, |share| share >= MENTIONED_IO)
+    }) {
+        let mut text = format!("I/O {}", format::duration(io.total()));
+        if let Some(share) = io.share {
+            text.push_str(&format!(", {} of the time", format::percent(share)));
         }
         facts.push(text);
     }

@@ -15,6 +15,8 @@ Planning 0.411 ms · Execution 11.9 ms · Buffers 2,417 pages, 84% from cache
                                                                               │Removed by filter: 199,990 per loop
                                                                               │Buffers: shared hit 2,031, read 386
                                                                               │Read by the node itself: 2,417 pages
+                                                                              │I/O by the node itself: 0.811 ms, 6.8% of
+                                                                              │its time
                                                                               │
                                                                               │Filter: (orders.customer_id = 4242)
                                                                               │Output: id, customer_id, status,
@@ -35,8 +37,6 @@ Planning 0.411 ms · Execution 11.9 ms · Buffers 2,417 pages, 84% from cache
                                                                               │Docs:
                                                                               │https://onplt.github.io/explain-sql/rules
                                                                               │/ES001.html
-                                                                              │
-                                                                              │
                                                                               │
                                                                               │
  Findings (1) │ Advice (1) · Tab to browse, f/i to switch ──────────────────────────────────────────────────────────────
