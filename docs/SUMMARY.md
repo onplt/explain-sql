@@ -21,6 +21,7 @@
   - [ES010: Cartesian product](rules/ES010.md)
   - [ES011: Fewer parallel workers than planned](rules/ES011.md)
   - [ES012: JIT overhead dominates](rules/ES012.md)
+  - [ES013: Planner settings force the plan](rules/ES013.md)
 
 # Design
 

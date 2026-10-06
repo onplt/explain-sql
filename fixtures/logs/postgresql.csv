@@ -1,0 +1,2042 @@
+2026-10-06 06:34:10.173 UTC,,,31509,,6ac49662.7b15,1,,2026-10-06 06:34:10 UTC,,0,LOG,00000,"starting PostgreSQL 16.14 (Ubuntu 16.14-0ubuntu0.24.04.1) on x86_64-pc-linux-gnu, compiled by gcc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0, 64-bit",,,,,,,,,"","postmaster",,0
+2026-10-06 06:34:10.174 UTC,,,31509,,6ac49662.7b15,2,,2026-10-06 06:34:10 UTC,,0,LOG,00000,"listening on IPv4 address ""127.0.0.1"", port 5433",,,,,,,,,"","postmaster",,0
+2026-10-06 06:34:10.175 UTC,,,31509,,6ac49662.7b15,3,,2026-10-06 06:34:10 UTC,,0,LOG,00000,"listening on Unix socket ""/var/run/postgresql/.s.PGSQL.5433""",,,,,,,,,"","postmaster",,0
+2026-10-06 06:34:10.179 UTC,,,31513,,6ac49662.7b19,1,,2026-10-06 06:34:10 UTC,,0,LOG,00000,"database system was shut down at 2026-10-06 06:34:09 UTC",,,,,,,,,"","startup",,0
+2026-10-06 06:34:10.185 UTC,,,31509,,6ac49662.7b15,4,,2026-10-06 06:34:10 UTC,,0,LOG,00000,"database system is ready to accept connections",,,,,,,,,"","postmaster",,0
+2026-10-06 06:35:13.475 UTC,"postgres","shop",31577,"[local]",6ac496a1.7b59,1,"SELECT",2026-10-06 06:35:13 UTC,3/303,0,LOG,00000,"duration: 0.084 ms  plan:
+Query Text: SELECT id, status, amount FROM orders WHERE customer_id = 4242 ORDER BY created_at DESC LIMIT 10 /*action='latest',controller='OrderController',framework='spring',traceparent='00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01'*/;
+Limit  (cost=42.73..42.76 rows=10 width=27) (actual time=0.069..0.071 rows=10 loops=1)
+  Output: id, status, amount, created_at
+  Buffers: shared hit=10 read=2
+  I/O Timings: shared read=0.018
+  ->  Sort  (cost=42.73..42.76 rows=10 width=27) (actual time=0.067..0.068 rows=10 loops=1)
+        Output: id, status, amount, created_at
+        Sort Key: orders.created_at DESC
+        Sort Method: quicksort  Memory: 25kB
+        Buffers: shared hit=10 read=2
+        I/O Timings: shared read=0.018
+        ->  Bitmap Heap Scan on public.orders  (cost=4.37..42.57 rows=10 width=27) (actual time=0.036..0.056 rows=10 loops=1)
+              Output: id, status, amount, created_at
+              Recheck Cond: (orders.customer_id = 4242)
+              Heap Blocks: exact=10
+              Buffers: shared hit=10 read=2
+              I/O Timings: shared read=0.018
+              ->  Bitmap Index Scan on orders_customer_id_idx  (cost=0.00..4.37 rows=10 width=0) (actual time=0.027..0.028 rows=10 loops=1)
+                    Index Cond: (orders.customer_id = 4242)
+                    Buffers: shared read=2
+                    I/O Timings: shared read=0.018
+Settings: max_parallel_workers_per_gather = '0'
+Query Identifier: 6425368004246004440",,,,,,,,,"shop-api","client backend",,6425368004246004440
+2026-10-06 06:35:13.476 UTC,"postgres","shop",31577,"[local]",6ac496a1.7b59,2,"SELECT",2026-10-06 06:35:13 UTC,3/304,0,LOG,00000,"duration: 0.060 ms  plan:
+Query Text: SELECT id, status, amount FROM orders WHERE customer_id = 17 ORDER BY created_at DESC LIMIT 10 /*action='latest',controller='OrderController',framework='spring',traceparent='00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01'*/;
+Limit  (cost=42.73..42.76 rows=10 width=27) (actual time=0.052..0.054 rows=10 loops=1)
+  Output: id, status, amount, created_at
+  Buffers: shared hit=11 read=1
+  I/O Timings: shared read=0.013
+  ->  Sort  (cost=42.73..42.76 rows=10 width=27) (actual time=0.051..0.052 rows=10 loops=1)
+        Output: id, status, amount, created_at
+        Sort Key: orders.created_at DESC
+        Sort Method: quicksort  Memory: 25kB
+        Buffers: shared hit=11 read=1
+        I/O Timings: shared read=0.013
+        ->  Bitmap Heap Scan on public.orders  (cost=4.37..42.57 rows=10 width=27) (actual time=0.026..0.045 rows=10 loops=1)
+              Output: id, status, amount, created_at
+              Recheck Cond: (orders.customer_id = 17)
+              Heap Blocks: exact=10
+              Buffers: shared hit=11 read=1
+              I/O Timings: shared read=0.013
+              ->  Bitmap Index Scan on orders_customer_id_idx  (cost=0.00..4.37 rows=10 width=0) (actual time=0.020..0.020 rows=10 loops=1)
+                    Index Cond: (orders.customer_id = 17)
+                    Buffers: shared hit=1 read=1
+                    I/O Timings: shared read=0.013
+Settings: max_parallel_workers_per_gather = '0'
+Query Identifier: 6425368004246004440",,,,,,,,,"shop-api","client backend",,6425368004246004440
+2026-10-06 06:35:13.476 UTC,"postgres","shop",31577,"[local]",6ac496a1.7b59,3,"SELECT",2026-10-06 06:35:13 UTC,3/305,0,LOG,00000,"duration: 0.064 ms  plan:
+Query Text: SELECT id, status, amount FROM orders WHERE customer_id = 9001 ORDER BY created_at DESC LIMIT 10 /*action='latest',controller='OrderController',framework='spring',traceparent='00-5d41402abc4b2a76b9719d911017c592-7d793037a0760186-01'*/;
+Limit  (cost=42.73..42.76 rows=10 width=27) (actual time=0.054..0.056 rows=10 loops=1)
+  Output: id, status, amount, created_at
+  Buffers: shared hit=11 read=1
+  I/O Timings: shared read=0.015
+  ->  Sort  (cost=42.73..42.76 rows=10 width=27) (actual time=0.054..0.054 rows=10 loops=1)
+        Output: id, status, amount, created_at
+        Sort Key: orders.created_at DESC
+        Sort Method: quicksort  Memory: 25kB
+        Buffers: shared hit=11 read=1
+        I/O Timings: shared read=0.015
+        ->  Bitmap Heap Scan on public.orders  (cost=4.37..42.57 rows=10 width=27) (actual time=0.030..0.047 rows=10 loops=1)
+              Output: id, status, amount, created_at
+              Recheck Cond: (orders.customer_id = 9001)
+              Heap Blocks: exact=10
+              Buffers: shared hit=11 read=1
+              I/O Timings: shared read=0.015
+              ->  Bitmap Index Scan on orders_customer_id_idx  (cost=0.00..4.37 rows=10 width=0) (actual time=0.023..0.023 rows=10 loops=1)
+                    Index Cond: (orders.customer_id = 9001)
+                    Buffers: shared hit=1 read=1
+                    I/O Timings: shared read=0.015
+Settings: max_parallel_workers_per_gather = '0'
+Query Identifier: 6425368004246004440",,,,,,,,,"shop-api","client backend",,6425368004246004440
+2026-10-06 06:35:13.478 UTC,"postgres","shop",31577,"[local]",6ac496a1.7b59,4,"SELECT",2026-10-06 06:35:13 UTC,3/307,0,LOG,00000,"duration: 0.576 ms  plan:
+Query Text: SELECT status, count(*) FROM orders WHERE created_at >= timestamptz '2025-06-01 00:00:00+00' AND created_at < timestamptz '2025-06-02 00:00:00+00' GROUP BY status /*action='daily',controller='ReportController',framework='spring'*/;
+HashAggregate  (cost=801.99..802.04 rows=5 width=17) (actual time=0.568..0.570 rows=3 loops=1)
+  Output: status, count(*)
+  Group Key: orders.status
+  Batches: 1  Memory Usage: 24kB
+  Buffers: shared hit=274 read=4
+  I/O Timings: shared read=0.040
+  ->  Bitmap Heap Scan on public.orders  (cost=7.25..800.61 rows=276 width=9) (actual time=0.096..0.484 rows=274 loops=1)
+        Output: id, customer_id, status, created_at, amount, note
+        Recheck Cond: ((orders.created_at >= '2025-06-01 00:00:00+00'::timestamp with time zone) AND (orders.created_at < '2025-06-02 00:00:00+00'::timestamp with time zone))
+        Heap Blocks: exact=274
+        Buffers: shared hit=274 read=4
+        I/O Timings: shared read=0.040
+        ->  Bitmap Index Scan on orders_created_at_idx  (cost=0.00..7.18 rows=276 width=0) (actual time=0.066..0.066 rows=274 loops=1)
+              Index Cond: ((orders.created_at >= '2025-06-01 00:00:00+00'::timestamp with time zone) AND (orders.created_at < '2025-06-02 00:00:00+00'::timestamp with time zone))
+              Buffers: shared read=4
+              I/O Timings: shared read=0.040
+Settings: max_parallel_workers_per_gather = '0'
+Query Identifier: -873924469279333954",,,,,,,,,"shop-reports","client backend",,-873924469279333954
+2026-10-06 06:35:13.496 UTC,"postgres","shop",31577,"[local]",6ac496a1.7b59,5,"SELECT",2026-10-06 06:35:13 UTC,3/310,0,LOG,00000,"duration: 13.149 ms  plan:
+Query Text: SELECT id, status, amount FROM orders WHERE customer_id = 4242 ORDER BY created_at DESC LIMIT 10 /*action='latest',controller='OrderController',framework='spring',traceparent='00-7f2d1a3c9b8e4f6a0b1c2d3e4f5a6b7c-1a2b3c4d5e6f7081-01'*/;
+Limit  (cost=4917.17..4917.19 rows=10 width=27) (actual time=13.133..13.136 rows=10 loops=1)
+  Output: id, status, amount, created_at
+  Buffers: shared hit=2417
+  ->  Sort  (cost=4917.17..4917.19 rows=10 width=27) (actual time=13.132..13.133 rows=10 loops=1)
+        Output: id, status, amount, created_at
+        Sort Key: orders.created_at DESC
+        Sort Method: quicksort  Memory: 25kB
+        Buffers: shared hit=2417
+        ->  Seq Scan on public.orders  (cost=0.00..4917.00 rows=10 width=27) (actual time=0.970..13.116 rows=10 loops=1)
+              Output: id, status, amount, created_at
+              Filter: (orders.customer_id = 4242)
+              Rows Removed by Filter: 199990
+              Buffers: shared hit=2417
+Settings: max_parallel_workers_per_gather = '0'
+Query Identifier: 6425368004246004440",,,,,,,,,"shop-api","client backend",,6425368004246004440
+2026-10-06 06:35:13.513 UTC,"postgres","shop",31577,"[local]",6ac496a1.7b59,6,"SELECT",2026-10-06 06:35:13 UTC,3/311,0,LOG,00000,"duration: 16.496 ms  plan:
+Query Text: SELECT id, status, amount FROM orders WHERE customer_id = 17 ORDER BY created_at DESC LIMIT 10 /*action='latest',controller='OrderController',framework='spring',traceparent='00-9e107d9d372bb6826bd81d3542a419d6-0f1e2d3c4b5a6978-01'*/;
+Limit  (cost=4917.17..4917.19 rows=10 width=27) (actual time=16.480..16.483 rows=10 loops=1)
+  Output: id, status, amount, created_at
+  Buffers: shared hit=2417
+  ->  Sort  (cost=4917.17..4917.19 rows=10 width=27) (actual time=16.479..16.481 rows=10 loops=1)
+        Output: id, status, amount, created_at
+        Sort Key: orders.created_at DESC
+        Sort Method: quicksort  Memory: 25kB
+        Buffers: shared hit=2417
+        ->  Seq Scan on public.orders  (cost=0.00..4917.00 rows=10 width=27) (actual time=0.297..16.457 rows=10 loops=1)
+              Output: id, status, amount, created_at
+              Filter: (orders.customer_id = 17)
+              Rows Removed by Filter: 199990
+              Buffers: shared hit=2417
+Settings: max_parallel_workers_per_gather = '0'
+Query Identifier: 6425368004246004440",,,,,,,,,"shop-api","client backend",,6425368004246004440
+2026-10-06 06:35:13.527 UTC,"postgres","shop",31577,"[local]",6ac496a1.7b59,7,"SELECT",2026-10-06 06:35:13 UTC,3/312,0,LOG,00000,"duration: 13.619 ms  plan:
+Query Text: SELECT id, status, amount FROM orders WHERE customer_id = 9001 ORDER BY created_at DESC LIMIT 10 /*action='latest',controller='OrderController',framework='spring',traceparent='00-e4d909c290d0fb1ca068ffaddf22cbd0-8899aabbccddeeff-01'*/;
+Limit  (cost=4917.17..4917.19 rows=10 width=27) (actual time=13.603..13.606 rows=10 loops=1)
+  Output: id, status, amount, created_at
+  Buffers: shared hit=2417
+  ->  Sort  (cost=4917.17..4917.19 rows=10 width=27) (actual time=13.602..13.603 rows=10 loops=1)
+        Output: id, status, amount, created_at
+        Sort Key: orders.created_at DESC
+        Sort Method: quicksort  Memory: 25kB
+        Buffers: shared hit=2417
+        ->  Seq Scan on public.orders  (cost=0.00..4917.00 rows=10 width=27) (actual time=0.551..13.583 rows=10 loops=1)
+              Output: id, status, amount, created_at
+              Filter: (orders.customer_id = 9001)
+              Rows Removed by Filter: 199990
+              Buffers: shared hit=2417
+Settings: max_parallel_workers_per_gather = '0'
+Query Identifier: 6425368004246004440",,,,,,,,,"shop-api","client backend",,6425368004246004440
+2026-10-06 06:35:13.528 UTC,"postgres","shop",31577,"[local]",6ac496a1.7b59,8,"SELECT",2026-10-06 06:35:13 UTC,3/314,0,LOG,00000,"duration: 0.486 ms  plan:
+Query Text: SELECT status, count(*) FROM orders WHERE created_at >= timestamptz '2025-06-02 00:00:00+00' AND created_at < timestamptz '2025-06-03 00:00:00+00' GROUP BY status /*action='daily',controller='ReportController',framework='spring'*/;
+HashAggregate  (cost=789.21..789.26 rows=5 width=17) (actual time=0.478..0.480 rows=3 loops=1)
+  Output: status, count(*)
+  Group Key: orders.status
+  Batches: 1  Memory Usage: 24kB
+  Buffers: shared hit=277 read=1
+  I/O Timings: shared read=0.009
+  ->  Bitmap Heap Scan on public.orders  (cost=7.20..787.85 rows=271 width=9) (actual time=0.080..0.402 rows=274 loops=1)
+        Output: id, customer_id, status, created_at, amount, note
+        Recheck Cond: ((orders.created_at >= '2025-06-02 00:00:00+00'::timestamp with time zone) AND (orders.created_at < '2025-06-03 00:00:00+00'::timestamp with time zone))
+        Heap Blocks: exact=274
+        Buffers: shared hit=277 read=1
+        I/O Timings: shared read=0.009
+        ->  Bitmap Index Scan on orders_created_at_idx  (cost=0.00..7.13 rows=271 width=0) (actual time=0.047..0.047 rows=274 loops=1)
+              Index Cond: ((orders.created_at >= '2025-06-02 00:00:00+00'::timestamp with time zone) AND (orders.created_at < '2025-06-03 00:00:00+00'::timestamp with time zone))
+              Buffers: shared hit=3 read=1
+              I/O Timings: shared read=0.009
+Settings: max_parallel_workers_per_gather = '0'
+Query Identifier: -873924469279333954",,,,,,,,,"shop-reports","client backend",,-873924469279333954
+2026-10-06 06:35:13.544 UTC,"postgres","shop",31577,"[local]",6ac496a1.7b59,9,"EXECUTE",2026-10-06 06:35:13 UTC,3/317,0,LOG,00000,"duration: 15.162 ms  plan:
+Query Text: PREPARE latest (integer, bigint) AS
+  SELECT id, status, amount FROM orders WHERE customer_id = $1 ORDER BY created_at DESC LIMIT $2;
+Query Parameters: $1 = '4242', $2 = '10'
+Limit  (cost=4917.17..4917.19 rows=10 width=27) (actual time=15.152..15.155 rows=10 loops=1)
+  Output: id, status, amount, created_at
+  Buffers: shared hit=2417
+  ->  Sort  (cost=4917.17..4917.19 rows=10 width=27) (actual time=15.151..15.152 rows=10 loops=1)
+        Output: id, status, amount, created_at
+        Sort Key: orders.created_at DESC
+        Sort Method: quicksort  Memory: 25kB
+        Buffers: shared hit=2417
+        ->  Seq Scan on public.orders  (cost=0.00..4917.00 rows=10 width=27) (actual time=1.079..15.125 rows=10 loops=1)
+              Output: id, status, amount, created_at
+              Filter: (orders.customer_id = 4242)
+              Rows Removed by Filter: 199990
+              Buffers: shared hit=2417
+Settings: max_parallel_workers_per_gather = '0'
+Query Identifier: -1243494815637630641",,,,,,,,,"shop-batch","client backend",,-3286534627557393292
+2026-10-06 06:35:13.558 UTC,"postgres","shop",31577,"[local]",6ac496a1.7b59,10,"EXECUTE",2026-10-06 06:35:13 UTC,3/318,0,LOG,00000,"duration: 13.198 ms  plan:
+Query Text: PREPARE latest (integer, bigint) AS
+  SELECT id, status, amount FROM orders WHERE customer_id = $1 ORDER BY created_at DESC LIMIT $2;
+Query Parameters: $1 = '17', $2 = '10'
+Limit  (cost=4917.17..4917.19 rows=10 width=27) (actual time=13.189..13.192 rows=10 loops=1)
+  Output: id, status, amount, created_at
+  Buffers: shared hit=2417
+  ->  Sort  (cost=4917.17..4917.19 rows=10 width=27) (actual time=13.188..13.190 rows=10 loops=1)
+        Output: id, status, amount, created_at
+        Sort Key: orders.created_at DESC
+        Sort Method: quicksort  Memory: 25kB
+        Buffers: shared hit=2417
+        ->  Seq Scan on public.orders  (cost=0.00..4917.00 rows=10 width=27) (actual time=0.142..13.171 rows=10 loops=1)
+              Output: id, status, amount, created_at
+              Filter: (orders.customer_id = 17)
+              Rows Removed by Filter: 199990
+              Buffers: shared hit=2417
+Settings: max_parallel_workers_per_gather = '0'
+Query Identifier: -1243494815637630641",,,,,,,,,"shop-batch","client backend",,-809777530459840901
+2026-10-06 06:35:13.571 UTC,"postgres","shop",31577,"[local]",6ac496a1.7b59,11,"EXECUTE",2026-10-06 06:35:13 UTC,3/319,0,LOG,00000,"duration: 12.547 ms  plan:
+Query Text: PREPARE latest (integer, bigint) AS
+  SELECT id, status, amount FROM orders WHERE customer_id = $1 ORDER BY created_at DESC LIMIT $2;
+Query Parameters: $1 = '9001', $2 = '10'
+Limit  (cost=4917.17..4917.19 rows=10 width=27) (actual time=12.537..12.540 rows=10 loops=1)
+  Output: id, status, amount, created_at
+  Buffers: shared hit=2417
+  ->  Sort  (cost=4917.17..4917.19 rows=10 width=27) (actual time=12.536..12.538 rows=10 loops=1)
+        Output: id, status, amount, created_at
+        Sort Key: orders.created_at DESC
+        Sort Method: quicksort  Memory: 25kB
+        Buffers: shared hit=2417
+        ->  Seq Scan on public.orders  (cost=0.00..4917.00 rows=10 width=27) (actual time=0.831..12.498 rows=10 loops=1)
+              Output: id, status, amount, created_at
+              Filter: (orders.customer_id = 9001)
+              Rows Removed by Filter: 199990
+              Buffers: shared hit=2417
+Settings: max_parallel_workers_per_gather = '0'
+Query Identifier: -1243494815637630641",,,,,,,,,"shop-batch","client backend",,4582310222352783775
+2026-10-06 06:35:13.584 UTC,"postgres","shop",31577,"[local]",6ac496a1.7b59,12,"EXECUTE",2026-10-06 06:35:13 UTC,3/320,0,LOG,00000,"duration: 13.392 ms  plan:
+Query Text: PREPARE latest (integer, bigint) AS
+  SELECT id, status, amount FROM orders WHERE customer_id = $1 ORDER BY created_at DESC LIMIT $2;
+Query Parameters: $1 = '123', $2 = '10'
+Limit  (cost=4917.17..4917.19 rows=10 width=27) (actual time=13.382..13.386 rows=10 loops=1)
+  Output: id, status, amount, created_at
+  Buffers: shared hit=2417
+  ->  Sort  (cost=4917.17..4917.19 rows=10 width=27) (actual time=13.381..13.383 rows=10 loops=1)
+        Output: id, status, amount, created_at
+        Sort Key: orders.created_at DESC
+        Sort Method: quicksort  Memory: 25kB
+        Buffers: shared hit=2417
+        ->  Seq Scan on public.orders  (cost=0.00..4917.00 rows=10 width=27) (actual time=0.801..13.365 rows=10 loops=1)
+              Output: id, status, amount, created_at
+              Filter: (orders.customer_id = 123)
+              Rows Removed by Filter: 199990
+              Buffers: shared hit=2417
+Settings: max_parallel_workers_per_gather = '0'
+Query Identifier: -1243494815637630641",,,,,,,,,"shop-batch","client backend",,-54488000838721020
+2026-10-06 06:35:13.598 UTC,"postgres","shop",31577,"[local]",6ac496a1.7b59,13,"EXECUTE",2026-10-06 06:35:13 UTC,3/321,0,LOG,00000,"duration: 13.048 ms  plan:
+Query Text: PREPARE latest (integer, bigint) AS
+  SELECT id, status, amount FROM orders WHERE customer_id = $1 ORDER BY created_at DESC LIMIT $2;
+Query Parameters: $1 = '5555', $2 = '10'
+Limit  (cost=4917.17..4917.19 rows=10 width=27) (actual time=13.038..13.041 rows=10 loops=1)
+  Output: id, status, amount, created_at
+  Buffers: shared hit=2417
+  ->  Sort  (cost=4917.17..4917.19 rows=10 width=27) (actual time=13.037..13.038 rows=10 loops=1)
+        Output: id, status, amount, created_at
+        Sort Key: orders.created_at DESC
+        Sort Method: quicksort  Memory: 25kB
+        Buffers: shared hit=2417
+        ->  Seq Scan on public.orders  (cost=0.00..4917.00 rows=10 width=27) (actual time=0.457..13.020 rows=10 loops=1)
+              Output: id, status, amount, created_at
+              Filter: (orders.customer_id = 5555)
+              Rows Removed by Filter: 199990
+              Buffers: shared hit=2417
+Settings: max_parallel_workers_per_gather = '0'
+Query Identifier: -1243494815637630641",,,,,,,,,"shop-batch","client backend",,-5733672515952892066
+2026-10-06 06:35:13.659 UTC,"postgres","shop",31577,"[local]",6ac496a1.7b59,14,"EXECUTE",2026-10-06 06:35:13 UTC,3/322,0,LOG,00000,"duration: 60.157 ms  plan:
+Query Text: PREPARE latest (integer, bigint) AS
+  SELECT id, status, amount FROM orders WHERE customer_id = $1 ORDER BY created_at DESC LIMIT $2;
+Query Parameters: $1 = '777', $2 = '10'
+Limit  (cost=0.42..1516.80 rows=1 width=27) (actual time=7.179..60.121 rows=10 loops=1)
+  Output: id, status, amount, created_at
+  Buffers: shared hit=185597 read=456
+  I/O Timings: shared read=3.983
+  ->  Index Scan Backward using orders_created_at_idx on public.orders  (cost=0.42..15164.22 rows=10 width=27) (actual time=7.177..60.111 rows=10 loops=1)
+        Output: id, status, amount, created_at
+        Filter: (orders.customer_id = $1)
+        Rows Removed by Filter: 185129
+        Buffers: shared hit=185597 read=456
+        I/O Timings: shared read=3.983
+Settings: max_parallel_workers_per_gather = '0'
+Query Identifier: -1243494815637630641",,,,,,,,,"shop-batch","client backend",,-7826012441345379636
+2026-10-06 06:35:13.716 UTC,"postgres","shop",31577,"[local]",6ac496a1.7b59,15,"EXECUTE",2026-10-06 06:35:13 UTC,3/323,0,LOG,00000,"duration: 57.172 ms  plan:
+Query Text: PREPARE latest (integer, bigint) AS
+  SELECT id, status, amount FROM orders WHERE customer_id = $1 ORDER BY created_at DESC LIMIT $2;
+Query Parameters: $1 = '3141', $2 = '10'
+Limit  (cost=0.42..1516.80 rows=1 width=27) (actual time=5.500..57.149 rows=10 loops=1)
+  Output: id, status, amount, created_at
+  Buffers: shared hit=181609
+  ->  Index Scan Backward using orders_created_at_idx on public.orders  (cost=0.42..15164.22 rows=10 width=27) (actual time=5.498..57.140 rows=10 loops=1)
+        Output: id, status, amount, created_at
+        Filter: (orders.customer_id = $1)
+        Rows Removed by Filter: 180706
+        Buffers: shared hit=181609
+Settings: max_parallel_workers_per_gather = '0'
+Query Identifier: -1243494815637630641",,,,,,,,,"shop-batch","client backend",,6394271810028728274
+2026-10-06 06:35:13.776 UTC,"postgres","shop",31577,"[local]",6ac496a1.7b59,16,"EXECUTE",2026-10-06 06:35:13 UTC,3/324,0,LOG,00000,"duration: 58.685 ms  plan:
+Query Text: PREPARE latest (integer, bigint) AS
+  SELECT id, status, amount FROM orders WHERE customer_id = $1 ORDER BY created_at DESC LIMIT $2;
+Query Parameters: $1 = '2718', $2 = '10'
+Limit  (cost=0.42..1516.80 rows=1 width=27) (actual time=2.603..58.664 rows=10 loops=1)
+  Output: id, status, amount, created_at
+  Buffers: shared hit=172432
+  ->  Index Scan Backward using orders_created_at_idx on public.orders  (cost=0.42..15164.22 rows=10 width=27) (actual time=2.601..58.657 rows=10 loops=1)
+        Output: id, status, amount, created_at
+        Filter: (orders.customer_id = $1)
+        Rows Removed by Filter: 171573
+        Buffers: shared hit=172432
+Settings: max_parallel_workers_per_gather = '0'
+Query Identifier: -1243494815637630641",,,,,,,,,"shop-batch","client backend",,6027191425131107755
+2026-10-06 06:35:13.962 UTC,"postgres","shop",31581,"[local]",6ac496a1.7b5d,1,"SELECT",2026-10-06 06:35:13 UTC,3/337,0,LOG,00000,"duration: 0.077 ms  plan:
+{
+  ""Query Text"": ""SELECT id, status, amount FROM orders WHERE customer_id = 4242 ORDER BY created_at DESC LIMIT 10 /*action='latest',controller='OrderController',framework='spring',traceparent='00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01'*/;"",
+  ""Plan"": {
+    ""Node Type"": ""Limit"",
+    ""Parallel Aware"": false,
+    ""Async Capable"": false,
+    ""Startup Cost"": 42.73,
+    ""Total Cost"": 42.76,
+    ""Plan Rows"": 10,
+    ""Plan Width"": 27,
+    ""Actual Startup Time"": 0.065,
+    ""Actual Total Time"": 0.067,
+    ""Actual Rows"": 10,
+    ""Actual Loops"": 1,
+    ""Output"": [""id"", ""status"", ""amount"", ""created_at""],
+    ""Shared Hit Blocks"": 10,
+    ""Shared Read Blocks"": 2,
+    ""Shared Dirtied Blocks"": 0,
+    ""Shared Written Blocks"": 0,
+    ""Local Hit Blocks"": 0,
+    ""Local Read Blocks"": 0,
+    ""Local Dirtied Blocks"": 0,
+    ""Local Written Blocks"": 0,
+    ""Temp Read Blocks"": 0,
+    ""Temp Written Blocks"": 0,
+    ""I/O Read Time"": 0.022,
+    ""I/O Write Time"": 0.000,
+    ""Temp I/O Read Time"": 0.000,
+    ""Temp I/O Write Time"": 0.000,
+    ""Plans"": [
+      {
+        ""Node Type"": ""Sort"",
+        ""Parent Relationship"": ""Outer"",
+        ""Parallel Aware"": false,
+        ""Async Capable"": false,
+        ""Startup Cost"": 42.73,
+        ""Total Cost"": 42.76,
+        ""Plan Rows"": 10,
+        ""Plan Width"": 27,
+        ""Actual Startup Time"": 0.063,
+        ""Actual Total Time"": 0.064,
+        ""Actual Rows"": 10,
+        ""Actual Loops"": 1,
+        ""Output"": [""id"", ""status"", ""amount"", ""created_at""],
+        ""Sort Key"": [""orders.created_at DESC""],
+        ""Sort Method"": ""quicksort"",
+        ""Sort Space Used"": 25,
+        ""Sort Space Type"": ""Memory"",
+        ""Shared Hit Blocks"": 10,
+        ""Shared Read Blocks"": 2,
+        ""Shared Dirtied Blocks"": 0,
+        ""Shared Written Blocks"": 0,
+        ""Local Hit Blocks"": 0,
+        ""Local Read Blocks"": 0,
+        ""Local Dirtied Blocks"": 0,
+        ""Local Written Blocks"": 0,
+        ""Temp Read Blocks"": 0,
+        ""Temp Written Blocks"": 0,
+        ""I/O Read Time"": 0.022,
+        ""I/O Write Time"": 0.000,
+        ""Temp I/O Read Time"": 0.000,
+        ""Temp I/O Write Time"": 0.000,
+        ""Plans"": [
+          {
+            ""Node Type"": ""Bitmap Heap Scan"",
+            ""Parent Relationship"": ""Outer"",
+            ""Parallel Aware"": false,
+            ""Async Capable"": false,
+            ""Relation Name"": ""orders"",
+            ""Schema"": ""public"",
+            ""Alias"": ""orders"",
+            ""Startup Cost"": 4.37,
+            ""Total Cost"": 42.57,
+            ""Plan Rows"": 10,
+            ""Plan Width"": 27,
+            ""Actual Startup Time"": 0.037,
+            ""Actual Total Time"": 0.054,
+            ""Actual Rows"": 10,
+            ""Actual Loops"": 1,
+            ""Output"": [""id"", ""status"", ""amount"", ""created_at""],
+            ""Recheck Cond"": ""(orders.customer_id = 4242)"",
+            ""Rows Removed by Index Recheck"": 0,
+            ""Exact Heap Blocks"": 10,
+            ""Lossy Heap Blocks"": 0,
+            ""Shared Hit Blocks"": 10,
+            ""Shared Read Blocks"": 2,
+            ""Shared Dirtied Blocks"": 0,
+            ""Shared Written Blocks"": 0,
+            ""Local Hit Blocks"": 0,
+            ""Local Read Blocks"": 0,
+            ""Local Dirtied Blocks"": 0,
+            ""Local Written Blocks"": 0,
+            ""Temp Read Blocks"": 0,
+            ""Temp Written Blocks"": 0,
+            ""I/O Read Time"": 0.022,
+            ""I/O Write Time"": 0.000,
+            ""Temp I/O Read Time"": 0.000,
+            ""Temp I/O Write Time"": 0.000,
+            ""Plans"": [
+              {
+                ""Node Type"": ""Bitmap Index Scan"",
+                ""Parent Relationship"": ""Outer"",
+                ""Parallel Aware"": false,
+                ""Async Capable"": false,
+                ""Index Name"": ""orders_customer_id_idx"",
+                ""Startup Cost"": 0.00,
+                ""Total Cost"": 4.37,
+                ""Plan Rows"": 10,
+                ""Plan Width"": 0,
+                ""Actual Startup Time"": 0.029,
+                ""Actual Total Time"": 0.030,
+                ""Actual Rows"": 10,
+                ""Actual Loops"": 1,
+                ""Index Cond"": ""(orders.customer_id = 4242)"",
+                ""Shared Hit Blocks"": 0,
+                ""Shared Read Blocks"": 2,
+                ""Shared Dirtied Blocks"": 0,
+                ""Shared Written Blocks"": 0,
+                ""Local Hit Blocks"": 0,
+                ""Local Read Blocks"": 0,
+                ""Local Dirtied Blocks"": 0,
+                ""Local Written Blocks"": 0,
+                ""Temp Read Blocks"": 0,
+                ""Temp Written Blocks"": 0,
+                ""I/O Read Time"": 0.022,
+                ""I/O Write Time"": 0.000,
+                ""Temp I/O Read Time"": 0.000,
+                ""Temp I/O Write Time"": 0.000
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  ""Settings"": {
+    ""max_parallel_workers_per_gather"": ""0""
+  },
+  ""Query Identifier"": 6425368004246004440
+}",,,,,,,,,"shop-api","client backend",,6425368004246004440
+2026-10-06 06:35:13.962 UTC,"postgres","shop",31581,"[local]",6ac496a1.7b5d,2,"SELECT",2026-10-06 06:35:13 UTC,3/338,0,LOG,00000,"duration: 0.054 ms  plan:
+{
+  ""Query Text"": ""SELECT id, status, amount FROM orders WHERE customer_id = 17 ORDER BY created_at DESC LIMIT 10 /*action='latest',controller='OrderController',framework='spring',traceparent='00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01'*/;"",
+  ""Plan"": {
+    ""Node Type"": ""Limit"",
+    ""Parallel Aware"": false,
+    ""Async Capable"": false,
+    ""Startup Cost"": 42.73,
+    ""Total Cost"": 42.76,
+    ""Plan Rows"": 10,
+    ""Plan Width"": 27,
+    ""Actual Startup Time"": 0.046,
+    ""Actual Total Time"": 0.048,
+    ""Actual Rows"": 10,
+    ""Actual Loops"": 1,
+    ""Output"": [""id"", ""status"", ""amount"", ""created_at""],
+    ""Shared Hit Blocks"": 11,
+    ""Shared Read Blocks"": 1,
+    ""Shared Dirtied Blocks"": 0,
+    ""Shared Written Blocks"": 0,
+    ""Local Hit Blocks"": 0,
+    ""Local Read Blocks"": 0,
+    ""Local Dirtied Blocks"": 0,
+    ""Local Written Blocks"": 0,
+    ""Temp Read Blocks"": 0,
+    ""Temp Written Blocks"": 0,
+    ""I/O Read Time"": 0.012,
+    ""I/O Write Time"": 0.000,
+    ""Temp I/O Read Time"": 0.000,
+    ""Temp I/O Write Time"": 0.000,
+    ""Plans"": [
+      {
+        ""Node Type"": ""Sort"",
+        ""Parent Relationship"": ""Outer"",
+        ""Parallel Aware"": false,
+        ""Async Capable"": false,
+        ""Startup Cost"": 42.73,
+        ""Total Cost"": 42.76,
+        ""Plan Rows"": 10,
+        ""Plan Width"": 27,
+        ""Actual Startup Time"": 0.046,
+        ""Actual Total Time"": 0.047,
+        ""Actual Rows"": 10,
+        ""Actual Loops"": 1,
+        ""Output"": [""id"", ""status"", ""amount"", ""created_at""],
+        ""Sort Key"": [""orders.created_at DESC""],
+        ""Sort Method"": ""quicksort"",
+        ""Sort Space Used"": 25,
+        ""Sort Space Type"": ""Memory"",
+        ""Shared Hit Blocks"": 11,
+        ""Shared Read Blocks"": 1,
+        ""Shared Dirtied Blocks"": 0,
+        ""Shared Written Blocks"": 0,
+        ""Local Hit Blocks"": 0,
+        ""Local Read Blocks"": 0,
+        ""Local Dirtied Blocks"": 0,
+        ""Local Written Blocks"": 0,
+        ""Temp Read Blocks"": 0,
+        ""Temp Written Blocks"": 0,
+        ""I/O Read Time"": 0.012,
+        ""I/O Write Time"": 0.000,
+        ""Temp I/O Read Time"": 0.000,
+        ""Temp I/O Write Time"": 0.000,
+        ""Plans"": [
+          {
+            ""Node Type"": ""Bitmap Heap Scan"",
+            ""Parent Relationship"": ""Outer"",
+            ""Parallel Aware"": false,
+            ""Async Capable"": false,
+            ""Relation Name"": ""orders"",
+            ""Schema"": ""public"",
+            ""Alias"": ""orders"",
+            ""Startup Cost"": 4.37,
+            ""Total Cost"": 42.57,
+            ""Plan Rows"": 10,
+            ""Plan Width"": 27,
+            ""Actual Startup Time"": 0.024,
+            ""Actual Total Time"": 0.040,
+            ""Actual Rows"": 10,
+            ""Actual Loops"": 1,
+            ""Output"": [""id"", ""status"", ""amount"", ""created_at""],
+            ""Recheck Cond"": ""(orders.customer_id = 17)"",
+            ""Rows Removed by Index Recheck"": 0,
+            ""Exact Heap Blocks"": 10,
+            ""Lossy Heap Blocks"": 0,
+            ""Shared Hit Blocks"": 11,
+            ""Shared Read Blocks"": 1,
+            ""Shared Dirtied Blocks"": 0,
+            ""Shared Written Blocks"": 0,
+            ""Local Hit Blocks"": 0,
+            ""Local Read Blocks"": 0,
+            ""Local Dirtied Blocks"": 0,
+            ""Local Written Blocks"": 0,
+            ""Temp Read Blocks"": 0,
+            ""Temp Written Blocks"": 0,
+            ""I/O Read Time"": 0.012,
+            ""I/O Write Time"": 0.000,
+            ""Temp I/O Read Time"": 0.000,
+            ""Temp I/O Write Time"": 0.000,
+            ""Plans"": [
+              {
+                ""Node Type"": ""Bitmap Index Scan"",
+                ""Parent Relationship"": ""Outer"",
+                ""Parallel Aware"": false,
+                ""Async Capable"": false,
+                ""Index Name"": ""orders_customer_id_idx"",
+                ""Startup Cost"": 0.00,
+                ""Total Cost"": 4.37,
+                ""Plan Rows"": 10,
+                ""Plan Width"": 0,
+                ""Actual Startup Time"": 0.019,
+                ""Actual Total Time"": 0.019,
+                ""Actual Rows"": 10,
+                ""Actual Loops"": 1,
+                ""Index Cond"": ""(orders.customer_id = 17)"",
+                ""Shared Hit Blocks"": 1,
+                ""Shared Read Blocks"": 1,
+                ""Shared Dirtied Blocks"": 0,
+                ""Shared Written Blocks"": 0,
+                ""Local Hit Blocks"": 0,
+                ""Local Read Blocks"": 0,
+                ""Local Dirtied Blocks"": 0,
+                ""Local Written Blocks"": 0,
+                ""Temp Read Blocks"": 0,
+                ""Temp Written Blocks"": 0,
+                ""I/O Read Time"": 0.012,
+                ""I/O Write Time"": 0.000,
+                ""Temp I/O Read Time"": 0.000,
+                ""Temp I/O Write Time"": 0.000
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  ""Settings"": {
+    ""max_parallel_workers_per_gather"": ""0""
+  },
+  ""Query Identifier"": 6425368004246004440
+}",,,,,,,,,"shop-api","client backend",,6425368004246004440
+2026-10-06 06:35:13.963 UTC,"postgres","shop",31581,"[local]",6ac496a1.7b5d,3,"SELECT",2026-10-06 06:35:13 UTC,3/339,0,LOG,00000,"duration: 0.046 ms  plan:
+{
+  ""Query Text"": ""SELECT id, status, amount FROM orders WHERE customer_id = 9001 ORDER BY created_at DESC LIMIT 10 /*action='latest',controller='OrderController',framework='spring',traceparent='00-5d41402abc4b2a76b9719d911017c592-7d793037a0760186-01'*/;"",
+  ""Plan"": {
+    ""Node Type"": ""Limit"",
+    ""Parallel Aware"": false,
+    ""Async Capable"": false,
+    ""Startup Cost"": 42.73,
+    ""Total Cost"": 42.76,
+    ""Plan Rows"": 10,
+    ""Plan Width"": 27,
+    ""Actual Startup Time"": 0.040,
+    ""Actual Total Time"": 0.041,
+    ""Actual Rows"": 10,
+    ""Actual Loops"": 1,
+    ""Output"": [""id"", ""status"", ""amount"", ""created_at""],
+    ""Shared Hit Blocks"": 11,
+    ""Shared Read Blocks"": 1,
+    ""Shared Dirtied Blocks"": 0,
+    ""Shared Written Blocks"": 0,
+    ""Local Hit Blocks"": 0,
+    ""Local Read Blocks"": 0,
+    ""Local Dirtied Blocks"": 0,
+    ""Local Written Blocks"": 0,
+    ""Temp Read Blocks"": 0,
+    ""Temp Written Blocks"": 0,
+    ""I/O Read Time"": 0.009,
+    ""I/O Write Time"": 0.000,
+    ""Temp I/O Read Time"": 0.000,
+    ""Temp I/O Write Time"": 0.000,
+    ""Plans"": [
+      {
+        ""Node Type"": ""Sort"",
+        ""Parent Relationship"": ""Outer"",
+        ""Parallel Aware"": false,
+        ""Async Capable"": false,
+        ""Startup Cost"": 42.73,
+        ""Total Cost"": 42.76,
+        ""Plan Rows"": 10,
+        ""Plan Width"": 27,
+        ""Actual Startup Time"": 0.039,
+        ""Actual Total Time"": 0.040,
+        ""Actual Rows"": 10,
+        ""Actual Loops"": 1,
+        ""Output"": [""id"", ""status"", ""amount"", ""created_at""],
+        ""Sort Key"": [""orders.created_at DESC""],
+        ""Sort Method"": ""quicksort"",
+        ""Sort Space Used"": 25,
+        ""Sort Space Type"": ""Memory"",
+        ""Shared Hit Blocks"": 11,
+        ""Shared Read Blocks"": 1,
+        ""Shared Dirtied Blocks"": 0,
+        ""Shared Written Blocks"": 0,
+        ""Local Hit Blocks"": 0,
+        ""Local Read Blocks"": 0,
+        ""Local Dirtied Blocks"": 0,
+        ""Local Written Blocks"": 0,
+        ""Temp Read Blocks"": 0,
+        ""Temp Written Blocks"": 0,
+        ""I/O Read Time"": 0.009,
+        ""I/O Write Time"": 0.000,
+        ""Temp I/O Read Time"": 0.000,
+        ""Temp I/O Write Time"": 0.000,
+        ""Plans"": [
+          {
+            ""Node Type"": ""Bitmap Heap Scan"",
+            ""Parent Relationship"": ""Outer"",
+            ""Parallel Aware"": false,
+            ""Async Capable"": false,
+            ""Relation Name"": ""orders"",
+            ""Schema"": ""public"",
+            ""Alias"": ""orders"",
+            ""Startup Cost"": 4.37,
+            ""Total Cost"": 42.57,
+            ""Plan Rows"": 10,
+            ""Plan Width"": 27,
+            ""Actual Startup Time"": 0.018,
+            ""Actual Total Time"": 0.035,
+            ""Actual Rows"": 10,
+            ""Actual Loops"": 1,
+            ""Output"": [""id"", ""status"", ""amount"", ""created_at""],
+            ""Recheck Cond"": ""(orders.customer_id = 9001)"",
+            ""Rows Removed by Index Recheck"": 0,
+            ""Exact Heap Blocks"": 10,
+            ""Lossy Heap Blocks"": 0,
+            ""Shared Hit Blocks"": 11,
+            ""Shared Read Blocks"": 1,
+            ""Shared Dirtied Blocks"": 0,
+            ""Shared Written Blocks"": 0,
+            ""Local Hit Blocks"": 0,
+            ""Local Read Blocks"": 0,
+            ""Local Dirtied Blocks"": 0,
+            ""Local Written Blocks"": 0,
+            ""Temp Read Blocks"": 0,
+            ""Temp Written Blocks"": 0,
+            ""I/O Read Time"": 0.009,
+            ""I/O Write Time"": 0.000,
+            ""Temp I/O Read Time"": 0.000,
+            ""Temp I/O Write Time"": 0.000,
+            ""Plans"": [
+              {
+                ""Node Type"": ""Bitmap Index Scan"",
+                ""Parent Relationship"": ""Outer"",
+                ""Parallel Aware"": false,
+                ""Async Capable"": false,
+                ""Index Name"": ""orders_customer_id_idx"",
+                ""Startup Cost"": 0.00,
+                ""Total Cost"": 4.37,
+                ""Plan Rows"": 10,
+                ""Plan Width"": 0,
+                ""Actual Startup Time"": 0.014,
+                ""Actual Total Time"": 0.014,
+                ""Actual Rows"": 10,
+                ""Actual Loops"": 1,
+                ""Index Cond"": ""(orders.customer_id = 9001)"",
+                ""Shared Hit Blocks"": 1,
+                ""Shared Read Blocks"": 1,
+                ""Shared Dirtied Blocks"": 0,
+                ""Shared Written Blocks"": 0,
+                ""Local Hit Blocks"": 0,
+                ""Local Read Blocks"": 0,
+                ""Local Dirtied Blocks"": 0,
+                ""Local Written Blocks"": 0,
+                ""Temp Read Blocks"": 0,
+                ""Temp Written Blocks"": 0,
+                ""I/O Read Time"": 0.009,
+                ""I/O Write Time"": 0.000,
+                ""Temp I/O Read Time"": 0.000,
+                ""Temp I/O Write Time"": 0.000
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  ""Settings"": {
+    ""max_parallel_workers_per_gather"": ""0""
+  },
+  ""Query Identifier"": 6425368004246004440
+}",,,,,,,,,"shop-api","client backend",,6425368004246004440
+2026-10-06 06:35:13.964 UTC,"postgres","shop",31581,"[local]",6ac496a1.7b5d,4,"SELECT",2026-10-06 06:35:13 UTC,3/341,0,LOG,00000,"duration: 0.490 ms  plan:
+{
+  ""Query Text"": ""SELECT status, count(*) FROM orders WHERE created_at >= timestamptz '2025-06-01 00:00:00+00' AND created_at < timestamptz '2025-06-02 00:00:00+00' GROUP BY status /*action='daily',controller='ReportController',framework='spring'*/;"",
+  ""Plan"": {
+    ""Node Type"": ""Aggregate"",
+    ""Strategy"": ""Hashed"",
+    ""Partial Mode"": ""Simple"",
+    ""Parallel Aware"": false,
+    ""Async Capable"": false,
+    ""Startup Cost"": 791.77,
+    ""Total Cost"": 791.82,
+    ""Plan Rows"": 5,
+    ""Plan Width"": 17,
+    ""Actual Startup Time"": 0.485,
+    ""Actual Total Time"": 0.486,
+    ""Actual Rows"": 3,
+    ""Actual Loops"": 1,
+    ""Output"": [""status"", ""count(*)""],
+    ""Group Key"": [""orders.status""],
+    ""Planned Partitions"": 0,
+    ""HashAgg Batches"": 1,
+    ""Peak Memory Usage"": 24,
+    ""Disk Usage"": 0,
+    ""Shared Hit Blocks"": 278,
+    ""Shared Read Blocks"": 0,
+    ""Shared Dirtied Blocks"": 0,
+    ""Shared Written Blocks"": 0,
+    ""Local Hit Blocks"": 0,
+    ""Local Read Blocks"": 0,
+    ""Local Dirtied Blocks"": 0,
+    ""Local Written Blocks"": 0,
+    ""Temp Read Blocks"": 0,
+    ""Temp Written Blocks"": 0,
+    ""I/O Read Time"": 0.000,
+    ""I/O Write Time"": 0.000,
+    ""Temp I/O Read Time"": 0.000,
+    ""Temp I/O Write Time"": 0.000,
+    ""Plans"": [
+      {
+        ""Node Type"": ""Bitmap Heap Scan"",
+        ""Parent Relationship"": ""Outer"",
+        ""Parallel Aware"": false,
+        ""Async Capable"": false,
+        ""Relation Name"": ""orders"",
+        ""Schema"": ""public"",
+        ""Alias"": ""orders"",
+        ""Startup Cost"": 7.21,
+        ""Total Cost"": 790.41,
+        ""Plan Rows"": 272,
+        ""Plan Width"": 9,
+        ""Actual Startup Time"": 0.072,
+        ""Actual Total Time"": 0.406,
+        ""Actual Rows"": 274,
+        ""Actual Loops"": 1,
+        ""Output"": [""id"", ""customer_id"", ""status"", ""created_at"", ""amount"", ""note""],
+        ""Recheck Cond"": ""((orders.created_at >= '2025-06-01 00:00:00+00'::timestamp with time zone) AND (orders.created_at < '2025-06-02 00:00:00+00'::timestamp with time zone))"",
+        ""Rows Removed by Index Recheck"": 0,
+        ""Exact Heap Blocks"": 274,
+        ""Lossy Heap Blocks"": 0,
+        ""Shared Hit Blocks"": 278,
+        ""Shared Read Blocks"": 0,
+        ""Shared Dirtied Blocks"": 0,
+        ""Shared Written Blocks"": 0,
+        ""Local Hit Blocks"": 0,
+        ""Local Read Blocks"": 0,
+        ""Local Dirtied Blocks"": 0,
+        ""Local Written Blocks"": 0,
+        ""Temp Read Blocks"": 0,
+        ""Temp Written Blocks"": 0,
+        ""I/O Read Time"": 0.000,
+        ""I/O Write Time"": 0.000,
+        ""Temp I/O Read Time"": 0.000,
+        ""Temp I/O Write Time"": 0.000,
+        ""Plans"": [
+          {
+            ""Node Type"": ""Bitmap Index Scan"",
+            ""Parent Relationship"": ""Outer"",
+            ""Parallel Aware"": false,
+            ""Async Capable"": false,
+            ""Index Name"": ""orders_created_at_idx"",
+            ""Startup Cost"": 0.00,
+            ""Total Cost"": 7.14,
+            ""Plan Rows"": 272,
+            ""Plan Width"": 0,
+            ""Actual Startup Time"": 0.040,
+            ""Actual Total Time"": 0.041,
+            ""Actual Rows"": 274,
+            ""Actual Loops"": 1,
+            ""Index Cond"": ""((orders.created_at >= '2025-06-01 00:00:00+00'::timestamp with time zone) AND (orders.created_at < '2025-06-02 00:00:00+00'::timestamp with time zone))"",
+            ""Shared Hit Blocks"": 4,
+            ""Shared Read Blocks"": 0,
+            ""Shared Dirtied Blocks"": 0,
+            ""Shared Written Blocks"": 0,
+            ""Local Hit Blocks"": 0,
+            ""Local Read Blocks"": 0,
+            ""Local Dirtied Blocks"": 0,
+            ""Local Written Blocks"": 0,
+            ""Temp Read Blocks"": 0,
+            ""Temp Written Blocks"": 0,
+            ""I/O Read Time"": 0.000,
+            ""I/O Write Time"": 0.000,
+            ""Temp I/O Read Time"": 0.000,
+            ""Temp I/O Write Time"": 0.000
+          }
+        ]
+      }
+    ]
+  },
+  ""Settings"": {
+    ""max_parallel_workers_per_gather"": ""0""
+  },
+  ""Query Identifier"": -873924469279333954
+}",,,,,,,,,"shop-reports","client backend",,-873924469279333954
+2026-10-06 06:35:13.982 UTC,"postgres","shop",31581,"[local]",6ac496a1.7b5d,5,"SELECT",2026-10-06 06:35:13 UTC,3/344,0,LOG,00000,"duration: 12.230 ms  plan:
+{
+  ""Query Text"": ""SELECT id, status, amount FROM orders WHERE customer_id = 4242 ORDER BY created_at DESC LIMIT 10 /*action='latest',controller='OrderController',framework='spring',traceparent='00-7f2d1a3c9b8e4f6a0b1c2d3e4f5a6b7c-1a2b3c4d5e6f7081-01'*/;"",
+  ""Plan"": {
+    ""Node Type"": ""Limit"",
+    ""Parallel Aware"": false,
+    ""Async Capable"": false,
+    ""Startup Cost"": 4917.17,
+    ""Total Cost"": 4917.19,
+    ""Plan Rows"": 10,
+    ""Plan Width"": 27,
+    ""Actual Startup Time"": 12.211,
+    ""Actual Total Time"": 12.215,
+    ""Actual Rows"": 10,
+    ""Actual Loops"": 1,
+    ""Output"": [""id"", ""status"", ""amount"", ""created_at""],
+    ""Shared Hit Blocks"": 2417,
+    ""Shared Read Blocks"": 0,
+    ""Shared Dirtied Blocks"": 0,
+    ""Shared Written Blocks"": 0,
+    ""Local Hit Blocks"": 0,
+    ""Local Read Blocks"": 0,
+    ""Local Dirtied Blocks"": 0,
+    ""Local Written Blocks"": 0,
+    ""Temp Read Blocks"": 0,
+    ""Temp Written Blocks"": 0,
+    ""I/O Read Time"": 0.000,
+    ""I/O Write Time"": 0.000,
+    ""Temp I/O Read Time"": 0.000,
+    ""Temp I/O Write Time"": 0.000,
+    ""Plans"": [
+      {
+        ""Node Type"": ""Sort"",
+        ""Parent Relationship"": ""Outer"",
+        ""Parallel Aware"": false,
+        ""Async Capable"": false,
+        ""Startup Cost"": 4917.17,
+        ""Total Cost"": 4917.19,
+        ""Plan Rows"": 10,
+        ""Plan Width"": 27,
+        ""Actual Startup Time"": 12.209,
+        ""Actual Total Time"": 12.211,
+        ""Actual Rows"": 10,
+        ""Actual Loops"": 1,
+        ""Output"": [""id"", ""status"", ""amount"", ""created_at""],
+        ""Sort Key"": [""orders.created_at DESC""],
+        ""Sort Method"": ""quicksort"",
+        ""Sort Space Used"": 25,
+        ""Sort Space Type"": ""Memory"",
+        ""Shared Hit Blocks"": 2417,
+        ""Shared Read Blocks"": 0,
+        ""Shared Dirtied Blocks"": 0,
+        ""Shared Written Blocks"": 0,
+        ""Local Hit Blocks"": 0,
+        ""Local Read Blocks"": 0,
+        ""Local Dirtied Blocks"": 0,
+        ""Local Written Blocks"": 0,
+        ""Temp Read Blocks"": 0,
+        ""Temp Written Blocks"": 0,
+        ""I/O Read Time"": 0.000,
+        ""I/O Write Time"": 0.000,
+        ""Temp I/O Read Time"": 0.000,
+        ""Temp I/O Write Time"": 0.000,
+        ""Plans"": [
+          {
+            ""Node Type"": ""Seq Scan"",
+            ""Parent Relationship"": ""Outer"",
+            ""Parallel Aware"": false,
+            ""Async Capable"": false,
+            ""Relation Name"": ""orders"",
+            ""Schema"": ""public"",
+            ""Alias"": ""orders"",
+            ""Startup Cost"": 0.00,
+            ""Total Cost"": 4917.00,
+            ""Plan Rows"": 10,
+            ""Plan Width"": 27,
+            ""Actual Startup Time"": 0.920,
+            ""Actual Total Time"": 12.191,
+            ""Actual Rows"": 10,
+            ""Actual Loops"": 1,
+            ""Output"": [""id"", ""status"", ""amount"", ""created_at""],
+            ""Filter"": ""(orders.customer_id = 4242)"",
+            ""Rows Removed by Filter"": 199990,
+            ""Shared Hit Blocks"": 2417,
+            ""Shared Read Blocks"": 0,
+            ""Shared Dirtied Blocks"": 0,
+            ""Shared Written Blocks"": 0,
+            ""Local Hit Blocks"": 0,
+            ""Local Read Blocks"": 0,
+            ""Local Dirtied Blocks"": 0,
+            ""Local Written Blocks"": 0,
+            ""Temp Read Blocks"": 0,
+            ""Temp Written Blocks"": 0,
+            ""I/O Read Time"": 0.000,
+            ""I/O Write Time"": 0.000,
+            ""Temp I/O Read Time"": 0.000,
+            ""Temp I/O Write Time"": 0.000
+          }
+        ]
+      }
+    ]
+  },
+  ""Settings"": {
+    ""max_parallel_workers_per_gather"": ""0""
+  },
+  ""Query Identifier"": 6425368004246004440
+}",,,,,,,,,"shop-api","client backend",,6425368004246004440
+2026-10-06 06:35:13.994 UTC,"postgres","shop",31581,"[local]",6ac496a1.7b5d,6,"SELECT",2026-10-06 06:35:13 UTC,3/345,0,LOG,00000,"duration: 11.930 ms  plan:
+{
+  ""Query Text"": ""SELECT id, status, amount FROM orders WHERE customer_id = 17 ORDER BY created_at DESC LIMIT 10 /*action='latest',controller='OrderController',framework='spring',traceparent='00-9e107d9d372bb6826bd81d3542a419d6-0f1e2d3c4b5a6978-01'*/;"",
+  ""Plan"": {
+    ""Node Type"": ""Limit"",
+    ""Parallel Aware"": false,
+    ""Async Capable"": false,
+    ""Startup Cost"": 4917.17,
+    ""Total Cost"": 4917.19,
+    ""Plan Rows"": 10,
+    ""Plan Width"": 27,
+    ""Actual Startup Time"": 11.914,
+    ""Actual Total Time"": 11.917,
+    ""Actual Rows"": 10,
+    ""Actual Loops"": 1,
+    ""Output"": [""id"", ""status"", ""amount"", ""created_at""],
+    ""Shared Hit Blocks"": 2417,
+    ""Shared Read Blocks"": 0,
+    ""Shared Dirtied Blocks"": 0,
+    ""Shared Written Blocks"": 0,
+    ""Local Hit Blocks"": 0,
+    ""Local Read Blocks"": 0,
+    ""Local Dirtied Blocks"": 0,
+    ""Local Written Blocks"": 0,
+    ""Temp Read Blocks"": 0,
+    ""Temp Written Blocks"": 0,
+    ""I/O Read Time"": 0.000,
+    ""I/O Write Time"": 0.000,
+    ""Temp I/O Read Time"": 0.000,
+    ""Temp I/O Write Time"": 0.000,
+    ""Plans"": [
+      {
+        ""Node Type"": ""Sort"",
+        ""Parent Relationship"": ""Outer"",
+        ""Parallel Aware"": false,
+        ""Async Capable"": false,
+        ""Startup Cost"": 4917.17,
+        ""Total Cost"": 4917.19,
+        ""Plan Rows"": 10,
+        ""Plan Width"": 27,
+        ""Actual Startup Time"": 11.913,
+        ""Actual Total Time"": 11.914,
+        ""Actual Rows"": 10,
+        ""Actual Loops"": 1,
+        ""Output"": [""id"", ""status"", ""amount"", ""created_at""],
+        ""Sort Key"": [""orders.created_at DESC""],
+        ""Sort Method"": ""quicksort"",
+        ""Sort Space Used"": 25,
+        ""Sort Space Type"": ""Memory"",
+        ""Shared Hit Blocks"": 2417,
+        ""Shared Read Blocks"": 0,
+        ""Shared Dirtied Blocks"": 0,
+        ""Shared Written Blocks"": 0,
+        ""Local Hit Blocks"": 0,
+        ""Local Read Blocks"": 0,
+        ""Local Dirtied Blocks"": 0,
+        ""Local Written Blocks"": 0,
+        ""Temp Read Blocks"": 0,
+        ""Temp Written Blocks"": 0,
+        ""I/O Read Time"": 0.000,
+        ""I/O Write Time"": 0.000,
+        ""Temp I/O Read Time"": 0.000,
+        ""Temp I/O Write Time"": 0.000,
+        ""Plans"": [
+          {
+            ""Node Type"": ""Seq Scan"",
+            ""Parent Relationship"": ""Outer"",
+            ""Parallel Aware"": false,
+            ""Async Capable"": false,
+            ""Relation Name"": ""orders"",
+            ""Schema"": ""public"",
+            ""Alias"": ""orders"",
+            ""Startup Cost"": 0.00,
+            ""Total Cost"": 4917.00,
+            ""Plan Rows"": 10,
+            ""Plan Width"": 27,
+            ""Actual Startup Time"": 0.149,
+            ""Actual Total Time"": 11.895,
+            ""Actual Rows"": 10,
+            ""Actual Loops"": 1,
+            ""Output"": [""id"", ""status"", ""amount"", ""created_at""],
+            ""Filter"": ""(orders.customer_id = 17)"",
+            ""Rows Removed by Filter"": 199990,
+            ""Shared Hit Blocks"": 2417,
+            ""Shared Read Blocks"": 0,
+            ""Shared Dirtied Blocks"": 0,
+            ""Shared Written Blocks"": 0,
+            ""Local Hit Blocks"": 0,
+            ""Local Read Blocks"": 0,
+            ""Local Dirtied Blocks"": 0,
+            ""Local Written Blocks"": 0,
+            ""Temp Read Blocks"": 0,
+            ""Temp Written Blocks"": 0,
+            ""I/O Read Time"": 0.000,
+            ""I/O Write Time"": 0.000,
+            ""Temp I/O Read Time"": 0.000,
+            ""Temp I/O Write Time"": 0.000
+          }
+        ]
+      }
+    ]
+  },
+  ""Settings"": {
+    ""max_parallel_workers_per_gather"": ""0""
+  },
+  ""Query Identifier"": 6425368004246004440
+}",,,,,,,,,"shop-api","client backend",,6425368004246004440
+2026-10-06 06:35:14.007 UTC,"postgres","shop",31581,"[local]",6ac496a1.7b5d,7,"SELECT",2026-10-06 06:35:13 UTC,3/346,0,LOG,00000,"duration: 12.528 ms  plan:
+{
+  ""Query Text"": ""SELECT id, status, amount FROM orders WHERE customer_id = 9001 ORDER BY created_at DESC LIMIT 10 /*action='latest',controller='OrderController',framework='spring',traceparent='00-e4d909c290d0fb1ca068ffaddf22cbd0-8899aabbccddeeff-01'*/;"",
+  ""Plan"": {
+    ""Node Type"": ""Limit"",
+    ""Parallel Aware"": false,
+    ""Async Capable"": false,
+    ""Startup Cost"": 4917.17,
+    ""Total Cost"": 4917.19,
+    ""Plan Rows"": 10,
+    ""Plan Width"": 27,
+    ""Actual Startup Time"": 12.511,
+    ""Actual Total Time"": 12.515,
+    ""Actual Rows"": 10,
+    ""Actual Loops"": 1,
+    ""Output"": [""id"", ""status"", ""amount"", ""created_at""],
+    ""Shared Hit Blocks"": 2417,
+    ""Shared Read Blocks"": 0,
+    ""Shared Dirtied Blocks"": 0,
+    ""Shared Written Blocks"": 0,
+    ""Local Hit Blocks"": 0,
+    ""Local Read Blocks"": 0,
+    ""Local Dirtied Blocks"": 0,
+    ""Local Written Blocks"": 0,
+    ""Temp Read Blocks"": 0,
+    ""Temp Written Blocks"": 0,
+    ""I/O Read Time"": 0.000,
+    ""I/O Write Time"": 0.000,
+    ""Temp I/O Read Time"": 0.000,
+    ""Temp I/O Write Time"": 0.000,
+    ""Plans"": [
+      {
+        ""Node Type"": ""Sort"",
+        ""Parent Relationship"": ""Outer"",
+        ""Parallel Aware"": false,
+        ""Async Capable"": false,
+        ""Startup Cost"": 4917.17,
+        ""Total Cost"": 4917.19,
+        ""Plan Rows"": 10,
+        ""Plan Width"": 27,
+        ""Actual Startup Time"": 12.510,
+        ""Actual Total Time"": 12.512,
+        ""Actual Rows"": 10,
+        ""Actual Loops"": 1,
+        ""Output"": [""id"", ""status"", ""amount"", ""created_at""],
+        ""Sort Key"": [""orders.created_at DESC""],
+        ""Sort Method"": ""quicksort"",
+        ""Sort Space Used"": 25,
+        ""Sort Space Type"": ""Memory"",
+        ""Shared Hit Blocks"": 2417,
+        ""Shared Read Blocks"": 0,
+        ""Shared Dirtied Blocks"": 0,
+        ""Shared Written Blocks"": 0,
+        ""Local Hit Blocks"": 0,
+        ""Local Read Blocks"": 0,
+        ""Local Dirtied Blocks"": 0,
+        ""Local Written Blocks"": 0,
+        ""Temp Read Blocks"": 0,
+        ""Temp Written Blocks"": 0,
+        ""I/O Read Time"": 0.000,
+        ""I/O Write Time"": 0.000,
+        ""Temp I/O Read Time"": 0.000,
+        ""Temp I/O Write Time"": 0.000,
+        ""Plans"": [
+          {
+            ""Node Type"": ""Seq Scan"",
+            ""Parent Relationship"": ""Outer"",
+            ""Parallel Aware"": false,
+            ""Async Capable"": false,
+            ""Relation Name"": ""orders"",
+            ""Schema"": ""public"",
+            ""Alias"": ""orders"",
+            ""Startup Cost"": 0.00,
+            ""Total Cost"": 4917.00,
+            ""Plan Rows"": 10,
+            ""Plan Width"": 27,
+            ""Actual Startup Time"": 0.576,
+            ""Actual Total Time"": 12.492,
+            ""Actual Rows"": 10,
+            ""Actual Loops"": 1,
+            ""Output"": [""id"", ""status"", ""amount"", ""created_at""],
+            ""Filter"": ""(orders.customer_id = 9001)"",
+            ""Rows Removed by Filter"": 199990,
+            ""Shared Hit Blocks"": 2417,
+            ""Shared Read Blocks"": 0,
+            ""Shared Dirtied Blocks"": 0,
+            ""Shared Written Blocks"": 0,
+            ""Local Hit Blocks"": 0,
+            ""Local Read Blocks"": 0,
+            ""Local Dirtied Blocks"": 0,
+            ""Local Written Blocks"": 0,
+            ""Temp Read Blocks"": 0,
+            ""Temp Written Blocks"": 0,
+            ""I/O Read Time"": 0.000,
+            ""I/O Write Time"": 0.000,
+            ""Temp I/O Read Time"": 0.000,
+            ""Temp I/O Write Time"": 0.000
+          }
+        ]
+      }
+    ]
+  },
+  ""Settings"": {
+    ""max_parallel_workers_per_gather"": ""0""
+  },
+  ""Query Identifier"": 6425368004246004440
+}",,,,,,,,,"shop-api","client backend",,6425368004246004440
+2026-10-06 06:35:14.009 UTC,"postgres","shop",31581,"[local]",6ac496a1.7b5d,8,"SELECT",2026-10-06 06:35:13 UTC,3/348,0,LOG,00000,"duration: 0.552 ms  plan:
+{
+  ""Query Text"": ""SELECT status, count(*) FROM orders WHERE created_at >= timestamptz '2025-06-02 00:00:00+00' AND created_at < timestamptz '2025-06-03 00:00:00+00' GROUP BY status /*action='daily',controller='ReportController',framework='spring'*/;"",
+  ""Plan"": {
+    ""Node Type"": ""Aggregate"",
+    ""Strategy"": ""Hashed"",
+    ""Partial Mode"": ""Simple"",
+    ""Parallel Aware"": false,
+    ""Async Capable"": false,
+    ""Startup Cost"": 791.77,
+    ""Total Cost"": 791.82,
+    ""Plan Rows"": 5,
+    ""Plan Width"": 17,
+    ""Actual Startup Time"": 0.545,
+    ""Actual Total Time"": 0.546,
+    ""Actual Rows"": 3,
+    ""Actual Loops"": 1,
+    ""Output"": [""status"", ""count(*)""],
+    ""Group Key"": [""orders.status""],
+    ""Planned Partitions"": 0,
+    ""HashAgg Batches"": 1,
+    ""Peak Memory Usage"": 24,
+    ""Disk Usage"": 0,
+    ""Shared Hit Blocks"": 278,
+    ""Shared Read Blocks"": 0,
+    ""Shared Dirtied Blocks"": 0,
+    ""Shared Written Blocks"": 0,
+    ""Local Hit Blocks"": 0,
+    ""Local Read Blocks"": 0,
+    ""Local Dirtied Blocks"": 0,
+    ""Local Written Blocks"": 0,
+    ""Temp Read Blocks"": 0,
+    ""Temp Written Blocks"": 0,
+    ""I/O Read Time"": 0.000,
+    ""I/O Write Time"": 0.000,
+    ""Temp I/O Read Time"": 0.000,
+    ""Temp I/O Write Time"": 0.000,
+    ""Plans"": [
+      {
+        ""Node Type"": ""Bitmap Heap Scan"",
+        ""Parent Relationship"": ""Outer"",
+        ""Parallel Aware"": false,
+        ""Async Capable"": false,
+        ""Relation Name"": ""orders"",
+        ""Schema"": ""public"",
+        ""Alias"": ""orders"",
+        ""Startup Cost"": 7.21,
+        ""Total Cost"": 790.41,
+        ""Plan Rows"": 272,
+        ""Plan Width"": 9,
+        ""Actual Startup Time"": 0.096,
+        ""Actual Total Time"": 0.461,
+        ""Actual Rows"": 274,
+        ""Actual Loops"": 1,
+        ""Output"": [""id"", ""customer_id"", ""status"", ""created_at"", ""amount"", ""note""],
+        ""Recheck Cond"": ""((orders.created_at >= '2025-06-02 00:00:00+00'::timestamp with time zone) AND (orders.created_at < '2025-06-03 00:00:00+00'::timestamp with time zone))"",
+        ""Rows Removed by Index Recheck"": 0,
+        ""Exact Heap Blocks"": 274,
+        ""Lossy Heap Blocks"": 0,
+        ""Shared Hit Blocks"": 278,
+        ""Shared Read Blocks"": 0,
+        ""Shared Dirtied Blocks"": 0,
+        ""Shared Written Blocks"": 0,
+        ""Local Hit Blocks"": 0,
+        ""Local Read Blocks"": 0,
+        ""Local Dirtied Blocks"": 0,
+        ""Local Written Blocks"": 0,
+        ""Temp Read Blocks"": 0,
+        ""Temp Written Blocks"": 0,
+        ""I/O Read Time"": 0.000,
+        ""I/O Write Time"": 0.000,
+        ""Temp I/O Read Time"": 0.000,
+        ""Temp I/O Write Time"": 0.000,
+        ""Plans"": [
+          {
+            ""Node Type"": ""Bitmap Index Scan"",
+            ""Parent Relationship"": ""Outer"",
+            ""Parallel Aware"": false,
+            ""Async Capable"": false,
+            ""Index Name"": ""orders_created_at_idx"",
+            ""Startup Cost"": 0.00,
+            ""Total Cost"": 7.14,
+            ""Plan Rows"": 272,
+            ""Plan Width"": 0,
+            ""Actual Startup Time"": 0.037,
+            ""Actual Total Time"": 0.037,
+            ""Actual Rows"": 274,
+            ""Actual Loops"": 1,
+            ""Index Cond"": ""((orders.created_at >= '2025-06-02 00:00:00+00'::timestamp with time zone) AND (orders.created_at < '2025-06-03 00:00:00+00'::timestamp with time zone))"",
+            ""Shared Hit Blocks"": 4,
+            ""Shared Read Blocks"": 0,
+            ""Shared Dirtied Blocks"": 0,
+            ""Shared Written Blocks"": 0,
+            ""Local Hit Blocks"": 0,
+            ""Local Read Blocks"": 0,
+            ""Local Dirtied Blocks"": 0,
+            ""Local Written Blocks"": 0,
+            ""Temp Read Blocks"": 0,
+            ""Temp Written Blocks"": 0,
+            ""I/O Read Time"": 0.000,
+            ""I/O Write Time"": 0.000,
+            ""Temp I/O Read Time"": 0.000,
+            ""Temp I/O Write Time"": 0.000
+          }
+        ]
+      }
+    ]
+  },
+  ""Settings"": {
+    ""max_parallel_workers_per_gather"": ""0""
+  },
+  ""Query Identifier"": -873924469279333954
+}",,,,,,,,,"shop-reports","client backend",,-873924469279333954
+2026-10-06 06:35:14.021 UTC,"postgres","shop",31581,"[local]",6ac496a1.7b5d,9,"EXECUTE",2026-10-06 06:35:13 UTC,3/351,0,LOG,00000,"duration: 11.931 ms  plan:
+{
+  ""Query Text"": ""PREPARE latest (integer, bigint) AS\n  SELECT id, status, amount FROM orders WHERE customer_id = $1 ORDER BY created_at DESC LIMIT $2;"",
+  ""Query Parameters"": ""$1 = '4242', $2 = '10'"",
+  ""Plan"": {
+    ""Node Type"": ""Limit"",
+    ""Parallel Aware"": false,
+    ""Async Capable"": false,
+    ""Startup Cost"": 4917.17,
+    ""Total Cost"": 4917.19,
+    ""Plan Rows"": 10,
+    ""Plan Width"": 27,
+    ""Actual Startup Time"": 11.922,
+    ""Actual Total Time"": 11.925,
+    ""Actual Rows"": 10,
+    ""Actual Loops"": 1,
+    ""Output"": [""id"", ""status"", ""amount"", ""created_at""],
+    ""Shared Hit Blocks"": 2417,
+    ""Shared Read Blocks"": 0,
+    ""Shared Dirtied Blocks"": 0,
+    ""Shared Written Blocks"": 0,
+    ""Local Hit Blocks"": 0,
+    ""Local Read Blocks"": 0,
+    ""Local Dirtied Blocks"": 0,
+    ""Local Written Blocks"": 0,
+    ""Temp Read Blocks"": 0,
+    ""Temp Written Blocks"": 0,
+    ""I/O Read Time"": 0.000,
+    ""I/O Write Time"": 0.000,
+    ""Temp I/O Read Time"": 0.000,
+    ""Temp I/O Write Time"": 0.000,
+    ""Plans"": [
+      {
+        ""Node Type"": ""Sort"",
+        ""Parent Relationship"": ""Outer"",
+        ""Parallel Aware"": false,
+        ""Async Capable"": false,
+        ""Startup Cost"": 4917.17,
+        ""Total Cost"": 4917.19,
+        ""Plan Rows"": 10,
+        ""Plan Width"": 27,
+        ""Actual Startup Time"": 11.921,
+        ""Actual Total Time"": 11.922,
+        ""Actual Rows"": 10,
+        ""Actual Loops"": 1,
+        ""Output"": [""id"", ""status"", ""amount"", ""created_at""],
+        ""Sort Key"": [""orders.created_at DESC""],
+        ""Sort Method"": ""quicksort"",
+        ""Sort Space Used"": 25,
+        ""Sort Space Type"": ""Memory"",
+        ""Shared Hit Blocks"": 2417,
+        ""Shared Read Blocks"": 0,
+        ""Shared Dirtied Blocks"": 0,
+        ""Shared Written Blocks"": 0,
+        ""Local Hit Blocks"": 0,
+        ""Local Read Blocks"": 0,
+        ""Local Dirtied Blocks"": 0,
+        ""Local Written Blocks"": 0,
+        ""Temp Read Blocks"": 0,
+        ""Temp Written Blocks"": 0,
+        ""I/O Read Time"": 0.000,
+        ""I/O Write Time"": 0.000,
+        ""Temp I/O Read Time"": 0.000,
+        ""Temp I/O Write Time"": 0.000,
+        ""Plans"": [
+          {
+            ""Node Type"": ""Seq Scan"",
+            ""Parent Relationship"": ""Outer"",
+            ""Parallel Aware"": false,
+            ""Async Capable"": false,
+            ""Relation Name"": ""orders"",
+            ""Schema"": ""public"",
+            ""Alias"": ""orders"",
+            ""Startup Cost"": 0.00,
+            ""Total Cost"": 4917.00,
+            ""Plan Rows"": 10,
+            ""Plan Width"": 27,
+            ""Actual Startup Time"": 0.985,
+            ""Actual Total Time"": 11.904,
+            ""Actual Rows"": 10,
+            ""Actual Loops"": 1,
+            ""Output"": [""id"", ""status"", ""amount"", ""created_at""],
+            ""Filter"": ""(orders.customer_id = 4242)"",
+            ""Rows Removed by Filter"": 199990,
+            ""Shared Hit Blocks"": 2417,
+            ""Shared Read Blocks"": 0,
+            ""Shared Dirtied Blocks"": 0,
+            ""Shared Written Blocks"": 0,
+            ""Local Hit Blocks"": 0,
+            ""Local Read Blocks"": 0,
+            ""Local Dirtied Blocks"": 0,
+            ""Local Written Blocks"": 0,
+            ""Temp Read Blocks"": 0,
+            ""Temp Written Blocks"": 0,
+            ""I/O Read Time"": 0.000,
+            ""I/O Write Time"": 0.000,
+            ""Temp I/O Read Time"": 0.000,
+            ""Temp I/O Write Time"": 0.000
+          }
+        ]
+      }
+    ]
+  },
+  ""Settings"": {
+    ""max_parallel_workers_per_gather"": ""0""
+  },
+  ""Query Identifier"": -1243494815637630641
+}",,,,,,,,,"shop-batch","client backend",,-3286534627557393292
+2026-10-06 06:35:14.033 UTC,"postgres","shop",31581,"[local]",6ac496a1.7b5d,10,"EXECUTE",2026-10-06 06:35:13 UTC,3/352,0,LOG,00000,"duration: 11.910 ms  plan:
+{
+  ""Query Text"": ""PREPARE latest (integer, bigint) AS\n  SELECT id, status, amount FROM orders WHERE customer_id = $1 ORDER BY created_at DESC LIMIT $2;"",
+  ""Query Parameters"": ""$1 = '17', $2 = '10'"",
+  ""Plan"": {
+    ""Node Type"": ""Limit"",
+    ""Parallel Aware"": false,
+    ""Async Capable"": false,
+    ""Startup Cost"": 4917.17,
+    ""Total Cost"": 4917.19,
+    ""Plan Rows"": 10,
+    ""Plan Width"": 27,
+    ""Actual Startup Time"": 11.901,
+    ""Actual Total Time"": 11.903,
+    ""Actual Rows"": 10,
+    ""Actual Loops"": 1,
+    ""Output"": [""id"", ""status"", ""amount"", ""created_at""],
+    ""Shared Hit Blocks"": 2417,
+    ""Shared Read Blocks"": 0,
+    ""Shared Dirtied Blocks"": 0,
+    ""Shared Written Blocks"": 0,
+    ""Local Hit Blocks"": 0,
+    ""Local Read Blocks"": 0,
+    ""Local Dirtied Blocks"": 0,
+    ""Local Written Blocks"": 0,
+    ""Temp Read Blocks"": 0,
+    ""Temp Written Blocks"": 0,
+    ""I/O Read Time"": 0.000,
+    ""I/O Write Time"": 0.000,
+    ""Temp I/O Read Time"": 0.000,
+    ""Temp I/O Write Time"": 0.000,
+    ""Plans"": [
+      {
+        ""Node Type"": ""Sort"",
+        ""Parent Relationship"": ""Outer"",
+        ""Parallel Aware"": false,
+        ""Async Capable"": false,
+        ""Startup Cost"": 4917.17,
+        ""Total Cost"": 4917.19,
+        ""Plan Rows"": 10,
+        ""Plan Width"": 27,
+        ""Actual Startup Time"": 11.900,
+        ""Actual Total Time"": 11.901,
+        ""Actual Rows"": 10,
+        ""Actual Loops"": 1,
+        ""Output"": [""id"", ""status"", ""amount"", ""created_at""],
+        ""Sort Key"": [""orders.created_at DESC""],
+        ""Sort Method"": ""quicksort"",
+        ""Sort Space Used"": 25,
+        ""Sort Space Type"": ""Memory"",
+        ""Shared Hit Blocks"": 2417,
+        ""Shared Read Blocks"": 0,
+        ""Shared Dirtied Blocks"": 0,
+        ""Shared Written Blocks"": 0,
+        ""Local Hit Blocks"": 0,
+        ""Local Read Blocks"": 0,
+        ""Local Dirtied Blocks"": 0,
+        ""Local Written Blocks"": 0,
+        ""Temp Read Blocks"": 0,
+        ""Temp Written Blocks"": 0,
+        ""I/O Read Time"": 0.000,
+        ""I/O Write Time"": 0.000,
+        ""Temp I/O Read Time"": 0.000,
+        ""Temp I/O Write Time"": 0.000,
+        ""Plans"": [
+          {
+            ""Node Type"": ""Seq Scan"",
+            ""Parent Relationship"": ""Outer"",
+            ""Parallel Aware"": false,
+            ""Async Capable"": false,
+            ""Relation Name"": ""orders"",
+            ""Schema"": ""public"",
+            ""Alias"": ""orders"",
+            ""Startup Cost"": 0.00,
+            ""Total Cost"": 4917.00,
+            ""Plan Rows"": 10,
+            ""Plan Width"": 27,
+            ""Actual Startup Time"": 0.181,
+            ""Actual Total Time"": 11.883,
+            ""Actual Rows"": 10,
+            ""Actual Loops"": 1,
+            ""Output"": [""id"", ""status"", ""amount"", ""created_at""],
+            ""Filter"": ""(orders.customer_id = 17)"",
+            ""Rows Removed by Filter"": 199990,
+            ""Shared Hit Blocks"": 2417,
+            ""Shared Read Blocks"": 0,
+            ""Shared Dirtied Blocks"": 0,
+            ""Shared Written Blocks"": 0,
+            ""Local Hit Blocks"": 0,
+            ""Local Read Blocks"": 0,
+            ""Local Dirtied Blocks"": 0,
+            ""Local Written Blocks"": 0,
+            ""Temp Read Blocks"": 0,
+            ""Temp Written Blocks"": 0,
+            ""I/O Read Time"": 0.000,
+            ""I/O Write Time"": 0.000,
+            ""Temp I/O Read Time"": 0.000,
+            ""Temp I/O Write Time"": 0.000
+          }
+        ]
+      }
+    ]
+  },
+  ""Settings"": {
+    ""max_parallel_workers_per_gather"": ""0""
+  },
+  ""Query Identifier"": -1243494815637630641
+}",,,,,,,,,"shop-batch","client backend",,-809777530459840901
+2026-10-06 06:35:14.046 UTC,"postgres","shop",31581,"[local]",6ac496a1.7b5d,11,"EXECUTE",2026-10-06 06:35:13 UTC,3/353,0,LOG,00000,"duration: 11.856 ms  plan:
+{
+  ""Query Text"": ""PREPARE latest (integer, bigint) AS\n  SELECT id, status, amount FROM orders WHERE customer_id = $1 ORDER BY created_at DESC LIMIT $2;"",
+  ""Query Parameters"": ""$1 = '9001', $2 = '10'"",
+  ""Plan"": {
+    ""Node Type"": ""Limit"",
+    ""Parallel Aware"": false,
+    ""Async Capable"": false,
+    ""Startup Cost"": 4917.17,
+    ""Total Cost"": 4917.19,
+    ""Plan Rows"": 10,
+    ""Plan Width"": 27,
+    ""Actual Startup Time"": 11.846,
+    ""Actual Total Time"": 11.849,
+    ""Actual Rows"": 10,
+    ""Actual Loops"": 1,
+    ""Output"": [""id"", ""status"", ""amount"", ""created_at""],
+    ""Shared Hit Blocks"": 2417,
+    ""Shared Read Blocks"": 0,
+    ""Shared Dirtied Blocks"": 0,
+    ""Shared Written Blocks"": 0,
+    ""Local Hit Blocks"": 0,
+    ""Local Read Blocks"": 0,
+    ""Local Dirtied Blocks"": 0,
+    ""Local Written Blocks"": 0,
+    ""Temp Read Blocks"": 0,
+    ""Temp Written Blocks"": 0,
+    ""I/O Read Time"": 0.000,
+    ""I/O Write Time"": 0.000,
+    ""Temp I/O Read Time"": 0.000,
+    ""Temp I/O Write Time"": 0.000,
+    ""Plans"": [
+      {
+        ""Node Type"": ""Sort"",
+        ""Parent Relationship"": ""Outer"",
+        ""Parallel Aware"": false,
+        ""Async Capable"": false,
+        ""Startup Cost"": 4917.17,
+        ""Total Cost"": 4917.19,
+        ""Plan Rows"": 10,
+        ""Plan Width"": 27,
+        ""Actual Startup Time"": 11.845,
+        ""Actual Total Time"": 11.846,
+        ""Actual Rows"": 10,
+        ""Actual Loops"": 1,
+        ""Output"": [""id"", ""status"", ""amount"", ""created_at""],
+        ""Sort Key"": [""orders.created_at DESC""],
+        ""Sort Method"": ""quicksort"",
+        ""Sort Space Used"": 25,
+        ""Sort Space Type"": ""Memory"",
+        ""Shared Hit Blocks"": 2417,
+        ""Shared Read Blocks"": 0,
+        ""Shared Dirtied Blocks"": 0,
+        ""Shared Written Blocks"": 0,
+        ""Local Hit Blocks"": 0,
+        ""Local Read Blocks"": 0,
+        ""Local Dirtied Blocks"": 0,
+        ""Local Written Blocks"": 0,
+        ""Temp Read Blocks"": 0,
+        ""Temp Written Blocks"": 0,
+        ""I/O Read Time"": 0.000,
+        ""I/O Write Time"": 0.000,
+        ""Temp I/O Read Time"": 0.000,
+        ""Temp I/O Write Time"": 0.000,
+        ""Plans"": [
+          {
+            ""Node Type"": ""Seq Scan"",
+            ""Parent Relationship"": ""Outer"",
+            ""Parallel Aware"": false,
+            ""Async Capable"": false,
+            ""Relation Name"": ""orders"",
+            ""Schema"": ""public"",
+            ""Alias"": ""orders"",
+            ""Startup Cost"": 0.00,
+            ""Total Cost"": 4917.00,
+            ""Plan Rows"": 10,
+            ""Plan Width"": 27,
+            ""Actual Startup Time"": 0.577,
+            ""Actual Total Time"": 11.831,
+            ""Actual Rows"": 10,
+            ""Actual Loops"": 1,
+            ""Output"": [""id"", ""status"", ""amount"", ""created_at""],
+            ""Filter"": ""(orders.customer_id = 9001)"",
+            ""Rows Removed by Filter"": 199990,
+            ""Shared Hit Blocks"": 2417,
+            ""Shared Read Blocks"": 0,
+            ""Shared Dirtied Blocks"": 0,
+            ""Shared Written Blocks"": 0,
+            ""Local Hit Blocks"": 0,
+            ""Local Read Blocks"": 0,
+            ""Local Dirtied Blocks"": 0,
+            ""Local Written Blocks"": 0,
+            ""Temp Read Blocks"": 0,
+            ""Temp Written Blocks"": 0,
+            ""I/O Read Time"": 0.000,
+            ""I/O Write Time"": 0.000,
+            ""Temp I/O Read Time"": 0.000,
+            ""Temp I/O Write Time"": 0.000
+          }
+        ]
+      }
+    ]
+  },
+  ""Settings"": {
+    ""max_parallel_workers_per_gather"": ""0""
+  },
+  ""Query Identifier"": -1243494815637630641
+}",,,,,,,,,"shop-batch","client backend",,4582310222352783775
+2026-10-06 06:35:14.058 UTC,"postgres","shop",31581,"[local]",6ac496a1.7b5d,12,"EXECUTE",2026-10-06 06:35:13 UTC,3/354,0,LOG,00000,"duration: 11.332 ms  plan:
+{
+  ""Query Text"": ""PREPARE latest (integer, bigint) AS\n  SELECT id, status, amount FROM orders WHERE customer_id = $1 ORDER BY created_at DESC LIMIT $2;"",
+  ""Query Parameters"": ""$1 = '123', $2 = '10'"",
+  ""Plan"": {
+    ""Node Type"": ""Limit"",
+    ""Parallel Aware"": false,
+    ""Async Capable"": false,
+    ""Startup Cost"": 4917.17,
+    ""Total Cost"": 4917.19,
+    ""Plan Rows"": 10,
+    ""Plan Width"": 27,
+    ""Actual Startup Time"": 11.323,
+    ""Actual Total Time"": 11.326,
+    ""Actual Rows"": 10,
+    ""Actual Loops"": 1,
+    ""Output"": [""id"", ""status"", ""amount"", ""created_at""],
+    ""Shared Hit Blocks"": 2417,
+    ""Shared Read Blocks"": 0,
+    ""Shared Dirtied Blocks"": 0,
+    ""Shared Written Blocks"": 0,
+    ""Local Hit Blocks"": 0,
+    ""Local Read Blocks"": 0,
+    ""Local Dirtied Blocks"": 0,
+    ""Local Written Blocks"": 0,
+    ""Temp Read Blocks"": 0,
+    ""Temp Written Blocks"": 0,
+    ""I/O Read Time"": 0.000,
+    ""I/O Write Time"": 0.000,
+    ""Temp I/O Read Time"": 0.000,
+    ""Temp I/O Write Time"": 0.000,
+    ""Plans"": [
+      {
+        ""Node Type"": ""Sort"",
+        ""Parent Relationship"": ""Outer"",
+        ""Parallel Aware"": false,
+        ""Async Capable"": false,
+        ""Startup Cost"": 4917.17,
+        ""Total Cost"": 4917.19,
+        ""Plan Rows"": 10,
+        ""Plan Width"": 27,
+        ""Actual Startup Time"": 11.322,
+        ""Actual Total Time"": 11.323,
+        ""Actual Rows"": 10,
+        ""Actual Loops"": 1,
+        ""Output"": [""id"", ""status"", ""amount"", ""created_at""],
+        ""Sort Key"": [""orders.created_at DESC""],
+        ""Sort Method"": ""quicksort"",
+        ""Sort Space Used"": 25,
+        ""Sort Space Type"": ""Memory"",
+        ""Shared Hit Blocks"": 2417,
+        ""Shared Read Blocks"": 0,
+        ""Shared Dirtied Blocks"": 0,
+        ""Shared Written Blocks"": 0,
+        ""Local Hit Blocks"": 0,
+        ""Local Read Blocks"": 0,
+        ""Local Dirtied Blocks"": 0,
+        ""Local Written Blocks"": 0,
+        ""Temp Read Blocks"": 0,
+        ""Temp Written Blocks"": 0,
+        ""I/O Read Time"": 0.000,
+        ""I/O Write Time"": 0.000,
+        ""Temp I/O Read Time"": 0.000,
+        ""Temp I/O Write Time"": 0.000,
+        ""Plans"": [
+          {
+            ""Node Type"": ""Seq Scan"",
+            ""Parent Relationship"": ""Outer"",
+            ""Parallel Aware"": false,
+            ""Async Capable"": false,
+            ""Relation Name"": ""orders"",
+            ""Schema"": ""public"",
+            ""Alias"": ""orders"",
+            ""Startup Cost"": 0.00,
+            ""Total Cost"": 4917.00,
+            ""Plan Rows"": 10,
+            ""Plan Width"": 27,
+            ""Actual Startup Time"": 0.982,
+            ""Actual Total Time"": 11.307,
+            ""Actual Rows"": 10,
+            ""Actual Loops"": 1,
+            ""Output"": [""id"", ""status"", ""amount"", ""created_at""],
+            ""Filter"": ""(orders.customer_id = 123)"",
+            ""Rows Removed by Filter"": 199990,
+            ""Shared Hit Blocks"": 2417,
+            ""Shared Read Blocks"": 0,
+            ""Shared Dirtied Blocks"": 0,
+            ""Shared Written Blocks"": 0,
+            ""Local Hit Blocks"": 0,
+            ""Local Read Blocks"": 0,
+            ""Local Dirtied Blocks"": 0,
+            ""Local Written Blocks"": 0,
+            ""Temp Read Blocks"": 0,
+            ""Temp Written Blocks"": 0,
+            ""I/O Read Time"": 0.000,
+            ""I/O Write Time"": 0.000,
+            ""Temp I/O Read Time"": 0.000,
+            ""Temp I/O Write Time"": 0.000
+          }
+        ]
+      }
+    ]
+  },
+  ""Settings"": {
+    ""max_parallel_workers_per_gather"": ""0""
+  },
+  ""Query Identifier"": -1243494815637630641
+}",,,,,,,,,"shop-batch","client backend",,-54488000838721020
+2026-10-06 06:35:14.070 UTC,"postgres","shop",31581,"[local]",6ac496a1.7b5d,13,"EXECUTE",2026-10-06 06:35:13 UTC,3/355,0,LOG,00000,"duration: 11.578 ms  plan:
+{
+  ""Query Text"": ""PREPARE latest (integer, bigint) AS\n  SELECT id, status, amount FROM orders WHERE customer_id = $1 ORDER BY created_at DESC LIMIT $2;"",
+  ""Query Parameters"": ""$1 = '5555', $2 = '10'"",
+  ""Plan"": {
+    ""Node Type"": ""Limit"",
+    ""Parallel Aware"": false,
+    ""Async Capable"": false,
+    ""Startup Cost"": 4917.17,
+    ""Total Cost"": 4917.19,
+    ""Plan Rows"": 10,
+    ""Plan Width"": 27,
+    ""Actual Startup Time"": 11.569,
+    ""Actual Total Time"": 11.572,
+    ""Actual Rows"": 10,
+    ""Actual Loops"": 1,
+    ""Output"": [""id"", ""status"", ""amount"", ""created_at""],
+    ""Shared Hit Blocks"": 2417,
+    ""Shared Read Blocks"": 0,
+    ""Shared Dirtied Blocks"": 0,
+    ""Shared Written Blocks"": 0,
+    ""Local Hit Blocks"": 0,
+    ""Local Read Blocks"": 0,
+    ""Local Dirtied Blocks"": 0,
+    ""Local Written Blocks"": 0,
+    ""Temp Read Blocks"": 0,
+    ""Temp Written Blocks"": 0,
+    ""I/O Read Time"": 0.000,
+    ""I/O Write Time"": 0.000,
+    ""Temp I/O Read Time"": 0.000,
+    ""Temp I/O Write Time"": 0.000,
+    ""Plans"": [
+      {
+        ""Node Type"": ""Sort"",
+        ""Parent Relationship"": ""Outer"",
+        ""Parallel Aware"": false,
+        ""Async Capable"": false,
+        ""Startup Cost"": 4917.17,
+        ""Total Cost"": 4917.19,
+        ""Plan Rows"": 10,
+        ""Plan Width"": 27,
+        ""Actual Startup Time"": 11.568,
+        ""Actual Total Time"": 11.570,
+        ""Actual Rows"": 10,
+        ""Actual Loops"": 1,
+        ""Output"": [""id"", ""status"", ""amount"", ""created_at""],
+        ""Sort Key"": [""orders.created_at DESC""],
+        ""Sort Method"": ""quicksort"",
+        ""Sort Space Used"": 25,
+        ""Sort Space Type"": ""Memory"",
+        ""Shared Hit Blocks"": 2417,
+        ""Shared Read Blocks"": 0,
+        ""Shared Dirtied Blocks"": 0,
+        ""Shared Written Blocks"": 0,
+        ""Local Hit Blocks"": 0,
+        ""Local Read Blocks"": 0,
+        ""Local Dirtied Blocks"": 0,
+        ""Local Written Blocks"": 0,
+        ""Temp Read Blocks"": 0,
+        ""Temp Written Blocks"": 0,
+        ""I/O Read Time"": 0.000,
+        ""I/O Write Time"": 0.000,
+        ""Temp I/O Read Time"": 0.000,
+        ""Temp I/O Write Time"": 0.000,
+        ""Plans"": [
+          {
+            ""Node Type"": ""Seq Scan"",
+            ""Parent Relationship"": ""Outer"",
+            ""Parallel Aware"": false,
+            ""Async Capable"": false,
+            ""Relation Name"": ""orders"",
+            ""Schema"": ""public"",
+            ""Alias"": ""orders"",
+            ""Startup Cost"": 0.00,
+            ""Total Cost"": 4917.00,
+            ""Plan Rows"": 10,
+            ""Plan Width"": 27,
+            ""Actual Startup Time"": 0.481,
+            ""Actual Total Time"": 11.553,
+            ""Actual Rows"": 10,
+            ""Actual Loops"": 1,
+            ""Output"": [""id"", ""status"", ""amount"", ""created_at""],
+            ""Filter"": ""(orders.customer_id = 5555)"",
+            ""Rows Removed by Filter"": 199990,
+            ""Shared Hit Blocks"": 2417,
+            ""Shared Read Blocks"": 0,
+            ""Shared Dirtied Blocks"": 0,
+            ""Shared Written Blocks"": 0,
+            ""Local Hit Blocks"": 0,
+            ""Local Read Blocks"": 0,
+            ""Local Dirtied Blocks"": 0,
+            ""Local Written Blocks"": 0,
+            ""Temp Read Blocks"": 0,
+            ""Temp Written Blocks"": 0,
+            ""I/O Read Time"": 0.000,
+            ""I/O Write Time"": 0.000,
+            ""Temp I/O Read Time"": 0.000,
+            ""Temp I/O Write Time"": 0.000
+          }
+        ]
+      }
+    ]
+  },
+  ""Settings"": {
+    ""max_parallel_workers_per_gather"": ""0""
+  },
+  ""Query Identifier"": -1243494815637630641
+}",,,,,,,,,"shop-batch","client backend",,-5733672515952892066
+2026-10-06 06:35:14.126 UTC,"postgres","shop",31581,"[local]",6ac496a1.7b5d,14,"EXECUTE",2026-10-06 06:35:13 UTC,3/356,0,LOG,00000,"duration: 56.258 ms  plan:
+{
+  ""Query Text"": ""PREPARE latest (integer, bigint) AS\n  SELECT id, status, amount FROM orders WHERE customer_id = $1 ORDER BY created_at DESC LIMIT $2;"",
+  ""Query Parameters"": ""$1 = '777', $2 = '10'"",
+  ""Plan"": {
+    ""Node Type"": ""Limit"",
+    ""Parallel Aware"": false,
+    ""Async Capable"": false,
+    ""Startup Cost"": 0.42,
+    ""Total Cost"": 1516.80,
+    ""Plan Rows"": 1,
+    ""Plan Width"": 27,
+    ""Actual Startup Time"": 6.202,
+    ""Actual Total Time"": 56.239,
+    ""Actual Rows"": 10,
+    ""Actual Loops"": 1,
+    ""Output"": [""id"", ""status"", ""amount"", ""created_at""],
+    ""Shared Hit Blocks"": 186053,
+    ""Shared Read Blocks"": 0,
+    ""Shared Dirtied Blocks"": 0,
+    ""Shared Written Blocks"": 0,
+    ""Local Hit Blocks"": 0,
+    ""Local Read Blocks"": 0,
+    ""Local Dirtied Blocks"": 0,
+    ""Local Written Blocks"": 0,
+    ""Temp Read Blocks"": 0,
+    ""Temp Written Blocks"": 0,
+    ""I/O Read Time"": 0.000,
+    ""I/O Write Time"": 0.000,
+    ""Temp I/O Read Time"": 0.000,
+    ""Temp I/O Write Time"": 0.000,
+    ""Plans"": [
+      {
+        ""Node Type"": ""Index Scan"",
+        ""Parent Relationship"": ""Outer"",
+        ""Parallel Aware"": false,
+        ""Async Capable"": false,
+        ""Scan Direction"": ""Backward"",
+        ""Index Name"": ""orders_created_at_idx"",
+        ""Relation Name"": ""orders"",
+        ""Schema"": ""public"",
+        ""Alias"": ""orders"",
+        ""Startup Cost"": 0.42,
+        ""Total Cost"": 15164.26,
+        ""Plan Rows"": 10,
+        ""Plan Width"": 27,
+        ""Actual Startup Time"": 6.200,
+        ""Actual Total Time"": 56.232,
+        ""Actual Rows"": 10,
+        ""Actual Loops"": 1,
+        ""Output"": [""id"", ""status"", ""amount"", ""created_at""],
+        ""Filter"": ""(orders.customer_id = $1)"",
+        ""Rows Removed by Filter"": 185129,
+        ""Shared Hit Blocks"": 186053,
+        ""Shared Read Blocks"": 0,
+        ""Shared Dirtied Blocks"": 0,
+        ""Shared Written Blocks"": 0,
+        ""Local Hit Blocks"": 0,
+        ""Local Read Blocks"": 0,
+        ""Local Dirtied Blocks"": 0,
+        ""Local Written Blocks"": 0,
+        ""Temp Read Blocks"": 0,
+        ""Temp Written Blocks"": 0,
+        ""I/O Read Time"": 0.000,
+        ""I/O Write Time"": 0.000,
+        ""Temp I/O Read Time"": 0.000,
+        ""Temp I/O Write Time"": 0.000
+      }
+    ]
+  },
+  ""Settings"": {
+    ""max_parallel_workers_per_gather"": ""0""
+  },
+  ""Query Identifier"": -1243494815637630641
+}",,,,,,,,,"shop-batch","client backend",,-7826012441345379636
+2026-10-06 06:35:14.187 UTC,"postgres","shop",31581,"[local]",6ac496a1.7b5d,15,"EXECUTE",2026-10-06 06:35:13 UTC,3/357,0,LOG,00000,"duration: 59.759 ms  plan:
+{
+  ""Query Text"": ""PREPARE latest (integer, bigint) AS\n  SELECT id, status, amount FROM orders WHERE customer_id = $1 ORDER BY created_at DESC LIMIT $2;"",
+  ""Query Parameters"": ""$1 = '3141', $2 = '10'"",
+  ""Plan"": {
+    ""Node Type"": ""Limit"",
+    ""Parallel Aware"": false,
+    ""Async Capable"": false,
+    ""Startup Cost"": 0.42,
+    ""Total Cost"": 1516.80,
+    ""Plan Rows"": 1,
+    ""Plan Width"": 27,
+    ""Actual Startup Time"": 4.959,
+    ""Actual Total Time"": 59.739,
+    ""Actual Rows"": 10,
+    ""Actual Loops"": 1,
+    ""Output"": [""id"", ""status"", ""amount"", ""created_at""],
+    ""Shared Hit Blocks"": 181609,
+    ""Shared Read Blocks"": 0,
+    ""Shared Dirtied Blocks"": 0,
+    ""Shared Written Blocks"": 0,
+    ""Local Hit Blocks"": 0,
+    ""Local Read Blocks"": 0,
+    ""Local Dirtied Blocks"": 0,
+    ""Local Written Blocks"": 0,
+    ""Temp Read Blocks"": 0,
+    ""Temp Written Blocks"": 0,
+    ""I/O Read Time"": 0.000,
+    ""I/O Write Time"": 0.000,
+    ""Temp I/O Read Time"": 0.000,
+    ""Temp I/O Write Time"": 0.000,
+    ""Plans"": [
+      {
+        ""Node Type"": ""Index Scan"",
+        ""Parent Relationship"": ""Outer"",
+        ""Parallel Aware"": false,
+        ""Async Capable"": false,
+        ""Scan Direction"": ""Backward"",
+        ""Index Name"": ""orders_created_at_idx"",
+        ""Relation Name"": ""orders"",
+        ""Schema"": ""public"",
+        ""Alias"": ""orders"",
+        ""Startup Cost"": 0.42,
+        ""Total Cost"": 15164.26,
+        ""Plan Rows"": 10,
+        ""Plan Width"": 27,
+        ""Actual Startup Time"": 4.957,
+        ""Actual Total Time"": 59.732,
+        ""Actual Rows"": 10,
+        ""Actual Loops"": 1,
+        ""Output"": [""id"", ""status"", ""amount"", ""created_at""],
+        ""Filter"": ""(orders.customer_id = $1)"",
+        ""Rows Removed by Filter"": 180706,
+        ""Shared Hit Blocks"": 181609,
+        ""Shared Read Blocks"": 0,
+        ""Shared Dirtied Blocks"": 0,
+        ""Shared Written Blocks"": 0,
+        ""Local Hit Blocks"": 0,
+        ""Local Read Blocks"": 0,
+        ""Local Dirtied Blocks"": 0,
+        ""Local Written Blocks"": 0,
+        ""Temp Read Blocks"": 0,
+        ""Temp Written Blocks"": 0,
+        ""I/O Read Time"": 0.000,
+        ""I/O Write Time"": 0.000,
+        ""Temp I/O Read Time"": 0.000,
+        ""Temp I/O Write Time"": 0.000
+      }
+    ]
+  },
+  ""Settings"": {
+    ""max_parallel_workers_per_gather"": ""0""
+  },
+  ""Query Identifier"": -1243494815637630641
+}",,,,,,,,,"shop-batch","client backend",,6394271810028728274
+2026-10-06 06:35:14.238 UTC,"postgres","shop",31581,"[local]",6ac496a1.7b5d,16,"EXECUTE",2026-10-06 06:35:13 UTC,3/358,0,LOG,00000,"duration: 50.199 ms  plan:
+{
+  ""Query Text"": ""PREPARE latest (integer, bigint) AS\n  SELECT id, status, amount FROM orders WHERE customer_id = $1 ORDER BY created_at DESC LIMIT $2;"",
+  ""Query Parameters"": ""$1 = '2718', $2 = '10'"",
+  ""Plan"": {
+    ""Node Type"": ""Limit"",
+    ""Parallel Aware"": false,
+    ""Async Capable"": false,
+    ""Startup Cost"": 0.42,
+    ""Total Cost"": 1516.80,
+    ""Plan Rows"": 1,
+    ""Plan Width"": 27,
+    ""Actual Startup Time"": 2.410,
+    ""Actual Total Time"": 50.180,
+    ""Actual Rows"": 10,
+    ""Actual Loops"": 1,
+    ""Output"": [""id"", ""status"", ""amount"", ""created_at""],
+    ""Shared Hit Blocks"": 172432,
+    ""Shared Read Blocks"": 0,
+    ""Shared Dirtied Blocks"": 0,
+    ""Shared Written Blocks"": 0,
+    ""Local Hit Blocks"": 0,
+    ""Local Read Blocks"": 0,
+    ""Local Dirtied Blocks"": 0,
+    ""Local Written Blocks"": 0,
+    ""Temp Read Blocks"": 0,
+    ""Temp Written Blocks"": 0,
+    ""I/O Read Time"": 0.000,
+    ""I/O Write Time"": 0.000,
+    ""Temp I/O Read Time"": 0.000,
+    ""Temp I/O Write Time"": 0.000,
+    ""Plans"": [
+      {
+        ""Node Type"": ""Index Scan"",
+        ""Parent Relationship"": ""Outer"",
+        ""Parallel Aware"": false,
+        ""Async Capable"": false,
+        ""Scan Direction"": ""Backward"",
+        ""Index Name"": ""orders_created_at_idx"",
+        ""Relation Name"": ""orders"",
+        ""Schema"": ""public"",
+        ""Alias"": ""orders"",
+        ""Startup Cost"": 0.42,
+        ""Total Cost"": 15164.26,
+        ""Plan Rows"": 10,
+        ""Plan Width"": 27,
+        ""Actual Startup Time"": 2.409,
+        ""Actual Total Time"": 50.173,
+        ""Actual Rows"": 10,
+        ""Actual Loops"": 1,
+        ""Output"": [""id"", ""status"", ""amount"", ""created_at""],
+        ""Filter"": ""(orders.customer_id = $1)"",
+        ""Rows Removed by Filter"": 171573,
+        ""Shared Hit Blocks"": 172432,
+        ""Shared Read Blocks"": 0,
+        ""Shared Dirtied Blocks"": 0,
+        ""Shared Written Blocks"": 0,
+        ""Local Hit Blocks"": 0,
+        ""Local Read Blocks"": 0,
+        ""Local Dirtied Blocks"": 0,
+        ""Local Written Blocks"": 0,
+        ""Temp Read Blocks"": 0,
+        ""Temp Written Blocks"": 0,
+        ""I/O Read Time"": 0.000,
+        ""I/O Write Time"": 0.000,
+        ""Temp I/O Read Time"": 0.000,
+        ""Temp I/O Write Time"": 0.000
+      }
+    ]
+  },
+  ""Settings"": {
+    ""max_parallel_workers_per_gather"": ""0""
+  },
+  ""Query Identifier"": -1243494815637630641
+}",,,,,,,,,"shop-batch","client backend",,6027191425131107755

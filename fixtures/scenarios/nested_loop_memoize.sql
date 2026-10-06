@@ -1,4 +1,5 @@
 -- description: Nested loop with a Memoize cache in front of the inner index scan (PostgreSQL 14 and later).
+-- rules: ES013
 -- min_version: 14
 -- set: enable_hashjoin = off
 -- set: enable_mergejoin = off

@@ -1,0 +1,33 @@
+---
+source: crates/explainsql-core/tests/report.rs
+expression: "report::diff_markdown(&before, &after, &diff)"
+---
+**Worse: pages 2,478 → 2,623, execution 20.1 ms → 32.2 ms (1.6× slower). Merge Anti Join of customers c and orders o became Hash Right Anti Join. 2 other changes in the plan.**
+
+Plan shape 7775c88e44b9e329 → 31a65572e88ef23f: another plan.
+
+### Changes
+
+- **Join:** Merge Anti Join of customers c and orders o became Hash Right Anti Join.
+  - Time: `1.85 ms → 2.94 ms`
+- **Access:** Index Only Scan using customers\_pkey on customers c became Seq Scan on customers c.
+  - Pages: `57 → 206`
+  - Time: `1.51 ms → 1.95 ms`
+- **Removed:** Sort removed.
+  - Was above: `Seq Scan on orders o`
+- **Work:** Seq Scan on orders o: time 15.3 ms → 23.8 ms (1.6× slower) for the same pages and disk reads.
+  - Pages: `2,417 → 2,417`
+  - Time: `15.3 ms → 23.8 ms`
+
+### The plan after
+
+| | Share | Time | Node | Rows | Estimate | Buffers |
+|---|---:|---:|---|---:|---:|---:|
+| ~ | 9.1% | 2.94 ms | Hash Right Anti Join | 19,800 | 18,047 | 0 |
+| ~ | 74% | 23.8 ms | &nbsp;&nbsp;↳ Seq Scan on orders o | 2,000 | 1,953 | 2,417 |
+| + | 8.4% | 2.71 ms | &nbsp;&nbsp;↳ Hash | 20,000 | 20,000 | 0 |
+| ~ | 6.0% | 1.95 ms | &nbsp;&nbsp;&nbsp;&nbsp;↳ Seq Scan on customers c | 20,000 | 20,000 | 206 |
+
+Only in the plan before: Sort.
+
+`~` a node that changed, `+` a node only the plan after has.

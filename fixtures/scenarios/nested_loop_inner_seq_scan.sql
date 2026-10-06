@@ -1,5 +1,5 @@
 -- description: Nested loop that scans all of order_items for every outer row because order_id has no index.
--- rules: ES001, ES005
+-- rules: ES001, ES005, ES013
 -- advice: index
 -- index: order_items (order_id)
 -- set: enable_hashjoin = off

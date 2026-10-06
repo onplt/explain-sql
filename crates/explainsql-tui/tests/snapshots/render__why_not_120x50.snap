@@ -1,0 +1,54 @@
+---
+source: crates/explainsql-tui/tests/render.rs
+expression: "frame(&mut app, 120, 50)"
+---
+35.4 ms. 100% of it in Seq Scan on orders, which reads 200,000 rows to keep 274.
+Planning 0.337 ms · Execution 35.4 ms · Buffers 2,417 pages, 64% from cache
+ Plan · time in each node ────────────────────────────────────────────────────┌ Details ────────────────────────────────
+    Share     Time            Node                               Rows Estimate│Seq Scan on orders
+!    100%  35.3 ms ██████████ Seq Scan on orders                  274    1,000│UNUSABLE    Why not
+                                                                              │Why does Seq Scan on orders not use an
+                                                                              │index?
+                                                                              │No index can serve the condition of Seq
+                                                                              │Scan on orders: even with sequential
+                                                                              │scans off, the planner still reads all of
+                                                                              │orders.
+                                                                              │Why: the condition applies date_trunc()
+                                                                              │to created_at, so an index on created_at
+                                                                              │cannot serve it
+                                                                              │→ Rewrite the condition so that the
+                                                                              │column stands alone, such as a range of
+                                                                              │values instead of a function of the
+                                                                              │column, or index the expression itself.
+                                                                              │Planned again with enable_seqscan = off;
+                                                                              │estimated.
+                                                                              │
+                                                                              │Time in node: 35.3 ms (100% of the
+                                                                              │runtime)
+                                                                              │With children: 35.3 ms
+                                                                              │Rows: 274 per loop
+                                                                              │Estimate: 1,000 rows, 3.6× fewer in fact;
+                                                                              │cost 0.00..5417.00, width 64
+                                                                              │Removed by filter: 199,726 per loop
+                                                                              │Buffers: shared hit 1,550, read 867
+                                                                              │Read by the node itself: 2,417 pages
+                                                                              │I/O by the node itself: 1.41 ms, 4.0% of
+                                                                              │its time
+                                                                              │
+                                                                              │Filter: (date_trunc('day'::text,
+                                                                              │orders.created_at) = '2024-06-01
+                                                                              │00:00:00+00'::timestamp with time zone)
+                                                                              │Output: id, customer_id, status,
+                                                                              │created_at, amount, note
+                                                                              │
+                                                                              │HIGH   ES001 Selective sequential scan
+                                                                              │On Seq Scan on orders
+                                                                              │Seq Scan on orders reads 200,000 rows to
+                                                                              │keep 274.
+                                                                              │Rows kept: 274 of 200,000 (0.14%)
+                                                                              │Filter: (date_trunc('day'::text,
+                                                                              │orders.created_at) = '2024-06-01
+                                                                              │00:00:00+00'::timestamp with time zone)
+ Findings (1) │ Advice (1) · Tab to browse, f/i to switch ──────────────────────────────────────────────────────────────
+HIGH   ES001 Selective sequential scan: Seq Scan on orders reads 200,000 rows to keep 274
+j/k move  h/l fold  / search  1-9 hotspots  Tab list  i advice  ? help  q quit

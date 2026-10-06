@@ -2,13 +2,14 @@
 
 **Find out why your PostgreSQL query is slow, get a fix, and prove it works, without leaving the terminal.**
 
-![ExplainSQL showing a plan, its findings and a suggested index](https://raw.githubusercontent.com/onplt/explain-sql/main/docs/demo.svg)
+![ExplainSQL run against PostgreSQL: the verdict on a slow query, why the planner uses no index, and the suggested index tested with HypoPG](https://raw.githubusercontent.com/onplt/explain-sql/main/docs/demo.svg)
 
 ExplainSQL reads `EXPLAIN (ANALYZE, BUFFERS)` output from PostgreSQL. Instead of only drawing the plan tree, it closes the loop:
 
 1. **Diagnose.** It computes exclusive time and buffers for every node, including the parallel-query, CTE and trigger cases where simple subtraction gives the wrong answer. It opens on a one-line verdict: where the time went and why.
-2. **Suggest.** Twelve rules flag known red flags: selective sequential scans, row misestimates, sorts and hashes spilling to disk, expensive nested loops, slow foreign-key triggers, and more. An index advisor writes `CREATE INDEX CONCURRENTLY` candidates, each with its evidence and a confidence level, and explains why a slow scan gets none.
-3. **Prove.** Connected to a database, it runs the query inside a transaction that is always rolled back. It tests a suggested index with HypoPG, or, only when you opt in, by building it in a rolled-back transaction. It then shows before and after.
+2. **Suggest.** Thirteen rules flag known red flags: selective sequential scans, row misestimates, sorts and hashes spilling to disk, expensive nested loops, slow foreign-key triggers, plans forced by planner settings, and more. An index advisor writes `CREATE INDEX CONCURRENTLY` candidates, each with its evidence and a confidence level, and explains why a slow scan gets none.
+3. **Prove.** Connected to a database, it runs the query inside a transaction that is always rolled back. It tests a suggested index with HypoPG, or, only when you opt in, by building it in a rolled-back transaction. It then shows before and after, pages first, so that a warm cache cannot pass for an improvement.
+4. **Ask why.** It asks the planner again with its choice taken away (`enable_seqscan = off`, `enable_nestloop = off`, more `work_mem`) and tells why it chose its plan: no index can serve the condition, and why not; the planner is right; or it is wrong because of a row misestimate or its cost settings, measured and not guessed.
 
 It works in three ways, all landing on the same screen:
 
@@ -47,6 +48,11 @@ psql -XAtq -c "EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) SELECT …" | explainsql
 explainsql --print --format md plan.txt                # a report for an issue or a pull request
 explainsql -d "$DATABASE_URL" -f slow.sql              # run it: estimated plan, then EXPLAIN ANALYZE, rolled back
 explainsql -d "$DATABASE_URL" -f slow.sql --print --prove   # and test each suggested index
+explainsql -d "$DATABASE_URL" -f slow.sql --print --why-not --measure   # why the planner chose its plan
+explainsql -d "$DATABASE_URL" -f app.sql --params --measure   # a statement with $1 or ?: is the generic plan bad for some values?
+explainsql diff before.json after.json                 # what changed between two plans, node by node
+explainsql check -d "$DATABASE_URL" queries/           # in CI: fail when a plan got worse than its locked plan
+explainsql logs postgresql.json --changed              # auto_explain logs: when and how each statement's plan changed
 ```
 
 The [user guide](https://github.com/onplt/explain-sql/blob/main/docs/guide.md) covers the viewer's keys, the pager mode, connected mode and its safety rules, and testing suggestions. The [rule catalog](https://github.com/onplt/explain-sql/blob/main/docs/rules.md) explains every finding, with an example from real plans. Both are also published as the [documentation site](https://onplt.github.io/explain-sql/).
@@ -65,7 +71,8 @@ cargo test --workspace            # all tests, including the corpus checks
 cargo run -p explainsql -- --demo # the viewer on the sample plan
 cargo xtask gen-fixtures          # regenerate the EXPLAIN corpus (requires Docker)
 cargo xtask rule-docs             # refresh the examples on the rule pages
-cargo xtask demo                  # redraw docs/demo.svg
+cargo xtask demo                  # redraw docs/demo.svg from its recording
+cargo xtask demo --record         # record a real session first (needs tmux and EXPLAINSQL_TEST_DATABASE_URL)
 mdbook build docs                 # the documentation site, in target/book
 ```
 

@@ -26,8 +26,10 @@ Tasks:
   rule-docs         Write the corpus examples into the rule pages (docs/rules/)
       --check             Fail instead if a page is out of date
   check-links       Check the relative links in the README and docs/
-  demo              Draw the README's animated demo (docs/demo.svg)
+  demo              Draw the README's animated demo (docs/demo.svg) from its recording
       --check             Fail instead if it is out of date
+      --record            Record it again first: run explainsql in tmux against
+                          EXPLAINSQL_TEST_DATABASE_URL (the fixture schema, with HypoPG)
   help              Show this message
 ",
         versions.join(",")
@@ -44,7 +46,7 @@ fn main() -> ExitCode {
         Some("sync-manifests") => fixtures::sync_manifests(),
         Some("rule-docs") => docs::rule_docs(args.get(1).is_some_and(|arg| arg == "--check")),
         Some("check-links") => docs::check_links(),
-        Some("demo") => demo::demo(args.get(1).is_some_and(|arg| arg == "--check")),
+        Some("demo") => demo::demo(args.get(1).map(String::as_str)),
         Some("help" | "--help" | "-h") | None => {
             print!("{}", usage());
             Ok(())

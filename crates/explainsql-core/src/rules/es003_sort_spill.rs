@@ -10,6 +10,7 @@ use serde_json::Value;
 use super::{Context, Finding, Rule, Severity, evidence};
 use crate::format;
 use crate::ir::Node;
+use crate::memory;
 
 pub const RULE: Rule = Rule {
     id: "ES003",
@@ -59,10 +60,21 @@ fn spill(context: &Context, node: &Node) -> Option<Finding> {
         facts.push(evidence("Sort key", node.sort_key.join(", ")));
     }
     facts.extend(context.time_evidence(node));
-    let mut action = format!(
-        "Raise work_mem for this query rather than globally (SET LOCAL work_mem), to roughly twice the {} written to disk.",
-        format::kilobytes(disk)
-    );
+    let mut action = match (
+        memory::advice(context.plan, context.metrics, node),
+        memory::needed(node),
+    ) {
+        (Some(advice), _) => format!("Raise work_mem so that the sort fits in memory. {advice}"),
+        #[allow(clippy::cast_precision_loss)]
+        (None, Some(needed)) if needed > memory::MAX_WORK_MEM as f64 => format!(
+            "In memory, the sort would take about {}, more than work_mem should allow: sort fewer rows.",
+            format::kilobytes(needed)
+        ),
+        _ => format!(
+            "Raise work_mem for this statement rather than for the server (SET LOCAL work_mem), to about three times the {} written to disk.",
+            format::kilobytes(disk)
+        ),
+    };
     if !node.sort_key.is_empty() {
         action.push_str(&format!(
             " Or avoid the sort with an index that returns rows ordered by {}.",

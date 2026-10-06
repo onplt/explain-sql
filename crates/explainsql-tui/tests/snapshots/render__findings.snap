@@ -27,8 +27,8 @@ Docs: https://onplt.github.io/explain-sql/rules/ES001.html
 
 
 
-
- Findings (2) │ Advice (1) · Enter: go to the node ─────────────────────────────────────────────────
+ Findings (3) │ Advice (1) · Enter: go to the node ─────────────────────────────────────────────────
 HIGH   ES001 Selective sequential scan: Seq Scan on order_items oi reads 3,000,000 rows over 10 loo…
 HIGH   ES005 Expensive nested-loop inner side: Nested Loop repeats Seq Scan on order_items oi 10 ti…
+MEDIUM ES013 Planner settings force the plan: The plan was made with enable_hashjoin = off, enable_…
 j/k move  h/l fold  / search  1-9 hotspots  Tab list  i advice  ? help  q quit

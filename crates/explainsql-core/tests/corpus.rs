@@ -4,7 +4,7 @@ mod common;
 
 use common::{corpus, node_differences, plan_path, read, summary_differences};
 use explainsql_core::ir::Format;
-use explainsql_core::parse;
+use explainsql_core::{parse, parse_all};
 
 #[test]
 fn every_plan_parses_without_warnings() {
@@ -31,6 +31,45 @@ fn every_plan_parses_without_warnings() {
     assert!(
         problems.is_empty(),
         "{} problems:\n{}",
+        problems.len(),
+        problems.join("\n")
+    );
+}
+
+#[test]
+fn parse_all_finds_the_one_plan_of_each_file() {
+    let mut problems = Vec::new();
+    for (major, scenario) in corpus() {
+        for extension in ["json", "txt"] {
+            let text = read(&plan_path(major, &scenario, extension));
+            let all = parse_all(&text).map_err(|e| e.to_string());
+            if all != Ok(vec![parse(&text).unwrap()]) {
+                problems.push(format!("PostgreSQL {major} {scenario}.{extension}"));
+            }
+        }
+    }
+    assert!(problems.is_empty(), "{}", problems.join("\n"));
+}
+
+#[test]
+fn json_and_text_have_the_same_shape() {
+    let mut problems = Vec::new();
+    for (major, scenario) in corpus() {
+        let json = parse(&read(&plan_path(major, &scenario, "json"))).unwrap();
+        let text = parse(&read(&plan_path(major, &scenario, "txt"))).unwrap();
+        let (json_shape, text_shape) = (
+            explainsql_core::fingerprint::shape(&json),
+            explainsql_core::fingerprint::shape(&text),
+        );
+        if json_shape != text_shape {
+            problems.push(format!(
+                "PostgreSQL {major} {scenario}:\n--- json\n{json_shape}--- text\n{text_shape}"
+            ));
+        }
+    }
+    assert!(
+        problems.is_empty(),
+        "{} differ:\n{}",
         problems.len(),
         problems.join("\n")
     );

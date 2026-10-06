@@ -162,3 +162,38 @@ fn odd_inputs_never_panic() {
         20_001
     );
 }
+
+/// Reads a log, and builds and renders the timeline of whatever it holds.
+fn parse_log(input: &str) {
+    if let Ok((entries, _)) = explainsql_core::parse_log(input) {
+        let timeline = explainsql_core::timeline::timeline(&entries);
+        let _ = report::logs_text(&entries, &timeline, true);
+        let _ = report::logs_markdown(&entries, &timeline);
+        let _ = report::logs_json(&entries, &timeline);
+    }
+}
+
+#[test]
+fn mangled_logs_never_panic() {
+    let mut random = Random(0x2545_f491_4f6c_dd1d);
+    for name in ["postgresql.log", "postgresql.csv", "postgresql.json"] {
+        let sample = read(&fixtures().join("logs").join(name));
+        let step = (sample.len() / 10).max(1);
+        for cut in (0..sample.len()).step_by(step) {
+            if sample.is_char_boundary(cut) {
+                parse_log(&sample[..cut]);
+            }
+        }
+        for _ in 0..10 {
+            parse_log(&mutate(&sample, &mut random));
+        }
+    }
+    for input in [
+        "",
+        "\n",
+        "duration: 1 ms  plan:",
+        "{\"message\": \"duration: x ms  plan:\\n\"}",
+    ] {
+        parse_log(input);
+    }
+}

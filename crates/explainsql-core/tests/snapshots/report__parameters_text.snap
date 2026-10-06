@@ -1,0 +1,72 @@
+---
+source: crates/explainsql-core/tests/report.rs
+expression: "report::text(&generic_run, &analysis, false)"
+---
+Parameters  SENSITIVE
+  The plan depends on the values: with $1 = 10001, $2 = 10, the generic plan does worse than the
+  custom plan: pages 2,667 → 176,778 (66× more), execution 12.6 ms → 67.1 ms (5.3× slower).
+
+  $1  integer, compared with orders.customer_id (=), held at 15453
+  $2  bigint, the LIMIT, held at 10
+
+  $1 = 15453  most common, 0.027% of rows
+              the generic plan
+  $1 = 10001  not among the most common, 0.005% of rows
+              Parallel Seq Scan on orders, cost 5,095
+              measured, custom plan → generic plan: pages 2,667 → 176,778 (66× more), execution 12.6
+              ms → 67.1 ms (5.3× slower); the generic plan does worse
+  $2 = 1      row count
+              the generic plan
+
+  PostgreSQL would switch to the generic plan after five executions, whatever their values: it
+  estimates the generic plan at 1,597, below the custom plan of every value tried (from 1,602 to
+  5,100 with planning).
+  → Have PostgreSQL plan each execution for its values: set plan_cache_mode = force_custom_plan for
+  the application's connections (in a JDBC URL: options=-c%20plan_cache_mode=force_custom_plan) or
+  its role (ALTER ROLE … SET plan_cache_mode = force_custom_plan). Each execution is then planned
+  again.
+  → Or keep the driver from preparing the statement on the server: prepareThreshold=0 with pgJDBC,
+  for the connection or for this statement (PGStatement.setPrepareThreshold(0)); prepare_threshold =
+  None with psycopg 3.
+  Values come from the column statistics, or are common row counts for a LIMIT or an OFFSET, and are
+  tried one parameter at a time, the others held at a typical value; how columns depend on each
+  other is not taken into account.
+  The statement's JDBC placeholders (?) were read as $1, $2, …
+
+The plan shown is the generic plan, measured with $1 = 10001, $2 = 10, the values it does worst
+with.
+
+67.1 ms. 100% of it in Index Scan using orders_created_at_idx on orders, which finds 164,414 rows
+through orders_created_at_idx and its filter throws away 164,404.
+
+Planning 0.200 ms · Execution 67.1 ms · Buffers 176,778 pages, 100% from cache
+
+ Share      Time              Node                                                 Rows  Estimate  Buffers
+0.018%  0.012 ms              Limit                                                  10    1 ▲10×        0
+  100%   67.1 ms  ██████████  └─ Index Scan using orders_created_at_idx on orders    10        10  176,778
+
+Findings (1)
+
+  HIGH    ES006 Index scan that filters most rows
+          Index Scan using orders_created_at_idx on orders finds 164,414 rows through
+          orders_created_at_idx and its filter throws away 164,404.
+          Index: orders_created_at_idx
+          Filter: (customer_id = $1)
+          Rows removed by the filter: 164,404 of 164,414 found
+          → An index on orders that starts with customer_id and continues with the columns of
+          orders_created_at_idx would let the index do the filtering.
+
+Advice (1)
+
+  LIKELY  Index orders (customer_id)
+          CREATE INDEX CONCURRENTLY ON orders (customer_id);
+          An index on orders (customer_id) would let the index do the filtering that Index Scan
+          using orders_created_at_idx on orders now does on every row it finds.
+          ! Not connected to the database: existing indexes, the table's write load and the column
+          statistics were not checked.
+          ! The condition compares with a value known only at run time, so whether the planner uses
+          the index depends on that value.
+
+Share and Time: time spent in each node itself, wall-clock. Rows: actual rows per loop, ×loops when
+it ran more than once. ▲/▼: actual rows above or below the estimate by 10× or more. Buffers: pages
+each node read itself.

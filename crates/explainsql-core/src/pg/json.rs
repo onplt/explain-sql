@@ -16,8 +16,8 @@ const MAX_DEPTH: usize = 512;
 
 pub(crate) fn parse(text: &str, warnings: &mut Vec<Warning>) -> Result<RawPlan, String> {
     let value = match read(text) {
-        Ok((value, trailing)) => {
-            if trailing {
+        Ok((value, end)) => {
+            if !text[end..].trim().is_empty() {
                 warnings.push(Warning {
                     line: None,
                     message: "ignored text after the JSON plan".to_owned(),
@@ -36,7 +36,7 @@ pub(crate) fn parse(text: &str, warnings: &mut Vec<Warning>) -> Result<RawPlan, 
         }
     };
 
-    let mut top = match value {
+    let top = match value {
         Value::Array(items) => {
             if items.len() > 1 {
                 warnings.push(Warning {
@@ -55,6 +55,65 @@ pub(crate) fn parse(text: &str, warnings: &mut Vec<Warning>) -> Result<RawPlan, 
         Value::Object(top) => top,
         _ => return Err("expected a plan object or an array of them".to_owned()),
     };
+    raw_plan(top, warnings)
+}
+
+/// Every plan in `text`, each with its warnings: the plans of an array,
+/// and those of the JSON values that follow, as when several `EXPLAIN
+/// (FORMAT JSON)` outputs were copied one after the other.
+pub(crate) fn parse_all(text: &str) -> Result<Vec<(RawPlan, Vec<Warning>)>, String> {
+    let mut values = Vec::new();
+    let mut rest = text;
+    let mut ignored = false;
+    loop {
+        match read(rest) {
+            Ok((value, offset)) => {
+                values.push(value);
+                rest = &rest[offset..];
+                if rest.trim().is_empty() {
+                    break;
+                }
+            }
+            // A cut-off plan is repaired only when it is the first; after a
+            // complete plan, what cannot be read is left out.
+            Err(error) if values.is_empty() => {
+                values.push(repair_truncated(rest).ok_or(error)?);
+                break;
+            }
+            Err(_) => {
+                ignored = true;
+                break;
+            }
+        }
+    }
+    let mut plans = Vec::new();
+    for value in values {
+        let tops = match value {
+            Value::Array(items) => items,
+            other => vec![other],
+        };
+        for top in tops {
+            let Value::Object(top) = top else {
+                return Err("expected a plan object or an array of them".to_owned());
+            };
+            let mut warnings = Vec::new();
+            plans.push((raw_plan(top, &mut warnings)?, warnings));
+        }
+    }
+    if plans.is_empty() {
+        return Err("expected an array holding a plan object".to_owned());
+    }
+    if let (true, Some((_, warnings))) = (ignored, plans.last_mut()) {
+        warnings.push(Warning {
+            line: None,
+            message: "ignored text after the JSON plan".to_owned(),
+        });
+    }
+    Ok(plans)
+}
+
+/// The raw tree of one plan object: `{"Plan": {...}, "Planning Time": ...}`.
+fn raw_plan(mut top: Map<String, Value>, warnings: &mut Vec<Warning>) -> Result<RawPlan, String> {
     let Some(Value::Object(root)) = top.remove("Plan") else {
         return Err("no \"Plan\" object".to_owned());
     };
@@ -90,8 +149,8 @@ pub(crate) fn parse(text: &str, warnings: &mut Vec<Warning>) -> Result<RawPlan, 
 
 /// Parses the first JSON value in `text` without serde_json's fixed nesting
 /// limit of 128, which deep join trees exceed, while still bounding the
-/// recursion depth. Also tells whether text follows the value.
-fn read(text: &str) -> Result<(Value, bool), String> {
+/// recursion depth. Also returns where the value ends.
+fn read(text: &str) -> Result<(Value, usize), String> {
     let depth = nesting_depth(text);
     if depth > MAX_DEPTH {
         return Err(format!("the JSON is nested {depth} levels deep"));
@@ -103,8 +162,7 @@ fn read(text: &str) -> Result<(Value, bool), String> {
         Some(value) => value.map_err(|e| e.to_string())?,
         None => return Err("no JSON value".to_owned()),
     };
-    let trailing = !text[values.byte_offset()..].trim().is_empty();
-    Ok((value, trailing))
+    Ok((value, values.byte_offset()))
 }
 
 /// The deepest bracket nesting outside of strings.

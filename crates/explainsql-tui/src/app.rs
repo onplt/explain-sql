@@ -5,6 +5,7 @@ use std::collections::HashSet;
 
 use explainsql_core::Analysis;
 use explainsql_core::advisor::AdviceKind;
+use explainsql_core::fingerprint::leaf_key;
 use explainsql_core::format;
 use explainsql_core::ir::{NodeId, Plan};
 
@@ -67,6 +68,11 @@ pub enum Outcome {
         ddl: String,
         measured: bool,
     },
+    /// Ask the planner why it chose what it chose for a node (connected
+    /// mode).
+    WhyNot {
+        node: NodeId,
+    },
 }
 
 /// The state of connected mode.
@@ -85,6 +91,8 @@ pub struct Live {
     pub hypopg: bool,
     /// Suggestions may be built in a rolled-back transaction.
     pub allow_ddl: bool,
+    /// `y` measures the alternatives (`--measure`).
+    pub measure: bool,
 }
 
 /// A question waiting for y or n.
@@ -449,6 +457,7 @@ impl App {
             }
             Key::Char('c') => return self.copy(),
             Key::Char('t') => return self.prove(),
+            Key::Char('y') => return self.why_not(),
             Key::Char('/') => {
                 self.search = Some(Search {
                     query: String::new(),
@@ -643,6 +652,44 @@ impl App {
         Outcome::Continue
     }
 
+    /// Asks the planner why it chose what it chose for the selected node:
+    /// a sequential scan rather than an index, a nested loop, or, when
+    /// measuring, a spill to disk.
+    fn why_not(&mut self) -> Outcome {
+        let Some(live) = &self.live else {
+            self.message = Some(
+                "Not connected: y asks the database why the planner chose this node (explainsql -d … -f query.sql)."
+                    .to_owned(),
+            );
+            return Outcome::Continue;
+        };
+        if live.running.is_some() {
+            self.message = Some("A run is in progress; Esc cancels it.".to_owned());
+            return Outcome::Continue;
+        }
+        let node = self.selected_node();
+        let asked = explainsql_core::counterfactual::questions(
+            &self.plan,
+            &self.analysis,
+            None,
+            &explainsql_core::counterfactual::Target::Node(node),
+            live.measure,
+        );
+        if asked.is_empty() {
+            self.message = Some(format!(
+                "Nothing to ask about {}: y works on sequential scans and nested loops{}.",
+                self.label(node),
+                if live.measure {
+                    ", and on sorts and hashes that spilled to disk"
+                } else {
+                    "; with --measure, also on sorts and hashes that spilled to disk"
+                }
+            ));
+            return Outcome::Continue;
+        }
+        Outcome::WhyNot { node }
+    }
+
     /// Opens a collapsed node or a group of siblings.
     fn open(&mut self) {
         let row = self.selected_row().clone();
@@ -810,9 +857,9 @@ fn sibling_runs(plan: &Plan, children: &[NodeId], expanded: &HashSet<NodeId>) ->
     let mut items: Vec<Vec<NodeId>> = Vec::new();
     let mut index = 0;
     while index < children.len() {
-        let key = shape(plan, children[index]);
+        let key = leaf_key(plan, children[index]);
         let mut end = index + 1;
-        while key.is_some() && end < children.len() && shape(plan, children[end]) == key {
+        while key.is_some() && end < children.len() && leaf_key(plan, children[end]) == key {
             end += 1;
         }
         let run = &children[index..end];
@@ -824,43 +871,6 @@ fn sibling_runs(plan: &Plan, children: &[NodeId], expanded: &HashSet<NodeId>) ->
         index = end;
     }
     items
-}
-
-/// What makes leaves similar: their type, relation and conditions with
-/// numbers blanked out (`orders_2025_01`, `events_1`). `None` for nodes with
-/// children, which are never grouped.
-fn shape(plan: &Plan, id: NodeId) -> Option<String> {
-    let node = plan.node(id);
-    if !node.children.is_empty() {
-        return None;
-    }
-    let mut key = format!(
-        "{}|{}",
-        node.node_type,
-        node.relation_name.as_deref().unwrap_or("")
-    );
-    for predicate in &node.predicates {
-        key.push('|');
-        key.push_str(&predicate.text);
-    }
-    Some(blank_numbers(&key))
-}
-
-fn blank_numbers(text: &str) -> String {
-    let mut out = String::with_capacity(text.len());
-    let mut in_number = false;
-    for c in text.chars() {
-        if c.is_ascii_digit() {
-            if !in_number {
-                out.push('#');
-            }
-            in_number = true;
-        } else {
-            in_number = false;
-            out.push(c);
-        }
-    }
-    out
 }
 
 #[cfg(test)]
@@ -1034,6 +1044,7 @@ Execution Time: 11.900 ms",
             task: String::new(),
             hypopg: false,
             allow_ddl: true,
+            measure: false,
         });
         // Building the index asks first; anything but y declines.
         assert_eq!(app.handle(Key::Char('t'), 10), Outcome::Continue);
@@ -1059,5 +1070,68 @@ Execution Time: 11.900 ms",
                 ..
             }
         ));
+    }
+
+    #[test]
+    fn asks_the_planner_why() {
+        let plan = explainsql_core::parse(
+            "\
+Nested Loop  (cost=0.29..20.00 rows=10 width=8) (actual time=0.020..5.000 rows=10 loops=1)
+  ->  Seq Scan on orders o  (cost=0.00..4917.00 rows=10 width=4) (actual time=0.010..4.000 rows=10 loops=1)
+        Filter: (customer_id = 4242)
+        Rows Removed by Filter: 199990
+  ->  Index Scan using customers_pkey on customers c  (cost=0.29..1.00 rows=1 width=4) (actual time=0.010..0.010 rows=1 loops=10)
+        Index Cond: (id = o.customer_id)
+Execution Time: 5.100 ms",
+        )
+        .unwrap();
+        let analysis = explainsql_core::analyze(&plan);
+        let mut app = App::new(plan, analysis);
+        app.handle(Key::Char('j'), 10);
+        // Offline, y explains what it needs.
+        assert_eq!(app.handle(Key::Char('y'), 10), Outcome::Continue);
+        assert!(
+            app.message
+                .as_deref()
+                .unwrap()
+                .starts_with("Not connected: y asks the database")
+        );
+        app.live = Some(Live {
+            database: "db".to_owned(),
+            sql: "SELECT".to_owned(),
+            measured: true,
+            running: None,
+            task: String::new(),
+            hypopg: false,
+            allow_ddl: false,
+            measure: false,
+        });
+        assert_eq!(
+            app.handle(Key::Char('y'), 10),
+            Outcome::WhyNot { node: NodeId(1) }
+        );
+        // An index scan already uses an index: nothing to ask.
+        app.handle(Key::Char('j'), 10);
+        assert_eq!(app.handle(Key::Char('y'), 10), Outcome::Continue);
+        assert!(
+            app.message
+                .as_deref()
+                .unwrap()
+                .starts_with("Nothing to ask about Index Scan using customers_pkey"),
+            "{:?}",
+            app.message
+        );
+        // One question at a time.
+        app.handle(Key::Char('k'), 10);
+        if let Some(live) = &mut app.live {
+            live.running = Some(std::time::Instant::now());
+        }
+        assert_eq!(app.handle(Key::Char('y'), 10), Outcome::Continue);
+        assert!(
+            app.message
+                .as_deref()
+                .unwrap()
+                .starts_with("A run is in progress")
+        );
     }
 }

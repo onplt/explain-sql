@@ -1728,7 +1728,6 @@ name = "xtask"
 version = "0.0.0"
 dependencies = [
  "explainsql-core",
- "explainsql-tui",
  "ratatui",
  "serde_json",
 ]

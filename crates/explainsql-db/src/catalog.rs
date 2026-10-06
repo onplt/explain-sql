@@ -30,7 +30,8 @@ WHERE x.indrelid = $1
 ORDER BY i.relname";
 
 const COLUMNS: &str = "
-SELECT a.attname::text, co.collname::text, s.n_distinct::float8
+SELECT a.attname::text, co.collname::text, s.n_distinct::float8,
+       format_type(a.atttypid, a.atttypmod)
 FROM pg_attribute a
 LEFT JOIN pg_collation co ON co.oid = a.attcollation
 LEFT JOIN pg_stats s ON s.schemaname = $2 AND s.tablename = $3 AND s.attname = a.attname
@@ -134,6 +135,7 @@ async fn read_all(
         {
             table.columns.push(Column {
                 name: row.get(0),
+                type_name: row.get(3),
                 collation: row.get(1),
                 n_distinct: row.get(2),
             });

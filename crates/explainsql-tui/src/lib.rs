@@ -42,10 +42,12 @@ pub struct Connection {
     pub hypopg: bool,
     /// Suggestions may be built, in a transaction that is rolled back.
     pub allow_ddl: bool,
+    /// `y` measures the alternatives rather than only estimating them.
+    pub measure: bool,
 }
 
 /// What the viewer asks the connection to do.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Command {
     /// Run the statement with EXPLAIN ANALYZE; first send the estimated plan
     /// when `estimate_first` (after an edit).
@@ -56,6 +58,12 @@ pub enum Command {
         sql: String,
         ddl: String,
         measured: bool,
+    },
+    /// Ask the planner why it chose what it chose for a node of the plan.
+    WhyNot {
+        sql: String,
+        plan: Box<Plan>,
+        node: explainsql_core::ir::NodeId,
     },
 }
 
@@ -72,6 +80,8 @@ pub enum Event {
         comparison: Box<explainsql_core::compare::Comparison>,
         measured: bool,
     },
+    /// What the planner said when asked again.
+    Answered(Vec<explainsql_core::counterfactual::Answer>),
     Failed(String),
 }
 
@@ -98,6 +108,7 @@ pub fn run_connected(
         task: String::new(),
         hypopg: connection.hypopg,
         allow_ddl: connection.allow_ddl,
+        measure: connection.measure,
     });
     run_with(app, options, Some(connection))
 }
@@ -189,6 +200,22 @@ fn event_loop(
                     };
                 }
             }
+            (Outcome::WhyNot { node }, Some(connection)) => {
+                let Some(live) = &mut app.live else { continue };
+                let command = Command::WhyNot {
+                    sql: live.sql.clone(),
+                    plan: Box::new(app.plan.clone()),
+                    node,
+                };
+                if connection.commands.send(command).is_ok() {
+                    live.running = Some(Instant::now());
+                    live.task = if live.measure {
+                        "Measuring the planner's choice and the alternative".to_owned()
+                    } else {
+                        "Asking the planner".to_owned()
+                    };
+                }
+            }
             (Outcome::Edit, Some(connection)) => {
                 let sql = app
                     .live
@@ -244,7 +271,7 @@ fn receive(app: &mut App, event: Event) {
         } => {
             // A measured plan after a measured plan: how the change did.
             let previous = app.live.as_ref().is_some_and(|live| live.measured) && measured;
-            let comparison = previous.then(|| explainsql_core::compare::compare(&app.plan, &plan));
+            let diff = previous.then(|| explainsql_core::diff::diff(&app.plan, &plan));
             app.replace(*plan, *analysis);
             if let Some(live) = &mut app.live {
                 live.measured = measured;
@@ -252,11 +279,8 @@ fn receive(app: &mut App, event: Event) {
                     live.running = None;
                 }
             }
-            if let Some(comparison) = comparison {
-                app.message = Some(format!(
-                    "Compared with the previous run: {}.",
-                    comparison.summary()
-                ));
+            if let Some(diff) = diff {
+                app.message = Some(rerun_message(&diff));
             }
         }
         Event::Proved {
@@ -267,7 +291,7 @@ fn receive(app: &mut App, event: Event) {
             if let Some(live) = &mut app.live {
                 live.running = None;
             }
-            let summary = comparison.summary();
+            let summary = comparison.details();
             let advice = app.analysis.advice.iter_mut().find(|advice| {
                 matches!(&advice.kind, explainsql_core::advisor::AdviceKind::Index { ddl: other, .. } if *other == ddl)
             });
@@ -275,6 +299,19 @@ fn receive(app: &mut App, event: Event) {
                 explainsql_core::advisor::verify(advice, *comparison, measured);
             }
             app.message = Some(format!("Tested: {summary}."));
+        }
+        Event::Answered(answers) => {
+            if let Some(live) = &mut app.live {
+                live.running = None;
+            }
+            app.message = answers.first().map(|answer| {
+                format!(
+                    "{}: {}. The details show why (J and K scroll).",
+                    answer.verdict.label(),
+                    answer.verdict.describe()
+                )
+            });
+            app.analysis.record(answers);
         }
         Event::Failed(error) => {
             if let Some(live) = &mut app.live {
@@ -342,6 +379,23 @@ fn base64(bytes: &[u8]) -> String {
     out
 }
 
+/// How a run compares with the one before: the figures, then whether the
+/// plan stayed the same or what changed in it first.
+fn rerun_message(diff: &explainsql_core::diff::PlanDiff) -> String {
+    let details = diff.comparison.details();
+    let main = diff.changes.iter().find(|change| change.kind.structural());
+    match main {
+        _ if diff.shapes.same() => {
+            format!("Compared with the previous run: {details}; the same plan.")
+        }
+        Some(change) => format!(
+            "Compared with the previous run: {details}. {}.",
+            change.summary
+        ),
+        None => format!("Compared with the previous run: {details}."),
+    }
+}
+
 /// Draws one frame into a buffer, for tests and benchmarks.
 pub fn render(app: &mut App, theme: &Theme, width: u16, height: u16) -> ratatui::buffer::Buffer {
     let backend = ratatui::backend::TestBackend::new(width, height);
@@ -354,9 +408,108 @@ pub fn render(app: &mut App, theme: &Theme, width: u16, height: u16) -> ratatui:
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
+    /// What the planner said shows in the status line and the details, and
+    /// ends the run.
+    #[test]
+    fn receives_answers() {
+        use explainsql_core::counterfactual::{self, Evaluation, Target};
+        use explainsql_core::ir::NodeId;
+        let plan = explainsql_core::parse(
+            "Seq Scan on orders  (cost=0.00..4917.00 rows=10 width=64) (actual time=1.053..11.865 rows=10 loops=1)\n  Filter: (customer_id = 4242)\n  Rows Removed by Filter: 199990\nExecution Time: 11.900 ms",
+        )
+        .unwrap();
+        let analysis = explainsql_core::analyze(&plan);
+        let question =
+            counterfactual::questions(&plan, &analysis, None, &Target::Node(NodeId(0)), false)
+                .remove(0);
+        let alternative = explainsql_core::parse(
+            "Seq Scan on orders  (cost=10000000000.00..10000004917.00 rows=10 width=64)\n  Filter: (customer_id = 4242)",
+        )
+        .unwrap();
+        let answer = counterfactual::answer(
+            &plan,
+            &analysis,
+            &question,
+            &Evaluation {
+                chosen: &[],
+                alternative: std::slice::from_ref(&alternative),
+                with_cost_settings: None,
+                cost_settings_runs: &[],
+                catalog: None,
+            },
+        );
+        let mut app = App::new(plan, analysis);
+        app.live = Some(Live {
+            database: "db".to_owned(),
+            sql: "SELECT".to_owned(),
+            measured: true,
+            running: Some(Instant::now()),
+            task: "Asking the planner".to_owned(),
+            hypopg: false,
+            allow_ddl: false,
+            measure: false,
+        });
+        receive(&mut app, Event::Answered(vec![answer.clone()]));
+        assert!(app.live.as_ref().unwrap().running.is_none());
+        assert_eq!(
+            app.message.as_deref(),
+            Some(
+                "UNUSABLE: no index can serve the condition. The details show why (J and K scroll)."
+            )
+        );
+        assert_eq!(app.analysis.counterfactuals, std::slice::from_ref(&answer));
+        // Asked again: the new answer replaces the old one.
+        receive(&mut app, Event::Answered(vec![answer]));
+        assert_eq!(app.analysis.counterfactuals.len(), 1);
+    }
+
+    /// A run after a run says what changed in the plan.
+    #[test]
+    fn compares_a_run_with_the_previous_one() {
+        let parse = |text: &str| explainsql_core::parse(text).unwrap();
+        let scan = parse(
+            "Seq Scan on orders o  (cost=0.00..4917.00 rows=10 width=64) (actual time=1.053..11.865 rows=10 loops=1)\n  Filter: (customer_id = 4242)\n  Rows Removed by Filter: 199990\n  Buffers: shared hit=2417\nExecution Time: 11.900 ms",
+        );
+        let index = parse(
+            "Index Scan using orders_customer_id_idx on orders o  (cost=0.42..44.50 rows=10 width=64) (actual time=0.020..0.051 rows=10 loops=1)\n  Index Cond: (customer_id = 4242)\n  Buffers: shared hit=13\nExecution Time: 0.070 ms",
+        );
+        let mut app = App::new(scan.clone(), explainsql_core::analyze(&scan));
+        app.live = Some(Live {
+            database: "db".to_owned(),
+            sql: "SELECT".to_owned(),
+            measured: true,
+            running: Some(Instant::now()),
+            task: "Running EXPLAIN ANALYZE".to_owned(),
+            hypopg: false,
+            allow_ddl: false,
+            measure: false,
+        });
+        let event = |plan: &explainsql_core::ir::Plan| Event::Plan {
+            plan: Box::new(plan.clone()),
+            analysis: Box::new(explainsql_core::analyze(plan)),
+            measured: true,
+        };
+        receive(&mut app, event(&index));
+        assert_eq!(
+            app.message.as_deref(),
+            Some(
+                "Compared with the previous run: pages 2,417 → 13 (186× fewer), execution 11.9 ms → 0.070 ms (170× faster). Seq Scan on orders o became Index Scan using orders_customer_id_idx on orders o."
+            )
+        );
+        receive(&mut app, event(&index));
+        assert_eq!(
+            app.message.as_deref(),
+            Some(
+                "Compared with the previous run: pages 13 → 13, execution 0.070 ms → 0.070 ms; the same plan."
+            )
+        );
+    }
+
     #[test]
     fn encodes_base64() {
-        assert_eq!(super::base64(b""), "");
+        assert_eq!(base64(b""), "");
         assert_eq!(super::base64(b"f"), "Zg==");
         assert_eq!(super::base64(b"fo"), "Zm8=");
         assert_eq!(super::base64(b"foo"), "Zm9v");

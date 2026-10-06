@@ -3,9 +3,11 @@
 use serde::Serialize;
 
 use crate::advisor::{self, Advice};
+use crate::counterfactual::Answer;
 use crate::format;
 use crate::ir::Plan;
 use crate::metrics::{self, Metrics};
+use crate::params::Sensitivity;
 use crate::rules::{self, Finding};
 
 /// The metrics, the findings and the verdict for a plan.
@@ -19,6 +21,15 @@ pub struct Analysis {
     pub findings: Vec<Finding>,
     /// Index candidates, rewrites, and why slow scans get no index.
     pub advice: Vec<Advice>,
+    /// What the database said when asked why the planner chose its plan
+    /// (connected mode); empty until asked.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub counterfactuals: Vec<Answer>,
+    /// How the plan depends on the statement's parameters (connected mode,
+    /// `--params`), when the plan is the generic plan of a statement with
+    /// parameters.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parameters: Option<Sensitivity>,
 }
 
 /// Computes the metrics and runs the rules.
@@ -32,8 +43,26 @@ pub fn analyze(plan: &Plan) -> Analysis {
         metrics,
         findings,
         advice,
+        counterfactuals: Vec::new(),
+        parameters: None,
     }
 }
+
+impl Analysis {
+    /// Records answers from the database, replacing earlier answers about
+    /// the same nodes and questions, and puts them into the advice.
+    pub fn record(&mut self, answers: Vec<Answer>) {
+        for answer in answers {
+            self.counterfactuals
+                .retain(|other| !(other.node == answer.node && other.question == answer.question));
+            self.counterfactuals.push(answer);
+        }
+        crate::counterfactual::annotate(&mut self.advice, &self.counterfactuals);
+    }
+}
+
+/// From this share of the time spent reading pages, the cache was cold.
+const COLD_CACHE: f64 = 0.5;
 
 fn verdict(plan: &Plan, metrics: &Metrics, findings: &[Finding]) -> String {
     let statement = &metrics.statement;
@@ -99,6 +128,18 @@ fn verdict(plan: &Plan, metrics: &Metrics, findings: &[Finding]) -> String {
         }
         _ => sentence.push_str(" The plan has no per-node times (TIMING OFF)."),
     }
+    // Waiting for reads most of the time: the cache was cold.
+    if let Some(share) = statement
+        .io
+        .filter(|io| io.total() > 0.0)
+        .and_then(|io| Some(io.share? * io.read / io.total()))
+        .filter(|&share| share >= COLD_CACHE)
+    {
+        sentence.push_str(&format!(
+            " {} of the time went to reading pages that were not in shared buffers: the cache was cold, and a second run may be faster.",
+            format::percent(share)
+        ));
+    }
     // The most severe finding, if the sentence does not cover it yet.
     if let Some(finding) = findings.first() {
         let covered = mentioned.is_some_and(|mentioned| std::ptr::eq(mentioned, finding))
@@ -130,6 +171,22 @@ Execution Time: 11.899 ms",
         assert_eq!(
             analyze(&plan).verdict,
             "11.9 ms. 100% of it in Seq Scan on orders, which reads 200,000 rows to keep 10."
+        );
+
+        // Waiting for reads most of the time.
+        let cold = crate::parse(
+            "\
+Seq Scan on orders  (cost=0.00..4917.00 rows=10 width=64) (actual time=1.053..100.865 rows=10 loops=1)
+  Filter: (customer_id = 4242)
+  Rows Removed by Filter: 199990
+  Buffers: shared read=2417
+  I/O Timings: shared read=80.000
+Execution Time: 100.900 ms",
+        )
+        .unwrap();
+        assert_eq!(
+            analyze(&cold).verdict,
+            "100.9 ms. 100% of it in Seq Scan on orders, which reads 200,000 rows to keep 10. 79% of the time went to reading pages that were not in shared buffers: the cache was cold, and a second run may be faster."
         );
 
         let estimated =

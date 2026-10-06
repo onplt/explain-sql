@@ -3,6 +3,7 @@
 //! drawn, so a frame costs the same for ten nodes as for ten thousand.
 
 use explainsql_core::advisor::{Advice, AdviceKind, Confidence, Verification};
+use explainsql_core::counterfactual::{Answer, Verdict};
 use explainsql_core::format;
 use explainsql_core::ir::{Buffers, NodeId, PredicateKind};
 use explainsql_core::metrics;
@@ -569,6 +570,17 @@ fn node_lines<'a>(app: &App, theme: &Theme) -> Vec<Line<'a>> {
             theme.dim,
         ));
     }
+    // What the planner said when asked about the node comes first: it is
+    // what was just asked for.
+    for answer in app
+        .analysis
+        .counterfactuals
+        .iter()
+        .filter(|answer| answer.node == id)
+    {
+        lines.extend(answer_lines(theme, answer));
+        lines.push(Line::raw(""));
+    }
     if let Some(relationship) = node.relationship {
         lines.push(field(theme, "Role", format!("{relationship:?}")));
     }
@@ -659,6 +671,19 @@ fn node_lines<'a>(app: &App, theme: &Theme) -> Vec<Line<'a>> {
             ));
         }
     }
+    // Below a hundredth of a millisecond, I/O timing is rounding.
+    if let Some(io) = metrics.exclusive_io_time.filter(|&io| io >= 0.01) {
+        let share = metrics
+            .exclusive_cpu_time
+            .filter(|&time| time > 0.0)
+            .map(|time| format!(", {} of its time", format::percent((io / time).min(1.0))))
+            .unwrap_or_default();
+        lines.push(field(
+            theme,
+            "I/O by the node itself",
+            format!("{}{share}", format::duration(io)),
+        ));
+    }
     let predicates: Vec<_> = PredicateKind::ALL
         .iter()
         .flat_map(|&kind| {
@@ -703,6 +728,40 @@ fn node_lines<'a>(app: &App, theme: &Theme) -> Vec<Line<'a>> {
         lines.push(Line::raw(""));
         lines.extend(finding_lines(app, theme, finding));
     }
+    lines
+}
+
+fn verdict<'a>(theme: &Theme, verdict: Verdict) -> Span<'a> {
+    let style = match verdict {
+        Verdict::Misestimate | Verdict::CostSettings | Verdict::PlannerWrong => theme.high,
+        Verdict::Unusable => theme.medium,
+        Verdict::PlannerRight | Verdict::MoreMemoryHelps => theme.good,
+        Verdict::Costlier | Verdict::MoreMemoryDoesNotHelp | Verdict::Inconclusive => theme.low,
+    };
+    Span::styled(format!("{:<11}", verdict.label()), style)
+}
+
+/// What the planner said when asked again about the node: the decision
+/// card.
+fn answer_lines<'a>(theme: &Theme, answer: &Answer) -> Vec<Line<'a>> {
+    let mut lines = vec![
+        Line::from(vec![
+            verdict(theme, answer.verdict),
+            Span::styled(" Why not", theme.title),
+        ]),
+        Line::styled(answer.question.clone(), theme.title),
+        Line::raw(answer.summary.clone()),
+    ];
+    for evidence in &answer.evidence {
+        lines.push(field(theme, evidence.label, evidence.value.clone()));
+    }
+    if let Some(action) = &answer.action {
+        lines.push(Line::from(vec![
+            Span::styled("→ ", theme.key),
+            Span::raw(action.clone()),
+        ]));
+    }
+    lines.push(Line::styled(report::planned_with(answer), theme.dim));
     lines
 }
 
@@ -891,7 +950,7 @@ fn draw_advice(frame: &mut Frame, app: &mut App, theme: &Theme, area: Rect) {
                 _ => format!(" {}: ", advice.title()),
             };
             let text = match (&advice.kind, &advice.proof) {
-                (AdviceKind::Index { .. }, Some(proof)) => format!("tested: {}", proof.summary()),
+                (AdviceKind::Index { .. }, Some(proof)) => format!("tested: {}", proof.details()),
                 (AdviceKind::Index { ddl, .. }, None) => ddl.clone(),
                 _ => advice.summary.clone(),
             };
@@ -1012,10 +1071,11 @@ fn draw_status(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
                 ("i", "advice"),
                 ("r", "run"),
                 ("t", "test"),
+                ("y", "why"),
                 ("?", "help"),
                 ("q", "quit"),
             ] {
-                if !connected && (key == "r" || key == "t") {
+                if !connected && matches!(key, "r" | "t" | "y") {
                     continue;
                 }
                 spans.push(Span::styled(key, theme.key));
@@ -1027,7 +1087,7 @@ fn draw_status(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
     frame.render_widget(Paragraph::new(line), area);
 }
 
-const HELP: [(&str, &str); 22] = [
+const HELP: [(&str, &str); 23] = [
     ("j k ↓ ↑", "Move"),
     ("PgDn PgUp", "Move a page"),
     ("g G", "First, last node"),
@@ -1046,6 +1106,7 @@ const HELP: [(&str, &str); 22] = [
     ("J K", "Scroll the details"),
     ("r e", "Connected: run again, edit the statement"),
     ("t", "Connected: test the suggested index"),
+    ("y", "Connected: ask the planner why it chose this node"),
     ("Esc", "Connected: cancel a run"),
     ("?", "This help"),
     ("q Esc", "Quit"),

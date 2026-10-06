@@ -197,7 +197,7 @@ Execution Time: 11.900 ms";
                 columns: vec![Column {
                     name: "note".to_owned(),
                     collation: Some("C".to_owned()),
-                    n_distinct: None,
+                    ..Column::default()
                 }],
                 ..Table::default()
             }],

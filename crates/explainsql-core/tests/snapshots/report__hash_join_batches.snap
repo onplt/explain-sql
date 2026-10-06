@@ -15,15 +15,26 @@ Share     Time              Node                                 Rows  Estimate 
   14%  25.2 ms  █▍             └─ Hash                        200,000   200,000        0
   13%  23.8 ms  █▎                └─ Seq Scan on orders o     200,000   200,000    2,417
 
-Findings (1)
+Findings (2)
 
   HIGH    ES004 Hash or aggregate spilled to disk
           The hash table of Hash Join was split into 128 batches because it did not fit in work_mem.
           Batches: 128
           Memory used: 89 kB
           Written to disk: 508 pages (4.0 MB)
-          → Raise work_mem (or hash_mem_multiplier) for this query so that the hash table fits in
-          memory: the whole table takes roughly 11.1 MB, 128 batches of 89 kB.
+          → Raise work_mem (or hash_mem_multiplier) so that the hash table fits in memory: the whole
+          table takes roughly 11.1 MB, 128 batches of 89 kB. For this statement alone: SET LOCAL
+          work_mem = '16MB' in its transaction. Every session that runs the statement at the same
+          time may take that much.
+
+  MEDIUM  ES013 Planner settings force the plan
+          The plan was made with enable_mergejoin = off, which keeps the planner from some of its
+          usual choices.
+          Settings: enable_mergejoin = off
+          → Applications that plan with the defaults may get another plan: reset it (RESET
+          enable_mergejoin, or a new session) and run EXPLAIN again. If a role or a database sets it
+          (ALTER ROLE or ALTER DATABASE … SET), every session plans this way; to test a plan, SET
+          LOCAL keeps a setting to one transaction.
 
 No index would help
   Seq Scan on order_items oi: it reads the whole table because the query needs every row; there is

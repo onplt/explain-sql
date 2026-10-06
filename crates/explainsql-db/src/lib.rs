@@ -10,6 +10,7 @@
 mod catalog;
 pub mod conn;
 mod exec;
+mod prepared;
 mod prove;
 mod tls;
 
@@ -19,12 +20,15 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use explainsql_core::catalog::Catalog;
+use explainsql_core::params::ColumnStats;
+use explainsql_core::scenario::Setting;
 use tokio::runtime::Runtime;
 use tokio_postgres::{CancelToken, Client};
 use tokio_postgres_rustls::MakeRustlsConnect;
 
 pub use conn::Settings;
 pub use exec::{Mode, Writes};
+pub use prepared::Cache;
 pub use prove::Proof;
 
 /// What can go wrong, in words for the user.
@@ -177,11 +181,46 @@ impl Database {
     /// The plan of a statement as JSON: estimated, or measured with
     /// `EXPLAIN ANALYZE` inside a transaction that is always rolled back.
     pub fn explain(&self, sql: &str, mode: Mode, safety: Safety) -> Result<String, Error> {
+        self.explain_with(sql, mode, &[], safety)
+    }
+
+    /// The plan of a statement under planner settings, such as
+    /// `enable_seqscan = off`. They hold only inside the transaction that is
+    /// rolled back; settings that are not planner settings are refused.
+    pub fn explain_with(
+        &self,
+        sql: &str,
+        mode: Mode,
+        settings: &[Setting],
+        safety: Safety,
+    ) -> Result<String, Error> {
         self.canceller.cancelled.store(false, Ordering::SeqCst);
         let result = self.runtime.block_on(exec::explain(
             &self.client,
             sql,
             mode,
+            settings,
+            safety,
+            self.server_version,
+        ));
+        self.classify(result, safety)
+    }
+
+    /// `runs` measured plans of a statement under planner settings, after a
+    /// run that only warms the cache. Each run is rolled back.
+    pub fn measure(
+        &self,
+        sql: &str,
+        settings: &[Setting],
+        runs: usize,
+        safety: Safety,
+    ) -> Result<Vec<String>, Error> {
+        self.canceller.cancelled.store(false, Ordering::SeqCst);
+        let result = self.runtime.block_on(exec::measure(
+            &self.client,
+            sql,
+            settings,
+            runs,
             safety,
             self.server_version,
         ));
@@ -200,12 +239,14 @@ impl Database {
 
     /// The statement's plan without and with a suggested index: estimated
     /// with a HypoPG hypothetical index, or with `measured`, built for real
-    /// in a transaction that is rolled back and run with EXPLAIN ANALYZE.
+    /// in a transaction that is rolled back and run with EXPLAIN ANALYZE
+    /// `runs` times on each side, after a run that only warms the cache.
     pub fn prove(
         &self,
         sql: &str,
         ddl: &str,
         measured: bool,
+        runs: usize,
         safety: Safety,
     ) -> Result<Proof, Error> {
         self.canceller.cancelled.store(false, Ordering::SeqCst);
@@ -214,6 +255,7 @@ impl Database {
                 &self.client,
                 sql,
                 ddl,
+                runs,
                 safety,
                 self.server_version,
             ))
@@ -227,6 +269,102 @@ impl Database {
             ))
         };
         self.classify(result, safety)
+    }
+
+    /// The plan of a statement with parameters (`$1`, `$2`, …), prepared
+    /// and executed with `values` as an application runs it: under
+    /// `plan_cache_mode`, the generic plan, for any value, or a custom plan,
+    /// for these values, and under planner settings. Estimated, or measured
+    /// with EXPLAIN ANALYZE inside a transaction that is always rolled back.
+    /// Needs PostgreSQL 12.
+    pub fn explain_prepared(
+        &self,
+        sql: &str,
+        cache: Cache,
+        values: &[Option<String>],
+        settings: &[Setting],
+        mode: Mode,
+        safety: Safety,
+    ) -> Result<String, Error> {
+        self.plan_cache_mode()?;
+        self.canceller.cancelled.store(false, Ordering::SeqCst);
+        let result = self.runtime.block_on(prepared::explain(
+            &self.client,
+            sql,
+            cache,
+            values,
+            settings,
+            mode,
+            safety,
+            self.server_version,
+        ));
+        self.classify(result, safety)
+    }
+
+    /// `runs` measured plans of a statement with parameters, prepared and
+    /// executed with `values` under `plan_cache_mode`, after a run that
+    /// only warms the cache. Each run is rolled back.
+    pub fn measure_prepared(
+        &self,
+        sql: &str,
+        cache: Cache,
+        values: &[Option<String>],
+        runs: usize,
+        safety: Safety,
+    ) -> Result<Vec<String>, Error> {
+        self.plan_cache_mode()?;
+        self.canceller.cancelled.store(false, Ordering::SeqCst);
+        let result = self.runtime.block_on(prepared::measure(
+            &self.client,
+            sql,
+            cache,
+            values,
+            runs,
+            safety,
+            self.server_version,
+        ));
+        self.classify(result, safety)
+    }
+
+    /// The types PostgreSQL infers for a statement's parameters, as
+    /// `format_type` names them: `integer`, `timestamp with time zone`.
+    pub fn parameter_types(&self, sql: &str, safety: Safety) -> Result<Vec<String>, Error> {
+        self.canceller.cancelled.store(false, Ordering::SeqCst);
+        let result =
+            self.runtime
+                .block_on(prepared::parameter_types(&self.client, sql, safety.timeout));
+        self.classify(result, safety)
+    }
+
+    /// What `pg_stats` says about a column: `None` when it has no
+    /// statistics, or values that do not read as a list.
+    pub fn column_stats(
+        &self,
+        schema: Option<&str>,
+        table: &str,
+        column: &str,
+    ) -> Result<Option<ColumnStats>, Error> {
+        let safety = Safety::default();
+        let result = self.runtime.block_on(prepared::column_stats(
+            &self.client,
+            schema,
+            table,
+            column,
+            safety.timeout,
+        ));
+        self.classify(result, safety)
+    }
+
+    /// `plan_cache_mode`, which chooses the plan of a prepared statement,
+    /// came with PostgreSQL 12.
+    fn plan_cache_mode(&self) -> Result<(), Error> {
+        if self.server_version < 120_000 {
+            return Err(Error::Refused(
+                "trying a statement's parameters needs PostgreSQL 12 or later, for plan_cache_mode"
+                    .to_owned(),
+            ));
+        }
+        Ok(())
     }
 
     /// What the catalog says about the tables and foreign keys a plan and

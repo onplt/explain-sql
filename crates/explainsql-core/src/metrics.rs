@@ -29,7 +29,7 @@
 use serde::Serialize;
 use serde_json::Value;
 
-use crate::ir::{Buffers, Node, NodeId, Plan, Relationship};
+use crate::ir::{Buffers, IoTimings, Node, NodeId, Plan, Relationship};
 
 /// Derived figures for a whole plan.
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -68,6 +68,10 @@ pub struct NodeMetrics {
     /// Buffers used by the node itself, totals across loops.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub exclusive_buffers: Option<Buffers>,
+    /// Time the node itself spent reading and writing blocks and temporary
+    /// files (`track_io_timing`), summed over the processes that ran it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub exclusive_io_time: Option<f64>,
     /// How many processes ran the node side by side: more than 1 below a
     /// `Gather`.
     pub processes: f64,
@@ -122,9 +126,35 @@ pub struct StatementMetrics {
     /// JIT compilation, which may fall inside node times or outside them.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub jit_time: Option<f64>,
+    /// Time spent on block I/O (`track_io_timing`), summed over the
+    /// processes that ran the plan; `None` when the plan reports none.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub io: Option<IoTime>,
     /// Nodes ordered by exclusive time, largest first; by exclusive buffers
     /// when the plan has no timing. Nodes with nothing to show are left out.
     pub hotspots: Vec<NodeId>,
+}
+
+/// Time spent on block I/O, in milliseconds, summed over the processes that
+/// ran the plan.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize)]
+pub struct IoTime {
+    /// Reading table and index pages that were not in shared buffers.
+    pub read: f64,
+    /// Writing out pages, as when making room in shared buffers.
+    pub write: f64,
+    /// Reading and writing temporary files.
+    pub temp: f64,
+    /// All of it, as a fraction of the time the processes spent in the
+    /// plan; `None` without timing.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub share: Option<f64>,
+}
+
+impl IoTime {
+    pub fn total(&self) -> f64 {
+        self.read + self.write + self.temp
+    }
 }
 
 /// Times are printed with three decimals, so each per-loop time may be off
@@ -238,6 +268,15 @@ pub fn compute(plan: &Plan) -> Metrics {
             }
             rest
         });
+        let exclusive_io_time = node.io_timings.map(|timings| {
+            let children: f64 = plan
+                .children(node.id)
+                .filter(|child| matches!(edge(child), Edge::Child))
+                .filter_map(|child| child.io_timings)
+                .map(|timings| io_total(&timings))
+                .sum();
+            (io_total(&timings) - children - paid[id].io).max(0.0)
+        });
         let tolerance = children.rounding + paid[id].rounding;
 
         let metrics = &mut nodes[id];
@@ -245,6 +284,7 @@ pub fn compute(plan: &Plan) -> Metrics {
         metrics.exclusive_time = exclusive_wall.map(|time| time.max(0.0));
         metrics.exclusive_cpu_time = exclusive_cpu.map(|time| time.max(0.0));
         metrics.exclusive_buffers = exclusive_buffers;
+        metrics.exclusive_io_time = exclusive_io_time;
     }
 
     let statement = statement(plan, &mut nodes);
@@ -397,6 +437,7 @@ struct Paid {
     wall: f64,
     cpu: f64,
     buffers: Buffers,
+    io: f64,
     /// Rounding allowed for the times paid.
     rounding: f64,
 }
@@ -409,6 +450,9 @@ impl Paid {
         self.rounding += rounding(root, metrics.processes) * fraction;
         if let Some(buffers) = root.buffers {
             self.buffers = add(self.buffers, scale(buffers, fraction));
+        }
+        if let Some(timings) = root.io_timings {
+            self.io += io_total(&timings) * fraction;
         }
     }
 }
@@ -578,6 +622,25 @@ fn statement(plan: &Plan, nodes: &mut [NodeMetrics]) -> StatementMetrics {
         .collect();
     hotspots.sort_by(|a, b| b.1.total_cmp(&a.1).then(a.0.cmp(&b.0)));
 
+    // The root's I/O includes every node's, in every process: compared
+    // with the time of every process, the nodes' own CPU time summed.
+    let io = plan.root().io_timings.map(|timings| {
+        let cpu = nodes
+            .iter()
+            .filter_map(|metrics| metrics.exclusive_cpu_time)
+            .reduce(|a, b| a + b);
+        let mut io = IoTime {
+            read: timings.shared_read + timings.local_read,
+            write: timings.shared_write + timings.local_write,
+            temp: timings.temp_read + timings.temp_write,
+            share: None,
+        };
+        io.share = cpu
+            .filter(|&cpu| cpu > 0.0)
+            .map(|cpu| (io.total() / cpu).min(1.0));
+        io
+    });
+
     StatementMetrics {
         total_time,
         planning_time: summary.planning_time,
@@ -591,8 +654,19 @@ fn statement(plan: &Plan, nodes: &mut [NodeMetrics]) -> StatementMetrics {
             .as_ref()
             .and_then(|jit| jit.timing)
             .map(|timing| timing.total),
+        io,
         hotspots: hotspots.into_iter().map(|(id, _)| id).collect(),
     }
+}
+
+/// All the I/O time of a node and below it.
+fn io_total(timings: &IoTimings) -> f64 {
+    timings.shared_read
+        + timings.shared_write
+        + timings.local_read
+        + timings.local_write
+        + timings.temp_read
+        + timings.temp_write
 }
 
 /// Shared and local blocks hit or read: the pages a node touched.
@@ -670,6 +744,53 @@ mod tests {
             .iter()
             .map(|node| (node.exclusive_time.unwrap() * 1000.0).round() / 1000.0)
             .collect()
+    }
+
+    #[test]
+    fn splits_io_time_between_nodes() {
+        let plan = crate::parse(
+            "\
+Sort  (cost=38438.14..38938.14 rows=200000 width=37) (actual time=340.230..372.433 rows=200000 loops=1)
+  Sort Key: orders.note
+  Sort Method: external merge  Disk: 9272kB
+  Buffers: shared hit=2130 read=290, temp read=4609 written=4921
+  I/O Timings: shared read=1.647, temp read=7.540 write=8.700
+  ->  Seq Scan on orders  (cost=0.00..4417.00 rows=200000 width=37) (actual time=0.014..22.127 rows=200000 loops=1)
+        Buffers: shared hit=2127 read=290
+        I/O Timings: shared read=1.647
+Execution Time: 379.494 ms",
+        )
+        .unwrap();
+        let metrics = compute(&plan);
+        let sort = metrics.node(NodeId(0)).exclusive_io_time.unwrap();
+        assert!((sort - 16.24).abs() < 1e-9, "{sort}");
+        assert_eq!(metrics.node(NodeId(1)).exclusive_io_time, Some(1.647));
+        let io = metrics.statement.io.unwrap();
+        assert_eq!((io.read, io.write), (1.647, 0.0));
+        assert!((io.temp - 16.24).abs() < 1e-9);
+        // Of the 372 ms the plan took.
+        assert!((io.share.unwrap() - 17.887 / 372.433).abs() < 1e-9);
+    }
+
+    #[test]
+    fn compares_io_with_the_time_of_every_process() {
+        // Three processes read for most of their 100 ms each.
+        let plan = crate::parse(
+            "\
+Gather  (cost=1000.00..5000.00 rows=10 width=64) (actual time=1.000..100.000 rows=10 loops=1)
+  Workers Planned: 2
+  Workers Launched: 2
+  Buffers: shared read=3000
+  I/O Timings: shared read=240.000
+  ->  Parallel Seq Scan on orders  (cost=0.00..4000.00 rows=4 width=64) (actual time=1.000..99.000 rows=3 loops=3)
+        Buffers: shared read=3000
+        I/O Timings: shared read=240.000
+Execution Time: 100.500 ms",
+        )
+        .unwrap();
+        let io = compute(&plan).statement.io.unwrap();
+        let share = io.share.unwrap();
+        assert!((0.75..0.85).contains(&share), "{share}");
     }
 
     #[test]

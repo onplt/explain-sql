@@ -15,7 +15,59 @@ use serde_json::{Map, Value, json};
 use super::raw::{RawPlan, number};
 use crate::ir::Warning;
 
+/// The first plan in `text`. Another plan after it, such as an "after" plan
+/// pasted below the "before" one, is left out with a warning.
 pub(crate) fn parse(text: &str, warnings: &mut Vec<Warning>) -> Option<RawPlan> {
+    let lines: Vec<&str> = text.lines().collect();
+    let ((plan, _), next) = parse_at(&lines, 0, warnings)?;
+    if let Some(next) = next {
+        warnings.push(Warning {
+            line: Some(next + 1),
+            message: "the input contains more than one plan; showing the first".to_owned(),
+        });
+    }
+    Some(plan)
+}
+
+/// Every plan in `text`, one after the other, each with its warnings. Line
+/// numbers count from the start of `text`. Lines between two plans that
+/// belong to neither, such as `After:`, are left out with a warning on the
+/// plan they precede.
+pub(crate) fn parse_all(text: &str) -> Vec<(RawPlan, Vec<Warning>)> {
+    let lines: Vec<&str> = text.lines().collect();
+    let mut plans = Vec::new();
+    let mut start = 0;
+    let mut skipped = 0;
+    loop {
+        let mut warnings = Vec::new();
+        if skipped > 0 {
+            warnings.push(Warning {
+                line: None,
+                message: format!("ignored {skipped} line(s) before the plan"),
+            });
+        }
+        let Some((plan, next)) = parse_at(&lines, start, &mut warnings) else {
+            break;
+        };
+        plans.push((plan.0, warnings));
+        skipped = plan.1;
+        match next {
+            Some(next) => start = next,
+            None => break,
+        }
+    }
+    plans
+}
+
+/// The plan whose root is the first line from `start` on, and the index of
+/// the line where the next plan starts, if one does. With the plan comes
+/// the number of lines just before the next plan that belonged to neither
+/// and were taken back from this one.
+fn parse_at(
+    lines: &[&str],
+    start: usize,
+    warnings: &mut Vec<Warning>,
+) -> Option<((RawPlan, usize), Option<usize>)> {
     let mut parser = Parser {
         plan: RawPlan::new(),
         warnings,
@@ -25,22 +77,35 @@ pub(crate) fn parse(text: &str, warnings: &mut Vec<Warning>) -> Option<RawPlan> 
         worker: None,
         section: None,
         in_summary: false,
-        complete: false,
+        next: None,
+        unread: 0,
     };
-    for (index, line) in text.lines().enumerate() {
+    for (index, line) in lines.iter().enumerate().skip(start) {
         if line.trim().is_empty() {
             continue;
         }
+        let unparsed = parser.unparsed_count();
         parser.line(index + 1, line);
         if parser.plan.nodes.is_empty() {
             // The first line must be the root node.
             return None;
         }
-        if parser.complete {
+        if parser.next.is_some() {
             break;
         }
+        // Statement-level lines the parser could not read, in a row.
+        let unread =
+            parser.in_summary && !line.starts_with(' ') && parser.unparsed_count() > unparsed;
+        parser.unread = if unread { parser.unread + 1 } else { 0 };
     }
-    Some(parser.finish())
+    let next = parser.next.map(|number| number - 1);
+    // Text just before another plan, such as `After:`, introduces it.
+    let taken = if next.is_some() {
+        parser.take_back_unread()
+    } else {
+        0
+    };
+    Some(((parser.finish(), taken), next))
 }
 
 /// How many times one property may repeat on a node before further copies
@@ -73,8 +138,11 @@ struct Parser<'w> {
     section: Option<&'static str>,
     /// Whether the statement-level lines after the tree have started.
     in_summary: bool,
-    /// Whether another plan has started, which ends this one.
-    complete: bool,
+    /// The line where another plan starts, which ends this one.
+    next: Option<usize>,
+    /// How many statement-level lines in a row the parser could not read,
+    /// up to the current line.
+    unread: usize,
 }
 
 impl Parser<'_> {
@@ -93,11 +161,7 @@ impl Parser<'_> {
             if header_line(content, &mut Map::new()) {
                 // A second plan, such as an "after" plan pasted below the
                 // "before" one. Its summary must not overwrite this one's.
-                self.warn(
-                    number,
-                    "the input contains more than one plan; showing the first",
-                );
-                self.complete = true;
+                self.next = Some(number);
                 return;
             }
             self.statement_line(number, content);
@@ -331,6 +395,33 @@ impl Parser<'_> {
     }
 
     /// Keeps a line that could not be read, so that nothing is lost.
+    /// How many statement-level lines could not be read so far.
+    fn unparsed_count(&self) -> usize {
+        match self.plan.top.get("Unparsed Lines") {
+            Some(Value::Array(lines)) => lines.len(),
+            _ => 0,
+        }
+    }
+
+    /// Takes the last unread statement-level lines back, with their
+    /// warnings, and returns how many there were.
+    fn take_back_unread(&mut self) -> usize {
+        let count = self.unread;
+        if count == 0 {
+            return 0;
+        }
+        if let Some(Value::Array(lines)) = self.plan.top.get_mut("Unparsed Lines") {
+            lines.truncate(lines.len().saturating_sub(count));
+            if lines.is_empty() {
+                self.plan.top.remove("Unparsed Lines");
+            }
+        }
+        // Their warnings are the last ones: nothing after them was read.
+        let keep = self.warnings.len().saturating_sub(count);
+        self.warnings.truncate(keep);
+        count
+    }
+
     fn unparsed(&mut self, number: usize, content: &str, target: Option<Target>) {
         self.warn(number, &format!("could not read `{content}`"));
         let lines = match target {

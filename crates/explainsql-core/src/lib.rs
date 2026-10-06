@@ -18,14 +18,22 @@
 pub mod advisor;
 pub mod analysis;
 pub mod catalog;
+pub mod check;
 pub mod compare;
+pub mod counterfactual;
+pub mod diff;
 pub mod expr;
+pub mod fingerprint;
 pub mod format;
 pub mod ir;
+mod memory;
 pub mod metrics;
+pub mod params;
 pub mod pg;
 pub mod report;
 pub mod rules;
+pub mod scenario;
+pub mod timeline;
 
 pub use analysis::{Analysis, analyze};
-pub use pg::{ParseError, parse};
+pub use pg::{ParseError, parse, parse_all, parse_log};

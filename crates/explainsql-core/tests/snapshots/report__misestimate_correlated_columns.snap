@@ -4,7 +4,8 @@ expression: text
 ---
 11.8 ms. 100% of it in Seq Scan on addresses, which reads 200,000 rows to keep 200.
 
-Planning 0.422 ms · Execution 11.8 ms · Buffers 1,274 pages, 5.0% from cache
+Planning 0.422 ms · Execution 11.8 ms · Buffers 1,274 pages, 5.0% from cache · I/O 1.75 ms, 15% of
+the time
 
 Share     Time              Node                   Rows  Estimate  Buffers
  100%  11.8 ms  ██████████  Seq Scan on addresses   200   10 ▲20×    1,274

@@ -12,7 +12,7 @@ Share     Time              Node                                                
   49%  29.2 ms  █████       └─ Bitmap Heap Scan on orders                        149,877   149,768    2,081
  8.9%  5.26 ms  ▉              └─ Bitmap Index Scan using orders_created_at_idx  149,877   149,768      373
 
-Findings (1)
+Findings (2)
 
   HIGH    ES008 Lossy bitmap or heavy recheck
           Bitmap Heap Scan on orders kept only page numbers for 1,549 of 2,081 pages, so it
@@ -21,6 +21,15 @@ Findings (1)
           Rows removed by the recheck: 14,472
           Time in the node: 29.2 ms (49% of the runtime)
           → Raise work_mem for this query so that the bitmap stays exact.
+
+  MEDIUM  ES013 Planner settings force the plan
+          The plan was made with enable_indexscan = off and enable_seqscan = off, which keep the
+          planner from some of its usual choices.
+          Settings: enable_indexscan = off, enable_seqscan = off
+          → Applications that plan with the defaults may get another plan: reset them (RESET
+          enable_indexscan; RESET enable_seqscan, or a new session) and run EXPLAIN again. If a role
+          or a database sets them (ALTER ROLE or ALTER DATABASE … SET), every session plans this
+          way; to test a plan, SET LOCAL keeps a setting to one transaction.
 
 Share and Time: time spent in each node itself, wall-clock. Rows: actual rows per loop, ×loops when
 it ran more than once. ▲/▼: actual rows above or below the estimate by 10× or more. Buffers: pages
