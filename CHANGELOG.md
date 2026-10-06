@@ -6,6 +6,8 @@ All notable changes to ExplainSQL. The format follows
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-10-06
+
 ### Added
 
 - Ask the planner why it chose its plan: `--why-not [TABLE]` in connected
