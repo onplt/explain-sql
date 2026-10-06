@@ -8,6 +8,7 @@ mod check;
 mod connected;
 mod logs;
 mod params;
+mod requests;
 mod top;
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
@@ -39,7 +40,8 @@ use explainsql_core::report;
 /// explainsql check checks plans in continuous integration; explainsql logs
 /// tells when the plans in server logs changed; explainsql anonymize
 /// prepares a plan for sharing; explainsql top lists a database's
-/// costliest statements from pg_stat_statements.
+/// costliest statements from pg_stat_statements; explainsql requests finds
+/// the loops (N+1) in the requests of server logs.
 #[derive(Parser)]
 #[command(
     name = "explainsql",
@@ -244,6 +246,76 @@ enum Task {
     /// pg_stat_statements) and loaded (shared_preload_libraries). Other
     /// users' statements need the pg_read_all_stats role.
     Top(TopArgs),
+    /// Group the statements of server logs into requests and find the
+    /// loops: a statement run again and again in one request with another
+    /// value each time, as an ORM runs it when it loads related rows one by
+    /// one (N+1). Each run is fast, so plans and lists of statements by
+    /// their mean time say it is fine; the cost shows only per request.
+    ///
+    /// FILES are server logs with statement logging: log_min_duration_statement
+    /// = 0 (on production, log_transaction_sample_rate logs whole sampled
+    /// transactions), or log_statement = all with log_duration; stderr with
+    /// any log_line_prefix, csvlog or jsonlog. Logs with auto_explain entries
+    /// work too. Statements go together in a request by the trace id of their
+    /// sqlcommenter traceparent tag; otherwise by their transaction (%v in
+    /// log_line_prefix); otherwise by their session (%c, or the process),
+    /// split where it was idle for longer than --gap.
+    ///
+    /// For each loop, prints the batched statement that does the work of
+    /// all its runs at once: = ANY($1) in place of = $1, or the statement in
+    /// a LATERAL subquery over unnest($1) when its rows must stay per value.
+    /// With -d, it runs both, every run in a transaction that is rolled
+    /// back, compares them with the round trips they need, and names the
+    /// foreign key behind the loop and the fix in the ORM.
+    Requests(RequestsArgs),
+}
+
+#[derive(Args)]
+struct RequestsArgs {
+    /// Server logs with statement logging; `-` for standard input.
+    #[arg(required = true, value_name = "FILES")]
+    files: Vec<String>,
+
+    /// Measure each loop's batched statement against its runs in this
+    /// database, as -d in connected mode, and look up the foreign key
+    /// behind it.
+    #[arg(short = 'd', long, value_name = "DATABASE")]
+    dbname: Option<String>,
+
+    /// The fewest runs of a statement in one request that make a loop.
+    #[arg(long, value_name = "N", default_value_t = 3, value_parser = clap::value_parser!(u16).range(2..))]
+    min_runs: u16,
+
+    /// Statements of a session without a trace or a transaction go in one
+    /// request while it was idle for no longer than this between them.
+    #[arg(long, value_name = "MS", default_value_t = 50.0)]
+    gap: f64,
+
+    /// How many loops to show, and with -d, to measure.
+    #[arg(long, value_name = "N", default_value_t = 10, value_parser = clap::value_parser!(u16).range(1..))]
+    limit: u16,
+
+    /// With -d: how many measured runs of the batched statement to take the
+    /// median of, after one that only warms the cache.
+    #[arg(long, value_name = "N", default_value_t = 1, value_parser = clap::value_parser!(u16).range(1..=20))]
+    runs: u16,
+
+    /// With -d: also measure loops of statements that modify data or lock
+    /// rows, in a transaction that is rolled back.
+    #[arg(long, requires = "dbname")]
+    allow_dml: bool,
+
+    /// With -d: stop a statement after this many seconds.
+    #[arg(long, value_name = "SECONDS", default_value_t = 30)]
+    timeout: u64,
+
+    /// Report format.
+    #[arg(long, value_enum, default_value_t = Format::Text)]
+    format: Format,
+
+    /// When to color the text report.
+    #[arg(long, value_enum, default_value_t = Color::Auto)]
+    color: Color,
 }
 
 #[derive(Args)]
@@ -500,6 +572,7 @@ fn main() -> ExitCode {
         Some(Task::Logs(args)) => return logs::run(args),
         Some(Task::Anonymize(args)) => return anonymize(args),
         Some(Task::Top(args)) => return top::run(args),
+        Some(Task::Requests(args)) => return requests::run(args),
         None => {}
     }
     if cli.query_file.is_some() || cli.command.is_some() {

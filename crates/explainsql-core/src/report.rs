@@ -13,7 +13,8 @@ use crate::ir::{NodeId, Plan};
 use crate::locks::{BLOCKED_BY, Footprint, LOCK_TIMEOUT, Waits};
 use crate::metrics;
 use crate::params::{self, Parameter, Sensitivity};
-use crate::pg::{LogEntry, LogMeta};
+use crate::pg::{LogEntry, LogMeta, LoggedStatement};
+use crate::requests::{Batched, Form, Grouping, Loop, LoopKind, Options, Profile, Proof};
 use crate::rules::{Finding, Severity};
 use crate::timeline::{Pattern, PlanChange, Statement, Timeline};
 use crate::top::Entry;
@@ -264,6 +265,492 @@ pub fn logs_text(entries: &[LogEntry], timeline: &Timeline, color: bool) -> Stri
         }
     }
     out
+}
+
+/// The requests of logs and the loops in them, for a terminal: the first
+/// `limit` loops, each with the request it looped most in.
+pub fn requests_text(profile: &Profile, limit: usize, options: Options, color: bool) -> String {
+    let paint = Paint(color);
+    let mut out = String::new();
+    out.push_str(&paint.bold(&wrap(&requests_headline(profile, limit), 0)));
+    out.push('\n');
+    out.push_str(&paint.dim(&wrap(&grouping_line(profile), 0)));
+    out.push('\n');
+    if profile.loops.is_empty() {
+        out.push('\n');
+        out.push_str(&wrap(&no_loop(profile, options), 0));
+        out.push('\n');
+        return out;
+    }
+    for (number, item) in profile.loops.iter().enumerate().take(limit) {
+        out.push('\n');
+        let tag = match item.kind {
+            LoopKind::Loop => paint.wrap("1;31", "LOOP  "),
+            LoopKind::Repeat => paint.wrap("33", "REPEAT"),
+        };
+        out.push_str(&format!("{tag}  {}\n", item.text));
+        let indent = 8;
+        out.push_str(&paint.dim(&wrap(&loop_facts(item), indent)));
+        out.push('\n');
+        if let Some(after) = &item.after {
+            out.push_str(&paint.dim(&wrap(&format!("After {after}"), indent)));
+            out.push('\n');
+        }
+        let request = &profile.requests[item.example];
+        out.push_str(&wrap(&request_line(request), indent));
+        out.push('\n');
+        for shape in request.shapes.iter().take(MAX_LISTED) {
+            let line = format!(
+                "{:>12}× {:<70} {:>10}{}",
+                shape.runs,
+                shorten(&shape.text, 70),
+                shape.total.map(format::duration).unwrap_or_default(),
+                if shape.in_loop == Some(number) {
+                    " ◀"
+                } else {
+                    ""
+                }
+            );
+            out.push_str(&if shape.in_loop == Some(number) {
+                paint.bold(&line)
+            } else {
+                line
+            });
+            out.push('\n');
+        }
+        if request.shapes.len() > MAX_LISTED {
+            out.push_str(&paint.dim(&format!(
+                "{:>12}  and {} more\n",
+                "",
+                request.shapes.len() - MAX_LISTED
+            )));
+        }
+        match (&item.batched, &item.proof) {
+            // On a line of its own, unwrapped, to copy.
+            (_, Some(proof)) => {
+                out.push_str(&format!(
+                    "{:indent$}Batched:\n{:indent$}  {}\n",
+                    "", "", proof.sql
+                ));
+                out.push_str(&wrap(&proof_text(proof), indent));
+                out.push('\n');
+            }
+            (Ok(batched), None) => {
+                out.push_str(&format!(
+                    "{:indent$}Batched:\n{:indent$}  {}\n",
+                    "", "", batched.sql
+                ));
+            }
+            (Err(reason), None) => {
+                out.push_str(&paint.dim(&wrap(&format!("Not batched: {reason}."), indent)));
+                out.push('\n');
+            }
+        }
+        if let Some(note) = batched_note(item) {
+            out.push_str(&wrap(&note, indent));
+            out.push('\n');
+        }
+        if let Some(reference) = reference_line(item) {
+            out.push_str(&wrap(&reference, indent));
+            out.push('\n');
+        }
+        for line in &item.advice {
+            out.push_str(&wrap(&format!("→ {line}"), indent));
+            out.push('\n');
+        }
+        for note in &item.notes {
+            out.push_str(&paint.dim(&wrap(&format!("Note: {note}."), indent)));
+            out.push('\n');
+        }
+    }
+    if profile.loops.len() > limit {
+        out.push_str(&format!(
+            "\n{} more loop{}: --limit shows more.\n",
+            profile.loops.len() - limit,
+            plural(profile.loops.len() - limit)
+        ));
+    }
+    out
+}
+
+/// The requests of logs and the loops in them, as Markdown.
+pub fn requests_markdown(profile: &Profile, limit: usize, options: Options) -> String {
+    let mut out = format!(
+        "### explainsql requests\n\n{} {}\n\n",
+        escape(&requests_headline(profile, limit)),
+        escape(&grouping_line(profile))
+    );
+    if profile.loops.is_empty() {
+        out.push_str(&escape(&no_loop(profile, options)));
+        out.push('\n');
+        return out;
+    }
+    out.push_str("| | Statement | Requests | Runs | Time in all |\n|---|---|---:|---:|---:|\n");
+    for item in profile.loops.iter().take(limit) {
+        out.push_str(&format!(
+            "| {} | `{}` | {} | {} | {} |\n",
+            match item.kind {
+                LoopKind::Loop => "LOOP",
+                LoopKind::Repeat => "REPEAT",
+            },
+            item.text.replace('`', "'").replace('|', "\\|"),
+            item.requests,
+            format::grouped(i64::try_from(item.runs).unwrap_or(i64::MAX)),
+            item.total.map(format::duration).unwrap_or_default()
+        ));
+    }
+    for item in profile.loops.iter().take(limit) {
+        out.push_str(&format!(
+            "\n#### `{}`\n\n{}\n\n",
+            item.text.replace('`', "'"),
+            escape(&loop_facts(item))
+        ));
+        if let Some(after) = &item.after {
+            out.push_str(&format!("- After `{}`\n", after.replace('`', "'")));
+        }
+        out.push_str(&format!(
+            "- {}.\n",
+            escape(request_line(&profile.requests[item.example]).trim_end_matches(':'))
+        ));
+        match (&item.batched, &item.proof) {
+            (_, Some(proof)) => {
+                out.push_str(&format!(
+                    "- Batched: `{}`\n- {}\n",
+                    proof.sql.replace('`', "'"),
+                    escape(&proof_text(proof))
+                ));
+            }
+            (Ok(batched), None) => {
+                out.push_str(&format!("- Batched: `{}`\n", batched.sql.replace('`', "'")));
+            }
+            (Err(reason), None) => {
+                out.push_str(&format!("- Not batched: {}.\n", escape(reason)));
+            }
+        }
+        if let Some(note) = batched_note(item) {
+            out.push_str(&format!("- {}\n", escape(&note)));
+        }
+        if let Some(reference) = reference_line(item) {
+            out.push_str(&format!("- {}\n", escape(&reference)));
+        }
+        for line in &item.advice {
+            out.push_str(&format!("- **Fix:** {}\n", escape(line)));
+        }
+        for note in &item.notes {
+            out.push_str(&format!("- Note: {}.\n", escape(note)));
+        }
+    }
+    out
+}
+
+/// The requests of logs and the loops in them as JSON, with what the log
+/// says about each statement; the values of parameters are left out.
+pub fn requests_json(statements: &[LoggedStatement], profile: &Profile) -> String {
+    #[derive(Serialize)]
+    struct Statement<'a> {
+        #[serde(flatten)]
+        meta: &'a LogMeta,
+        text: &'a str,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        prepared: Option<&'a str>,
+    }
+    #[derive(Serialize)]
+    struct Report<'a> {
+        #[serde(flatten)]
+        profile: &'a Profile,
+        log: Vec<Statement<'a>>,
+    }
+    let report = Report {
+        profile,
+        log: statements
+            .iter()
+            .map(|statement| Statement {
+                meta: &statement.meta,
+                text: &statement.text,
+                prepared: statement.prepared.as_deref(),
+            })
+            .collect(),
+    };
+    let mut out = serde_json::to_string_pretty(&report).expect("the report serializes");
+    out.push('\n');
+    out
+}
+
+/// `4 requests of 41 statements, from … to …; 3 loops, the most runs first.`
+fn requests_headline(profile: &Profile, limit: usize) -> String {
+    let count = profile.requests.len();
+    let mut text = format!(
+        "{} request{} of {} statement{}",
+        format::grouped(i64::try_from(count).unwrap_or(i64::MAX)),
+        plural(count),
+        format::grouped(i64::try_from(profile.statements).unwrap_or(i64::MAX)),
+        plural(profile.statements)
+    );
+    if let (Some(from), Some(to)) = (&profile.from, &profile.to) {
+        text.push_str(&format!(", from {from} to {to}"));
+    }
+    let with = profile
+        .requests
+        .iter()
+        .filter(|request| request.shapes.iter().any(|shape| shape.in_loop.is_some()))
+        .count();
+    let loops = profile
+        .loops
+        .iter()
+        .filter(|item| item.kind == LoopKind::Loop)
+        .count();
+    let repeats = profile.loops.len() - loops;
+    let mut parts = Vec::new();
+    if loops > 0 {
+        parts.push(format!(
+            "{loops} statement{} ran in a loop with other values each time",
+            plural(loops)
+        ));
+    }
+    if repeats > 0 {
+        parts.push(if loops > 0 {
+            format!("{repeats} with the same values")
+        } else {
+            format!(
+                "{repeats} statement{} ran again and again with the same values",
+                plural(repeats)
+            )
+        });
+    }
+    if parts.is_empty() {
+        text.push('.');
+    } else {
+        text.push_str(&format!(
+            ". {}, in {with} of the requests{}.",
+            parts.join(" and "),
+            if profile.loops.len() > limit {
+                if limit == 1 {
+                    "; the first follows".to_owned()
+                } else {
+                    format!("; the first {limit} follow")
+                }
+            } else {
+                String::new()
+            }
+        ));
+    }
+    text
+}
+
+/// `Grouped by trace: 2 requests; by transaction: 1; by session: 1.`
+fn grouping_line(profile: &Profile) -> String {
+    let parts: Vec<String> = [
+        (Grouping::Trace, "trace (traceparent)"),
+        (Grouping::Transaction, "transaction"),
+        (Grouping::Session, "session and idle time"),
+    ]
+    .iter()
+    .filter_map(|(by, name)| {
+        let count = profile
+            .requests
+            .iter()
+            .filter(|request| request.by == *by)
+            .count();
+        (count > 0).then(|| format!("{name}: {count}"))
+    })
+    .collect();
+    format!("Requests by {}.", parts.join(", "))
+}
+
+/// Why no loop was found, and what would find one.
+fn no_loop(profile: &Profile, options: Options) -> String {
+    let mut text = format!(
+        "No loop: no statement ran {} times or more in one request.",
+        options.min_runs
+    );
+    let single = profile
+        .requests
+        .iter()
+        .all(|request| request.statements.len() == 1);
+    if single && profile.requests.len() > 1 {
+        text.push_str(
+            " Every request has one statement: tag statements with sqlcommenter's traceparent, add %c and %v to log_line_prefix, or raise --gap.",
+        );
+    }
+    text
+}
+
+/// `5 runs in each of 2 requests, 10 in all, 220.4 ms in the database; $1 changed from run to run.`
+fn loop_facts(item: &Loop) -> String {
+    let per_request = if item.fewest == item.most {
+        format!("{} runs", item.most)
+    } else {
+        format!("{} to {} runs", item.fewest, item.most)
+    };
+    let mut text = if item.requests == 1 {
+        format!("{per_request} in 1 request")
+    } else {
+        format!(
+            "{per_request} in each of {} requests, {} in all",
+            item.requests,
+            format::grouped(i64::try_from(item.runs).unwrap_or(i64::MAX))
+        )
+    };
+    if let Some(total) = item.total {
+        text.push_str(&format!(", {} in the database", format::duration(total)));
+    }
+    match item.kind {
+        LoopKind::Loop if !item.varying.is_empty() => {
+            let names: Vec<String> = item
+                .varying
+                .iter()
+                .map(|number| format!("${number}"))
+                .collect();
+            text.push_str(&format!(
+                "; {} changed from run to run{}",
+                names.join(" and "),
+                item.column
+                    .as_deref()
+                    .map(|column| format!(" ({column})"))
+                    .unwrap_or_default()
+            ));
+        }
+        LoopKind::Loop => {}
+        LoopKind::Repeat => text.push_str("; the same values every time"),
+    }
+    text.push('.');
+    text
+}
+
+/// `In OrderController#latest, trace 4bf9…, 9 statements, 145.2 ms in the database:`
+fn request_line(request: &crate::requests::Request) -> String {
+    let mut parts = Vec::new();
+    if let Some(label) = &request.label {
+        parts.push(label.clone());
+    }
+    if let Some(trace) = &request.trace {
+        parts.push(format!("trace {trace}"));
+    } else if let Some(session) = &request.session {
+        parts.push(match request.by {
+            Grouping::Transaction => format!("a transaction of session {session}"),
+            _ => format!("session {session}"),
+        });
+    }
+    if let Some(at) = &request.at {
+        parts.push(format!("at {at}"));
+    }
+    let count = request.statements.len();
+    let mut text = format!(
+        "In the request of {}: {count} statement{}",
+        parts.join(", "),
+        plural(count)
+    );
+    if let Some(total) = request.total {
+        text.push_str(&format!(", {} in the database", format::duration(total)));
+    }
+    text.push(':');
+    text
+}
+
+/// What the batched statement saved, as measured.
+fn proof_text(proof: &Proof) -> String {
+    let side = |side: &crate::requests::Side| {
+        let mut parts = Vec::new();
+        if let Some(time) = side.time {
+            parts.push(format::duration(time));
+        }
+        if let Some(pages) = side.pages {
+            #[allow(clippy::cast_precision_loss)]
+            parts.push(format::pages(pages as f64));
+        }
+        if !side.access.is_empty() {
+            parts.push(side.access.clone());
+        }
+        parts.join(", ")
+    };
+    let runs = if proof.measured < proof.runs {
+        format!(
+            "the {} runs (scaled from {} measured)",
+            proof.runs, proof.measured
+        )
+    } else {
+        format!("the {} runs", proof.runs)
+    };
+    let mut text = format!(
+        "Measured, rolled back: {runs} took {}; batched, with {} value{}: {}.",
+        side(&proof.single),
+        proof.values,
+        plural(proof.values),
+        side(&proof.batched)
+    );
+    if proof.plan_changed {
+        text.push_str(" The batched statement reads its tables another way: compare the plans before adopting it.");
+    }
+    if let Some(round_trip) = proof.round_trip {
+        text.push_str(&format!(
+            " With a round trip of {} from here, {} round trips become 1.",
+            format::duration(round_trip),
+            proof.runs
+        ));
+    }
+    if let Some(saved) = proof.saved {
+        if saved > 0.0 {
+            text.push_str(&format!(
+                " It saves {} per request",
+                format::duration(saved)
+            ));
+            if let (Some(before), Some(after)) = (proof.single.time, proof.batched.time) {
+                let before = before + proof.round_trip.unwrap_or(0.0) * proof_runs(proof);
+                let after = after + proof.round_trip.unwrap_or(0.0);
+                if after > 0.0 {
+                    text.push_str(&format!(" ({} faster)", format::factor(before / after)));
+                }
+            }
+            text.push('.');
+        } else {
+            text.push_str(&format!(
+                " It does not save time here: {} more.",
+                format::duration(-saved)
+            ));
+        }
+    }
+    text
+}
+
+#[allow(clippy::cast_precision_loss)]
+fn proof_runs(proof: &Proof) -> f64 {
+    proof.runs as f64
+}
+
+/// What the application must do with the batched statement's rows.
+fn batched_note(item: &Loop) -> Option<String> {
+    let Ok(Batched { form, note, .. }) = &item.batched else {
+        return None;
+    };
+    let note = note.as_ref()?;
+    Some(match form {
+        Form::Any => format!("Then {note}."),
+        Form::Lateral => format!("In it, {note}."),
+    })
+}
+
+/// `Via order_items_order_id_fkey: order_items.order_id → orders.id, the order_items of each orders.`
+fn reference_line(item: &Loop) -> Option<String> {
+    let reference = item.reference.as_ref()?;
+    Some(format!(
+        "By the foreign key {} ({}.{} → {}.{}): {}.",
+        reference.constraint,
+        reference.from_table,
+        reference.from_column,
+        reference.to_table,
+        reference.to_column,
+        if reference.children {
+            format!(
+                "each run reads the rows of {} that reference one row of {}",
+                reference.from_table, reference.to_table
+            )
+        } else {
+            format!(
+                "each run reads the row of {} that one row of {} references",
+                reference.to_table, reference.from_table
+            )
+        }
+    ))
 }
 
 /// A log's statements and the plans they got, as Markdown.

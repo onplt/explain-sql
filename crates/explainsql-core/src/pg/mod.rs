@@ -16,7 +16,7 @@ use std::fmt;
 
 use crate::ir::{Format, Plan, Source, Warning, Wrapper};
 
-pub use log::{LogEntry, LogMeta};
+pub use log::{LogEntry, LogMeta, LoggedStatement, parameter_values};
 pub(crate) use normalize::normalize_all;
 
 /// Why an input could not be read as a plan at all. Smaller problems are
@@ -150,6 +150,18 @@ pub fn parse_log(input: &str) -> Result<(Vec<LogEntry>, Vec<Warning>), ParseErro
         return Err(ParseError::NoPlan);
     }
     Ok((entries, skipped))
+}
+
+/// Reads every statement a server log says ran, in the log's order, as
+/// statement logging writes them (`log_min_duration_statement`, or
+/// `log_statement` with or without `log_duration`): a jsonlog, a csvlog,
+/// or a stderr log with any line prefix.
+pub fn parse_statements(input: &str) -> Result<Vec<LoggedStatement>, ParseError> {
+    let text = normalize::clean(input);
+    if text.trim().is_empty() {
+        return Err(ParseError::Empty);
+    }
+    log::statements(&text).ok_or(ParseError::NoPlan)
 }
 
 /// Parses the text of a plan that no wrapper surrounds any more.

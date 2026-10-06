@@ -314,6 +314,49 @@ Statements whose plan changed come first, the costliest change first: the time t
 
 With `log_analyze`, every statement is instrumented, logged or not, which slows it down. On a busy server, set `auto_explain.log_timing = off`, or instrument a sample of statements with `auto_explain.sample_rate`.
 
+## Find N+1 loops in requests
+
+An ORM that loads related rows one parent at a time runs the same statement again and again in one request, with another value each time: the orders of a customer, then the items of each order, one order at a time. Each run is fast, so its plan, and a list of statements by their mean time, say it is fine. The cost shows only per request. `explainsql requests` groups the statements of server logs into requests, finds these loops, and writes the batched statement that does the work of all the runs at once.
+
+```sh
+explainsql requests /var/log/postgresql/postgresql-16-main.log
+explainsql requests postgresql.json -d shop               # and measure each batched statement
+explainsql requests postgresql.csv --min-runs 10 --format md > n-plus-one.md
+```
+
+**Logging the statements.** The server must log every statement of the requests, with its duration:
+
+- On staging, set `log_min_duration_statement = 0`. Statements that the driver prepares (the extended query protocol, as JDBC, psycopg 3 and most drivers use) are logged with their values in a `DETAIL: parameters:` line.
+- On production, `log_transaction_sample_rate` (PostgreSQL 12+) logs whole transactions, a sample of them: exactly the unit needed.
+- `log_statement = all` with `log_duration = on` works too. So do logs with auto_explain entries at `auto_explain.log_min_duration = 0`.
+
+Logs can be stderr with any `log_line_prefix`, csvlog or jsonlog, and several files can be read together.
+
+**Grouping the statements into requests.** Statements go together:
+
+1. by the trace id of their sqlcommenter `traceparent` tag, such as `/*controller='OrderController',action='latest',traceparent='00-4bf9…-00f0…-01'*/`, which libraries for Spring and Hibernate, Django, Rails and others add (OpenTelemetry's integrations among them);
+2. otherwise, by the transaction they ran in, in their session: `%v` in `log_line_prefix`, a field in jsonlog and csvlog;
+3. otherwise, by their session (`%c`, or the process `%p`), split where it was idle for longer than `--gap` (50 ms by default).
+
+For the second and third, add `%c %v` to `log_line_prefix`, for instance `'%m [%p] %q%u@%d %c %v '`. Behind a connection pool, statements outside a transaction and without a trace can only be grouped by idle time, which may put two requests together.
+
+**Loops.** A statement that ran `--min-runs` times or more (3 by default) in one request is a loop: `LOOP` when its values changed from run to run, `REPEAT` when they were the same every time. Loops come first, the most runs first. For each, the report shows:
+
+- how many runs it had in how many requests, and their time in the database: parse, bind and execute together;
+- the parameter that changed, and the column it is compared with;
+- the statement before the loop, often the one that read the parents;
+- the request it looped most in, statement by statement;
+- the batched statement:
+  - `col = ANY($1)` in place of `col = $1` or `col IN ($1)`, when that comparison is a term of the statement's own `WHERE`: what an ORM's batch fetching sends;
+  - when the rows must stay per value, because of a `LIMIT`, an aggregate, a `GROUP BY`, a `DISTINCT` or a window function, or when the value is cast or computed, the statement in a `LATERAL` subquery over `unnest($1)`, where each value keeps its own `LIMIT` or count;
+  - an `INSERT` per row is not rewritten: the report says how to send the rows together; an `UPDATE` or a `DELETE` is rewritten only with `= ANY`;
+  - a loop whose log has no values for its parameters is shown, but not batched;
+- what to change in the application: JPA (`JOIN FETCH`, `@EntityGraph`, `@BatchSize`), Django (`select_related`, `prefetch_related`) or Rails (`includes`). When the statements carry sqlcommenter's `framework` tag, only that framework's fix is shown.
+
+**Measuring the batched statement (`-d`).** With a database, explainsql runs each loop's batched statement with all the values of the request it looped most in, and the runs one by one, at most 20 of them, scaled to all. Every run is prepared as the application ran it and rolled back, `READ ONLY` unless `--allow-dml`; the batched statement runs first, after a run that warms the cache, so both sides find the data cached. The report compares their time and pages, says when the batched statement reads its tables another way (a large array can turn index scans into a sequential scan or a hash join), and adds the round trips: the median time of a `SELECT 1` from this machine, once for the batched statement and once per run. It also names the foreign key behind the loop, from the column in the generic plan: the rows that reference one parent (a collection, `@OneToMany`), or the parent of each row (`@ManyToOne`). Measuring needs PostgreSQL 12 or later. `--runs` takes the median of several runs of the batched statement; `--limit` sets how many loops are shown and measured.
+
+**Privacy.** The reports leave out the values the statements ran with, except those written into a statement's text. Logging every statement with its values writes the application's data to the log: keep such logs where the data may be.
+
 ## Share a plan
 
 A plan tells a lot about a database: the names of its tables, columns and indexes, and the values a statement looked for. `explainsql anonymize` replaces them before a plan goes into a bug report, an issue or a chat:

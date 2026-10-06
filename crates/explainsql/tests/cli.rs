@@ -935,6 +935,155 @@ fn tells_when_plans_in_logs_changed() {
 }
 
 /// A plan for sharing: names and values replaced, the report the same.
+/// The requests of statement logs and the loops in them, from the logs
+/// captured in the three formats in fixtures/requests.
+#[test]
+fn finds_loops_in_requests() {
+    let log = fixture("requests/postgresql.log");
+    let text = stdout(&run(&["requests", log.to_str().unwrap()], None));
+    // The same report from every format.
+    for other in ["requests/postgresql.csv", "requests/postgresql.json"] {
+        let path = fixture(other);
+        assert_eq!(
+            stdout(&run(&["requests", path.to_str().unwrap()], None)),
+            text
+        );
+    }
+    assert!(text.starts_with("4 requests of 29 statements"), "{text}");
+    assert!(
+        text.contains(
+            "LOOP    SELECT id, product_id, quantity FROM order_items WHERE order_id = ?"
+        ),
+        "{text}"
+    );
+    assert!(
+        text.contains("5 runs in each of 2 requests, 10 in all"),
+        "{text}"
+    );
+    assert!(
+        text.contains(
+            "Batched:\n          SELECT id, product_id, quantity FROM order_items WHERE order_id = ANY($1)\n"
+        ),
+        "{text}"
+    );
+    assert!(
+        text.contains("REPEAT  SELECT value FROM settings_kv WHERE key = ?"),
+        "{text}"
+    );
+    // Values written into the text, and an aggregate: batched per value.
+    assert!(
+        text.contains(
+            "CROSS JOIN LATERAL (SELECT count(*) FROM orders WHERE customer_id = batch.value) AS x"
+        ),
+        "{text}"
+    );
+    // spring, from the sqlcommenter tags: JPA advice only.
+    assert!(text.contains("→ JPA: JOIN FETCH"), "{text}");
+
+    let json: serde_json::Value = serde_json::from_str(&stdout(&run(
+        &["requests", log.to_str().unwrap(), "--format", "json"],
+        None,
+    )))
+    .unwrap();
+    let by: Vec<&str> = json["requests"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|request| request["by"].as_str().unwrap())
+        .collect();
+    assert_eq!(by, ["trace", "trace", "transaction", "session"]);
+    assert_eq!(json["loops"][0]["kind"], "loop");
+    assert_eq!(json["loops"][0]["varying"], serde_json::json!([1]));
+    assert_eq!(json["loops"][0]["batched"]["form"], "any");
+    assert_eq!(
+        json["loops"][2]["batched"]["not_batched"],
+        "it ran with the same values every time"
+    );
+    // The values the application ran with stay out of the report.
+    assert!(json["log"][1].get("parameters").is_none());
+    assert!(!json.to_string().contains("76639"));
+
+    let markdown = stdout(&run(
+        &["requests", log.to_str().unwrap(), "--format", "md"],
+        None,
+    ));
+    assert!(
+        markdown.starts_with("### explainsql requests"),
+        "{markdown}"
+    );
+
+    // A loop needs more runs than the fixture has.
+    let text = stdout(&run(
+        &["requests", log.to_str().unwrap(), "--min-runs", "6"],
+        None,
+    ));
+    assert!(
+        text.contains("No loop: no statement ran 6 times or more"),
+        "{text}"
+    );
+
+    let output = run(&["requests", "-"], Some("nothing to read\n"));
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("log_min_duration_statement = 0"),
+        "{output:?}"
+    );
+}
+
+/// The batched statement of each loop measured against its runs, against
+/// the database named by `EXPLAINSQL_TEST_DATABASE_URL`; skipped without
+/// it.
+#[test]
+fn measures_the_batched_statement_of_a_loop() {
+    let Ok(url) = std::env::var("EXPLAINSQL_TEST_DATABASE_URL") else {
+        eprintln!("EXPLAINSQL_TEST_DATABASE_URL is not set; skipping");
+        return;
+    };
+    let log = fixture("requests/postgresql.log");
+    let output = run(&["requests", log.to_str().unwrap(), "-d", &url], None);
+    assert!(output.status.success(), "{output:?}");
+    let text = stdout(&output);
+    assert!(
+        text.contains(
+            "SELECT id, product_id, quantity FROM order_items WHERE order_id = ANY($1::integer[])\n"
+        ),
+        "{text}"
+    );
+    assert!(
+        text.contains("Measured, rolled back: the 5 runs took"),
+        "{text}"
+    );
+    assert!(text.contains("order_items_order_id_fkey"), "{text}");
+    assert!(text.contains("@OneToMany"), "{text}");
+
+    let json: serde_json::Value = serde_json::from_str(&stdout(&run(
+        &[
+            "requests",
+            log.to_str().unwrap(),
+            "-d",
+            &url,
+            "--format",
+            "json",
+        ],
+        None,
+    )))
+    .unwrap();
+    let proof = &json["loops"][0]["proof"];
+    assert_eq!(proof["runs"], 5);
+    assert_eq!(proof["values"], 5);
+    // Five sequential scans of order_items against one.
+    let single = proof["single"]["pages"].as_u64().unwrap();
+    let batched = proof["batched"]["pages"].as_u64().unwrap();
+    assert!(single > 4 * batched, "{proof}");
+    let reference = &json["loops"][0]["reference"];
+    assert_eq!(reference["constraint"], "order_items_order_id_fkey");
+    assert_eq!(reference["to_table"], "orders");
+    assert!(reference["children"].as_bool().unwrap());
+    // The aggregate's loop runs per value, in a LATERAL subquery.
+    assert_eq!(json["loops"][1]["batched"]["form"], "lateral");
+    assert_eq!(json["loops"][1]["proof"]["values"], 3);
+}
+
 #[test]
 fn anonymizes_a_plan() {
     let path = fixture("pg/16/seq_scan_selective.txt");
