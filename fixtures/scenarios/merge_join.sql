@@ -1,4 +1,5 @@
 -- description: Merge join, forced by disabling hash and nested-loop joins.
+-- rules: ES013
 -- set: enable_hashjoin = off
 -- set: enable_nestloop = off
 -- set: max_parallel_workers_per_gather = 0

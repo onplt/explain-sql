@@ -37,8 +37,8 @@ Planning 0.526 ms · Execution 369.3 ms · Buffers 21,527 pages, 18% from cache
                                                                               │→ An index on order_items (order_id)
                                                                               │would turn each of the 10 inner scans
                                                                               │into an index lookup.
-                                                                              │Docs:
- Findings (2) │ Advice (1) · Tab to browse, f/i to switch ──────────────────────────────────────────────────────────────
+ Findings (3) │ Advice (1) · Tab to browse, f/i to switch ──────────────────────────────────────────────────────────────
 HIGH   ES001 Selective sequential scan: Seq Scan on order_items oi reads 3,000,000 rows over 10 loops, and the join fil…
 HIGH   ES005 Expensive nested-loop inner side: Nested Loop repeats Seq Scan on order_items oi 10 times; that takes 97% …
+MEDIUM ES013 Planner settings force the plan: The plan was made with enable_hashjoin = off, enable_material = off and e…
 j/k move  h/l fold  / search  1-9 hotspots  Tab list  i advice  ? help  q quit

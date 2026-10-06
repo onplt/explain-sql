@@ -24,3 +24,4 @@ Each rule lives in its own file, `crates/explainsql-core/src/rules/esNNN_*.rs`, 
 | [ES010](rules/ES010.md) | Cartesian product | Add the missing join condition |
 | [ES011](rules/ES011.md) | Fewer parallel workers than planned | Review the parallel worker pool |
 | [ES012](rules/ES012.md) | JIT overhead dominates | `jit_above_cost`, or `jit = off` for OLTP |
+| [ES013](rules/ES013.md) | Planner settings force the plan | Reset `enable_*` settings left off in the session, role or database |

@@ -44,6 +44,11 @@ All notable changes to ExplainSQL. The format follows
   failed. Exit codes 0, 1 and 2; text, Markdown, JSON or SARIF.
 - `--fail-on SEVERITY`: with a printed report, exit with 1 when a finding is
   at least that severe.
+- ES013, planner settings force the plan: the plan was made with an
+  `enable_*` setting off, as left on in a session or set for a role or a
+  database, or the planner used a node such a setting disables because it
+  found no other way (`Disabled: true` from PostgreSQL 18, the disable cost
+  before). Applications that plan with the defaults may get another plan.
 - I/O time, from plans captured with `track_io_timing`: among the
   statement's facts when it takes a tenth of the time or more, in the
   verdict when reading pages that were not in shared buffers took half of

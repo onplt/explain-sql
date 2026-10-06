@@ -12,7 +12,7 @@ Share      Time              Node                                  Rows  Estimat
  3.3%   12.1 ms  ▍           ├─ Seq Scan on orders o                 10        10    2,417
   51%  189.3 ms  █████▏      └─ Seq Scan on order_items oi  300,000 ×10   300,000   19,110
 
-Findings (2)
+Findings (3)
 
   HIGH    ES001 Selective sequential scan
           Seq Scan on order_items oi reads 3,000,000 rows over 10 loops, and the join filter above
@@ -33,6 +33,16 @@ Findings (2)
           Rows removed by the join filter: 2,999,986
           → An index on order_items (order_id) would turn each of the 10 inner scans into an index
           lookup.
+
+  MEDIUM  ES013 Planner settings force the plan
+          The plan was made with enable_hashjoin = off, enable_material = off and enable_mergejoin =
+          off, which keep the planner from some of its usual choices.
+          Settings: enable_hashjoin = off, enable_material = off, enable_mergejoin = off
+          → Applications that plan with the defaults may get another plan: reset them (RESET
+          enable_hashjoin; RESET enable_material; RESET enable_mergejoin, or a new session) and run
+          EXPLAIN again. If a role or a database sets them (ALTER ROLE or ALTER DATABASE … SET),
+          every session plans this way; to test a plan, SET LOCAL keeps a setting to one
+          transaction.
 
 Advice (1)
 

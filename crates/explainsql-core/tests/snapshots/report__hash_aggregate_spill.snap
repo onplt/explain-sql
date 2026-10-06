@@ -12,7 +12,7 @@ Share      Time              Node                      Rows  Estimate  Buffers
   91%  177.3 ms  █████████▏  HashAggregate           20,000    19,904        0
  8.0%   15.6 ms  ▊           └─ Seq Scan on orders  200,000   200,000    2,417
 
-Findings (1)
+Findings (2)
 
   HIGH    ES004 Hash or aggregate spilled to disk
           HashAggregate wrote 7.3 MB to disk because its hash table did not fit in work_mem.
@@ -23,6 +23,15 @@ Findings (1)
           → Raise work_mem (or hash_mem_multiplier) so that the aggregate's hash table fits in
           memory. For this statement alone: SET LOCAL work_mem = '16MB' in its transaction. Every
           session that runs the statement at the same time may take that much.
+
+  MEDIUM  ES013 Planner settings force the plan
+          The plan was made with enable_sort = off, which keeps the planner from some of its usual
+          choices.
+          Settings: enable_sort = off
+          → Applications that plan with the defaults may get another plan: reset it (RESET
+          enable_sort, or a new session) and run EXPLAIN again. If a role or a database sets it
+          (ALTER ROLE or ALTER DATABASE … SET), every session plans this way; to test a plan, SET
+          LOCAL keeps a setting to one transaction.
 
 Share and Time: time spent in each node itself, wall-clock. Rows: actual rows per loop, ×loops when
 it ran more than once. ▲/▼: actual rows above or below the estimate by 10× or more. Buffers: pages

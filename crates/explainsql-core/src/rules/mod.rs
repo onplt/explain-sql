@@ -17,6 +17,7 @@ mod es009_foreign_key_trigger;
 mod es010_cartesian_product;
 mod es011_workers_not_launched;
 mod es012_jit_overhead;
+mod es013_forced_plan;
 
 use serde::Serialize;
 
@@ -55,7 +56,7 @@ impl Serialize for Rule {
 }
 
 /// Every rule, in ID order.
-pub const RULES: [Rule; 12] = [
+pub const RULES: [Rule; 13] = [
     es001_selective_seq_scan::RULE,
     es002_row_misestimate::RULE,
     es003_sort_spill::RULE,
@@ -68,11 +69,12 @@ pub const RULES: [Rule; 12] = [
     es010_cartesian_product::RULE,
     es011_workers_not_launched::RULE,
     es012_jit_overhead::RULE,
+    es013_forced_plan::RULE,
 ];
 
 type Check = fn(&Context) -> Vec<Finding>;
 
-const CHECKS: [Check; 12] = [
+const CHECKS: [Check; 13] = [
     es001_selective_seq_scan::check,
     es002_row_misestimate::check,
     es003_sort_spill::check,
@@ -85,6 +87,7 @@ const CHECKS: [Check; 12] = [
     es010_cartesian_product::check,
     es011_workers_not_launched::check,
     es012_jit_overhead::check,
+    es013_forced_plan::check,
 ];
 
 /// Something a rule found in a plan.
@@ -279,7 +282,7 @@ mod tests {
     #[test]
     fn rules_are_in_id_order() {
         let ids: Vec<&str> = RULES.iter().map(|rule| rule.id).collect();
-        let expected: Vec<String> = (1..=12).map(|n| format!("ES{n:03}")).collect();
+        let expected: Vec<String> = (1..=13).map(|n| format!("ES{n:03}")).collect();
         assert_eq!(ids, expected);
     }
 }

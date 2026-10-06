@@ -21,8 +21,8 @@ Buffers: shared hit 3,872, read 17,655
 Read by the node itself: 0 pages
 
 Join Filter: (o.id = oi.order_id)
-Output: o.id, oi.product_id
- Findings (2) │ Advice (1) · Tab to browse, f/i to switch ──────────────────────
+ Findings (3) │ Advice (1) · Tab to browse, f/i to switch ──────────────────────
 HIGH   ES001 Selective sequential scan: Seq Scan on order_items oi reads 3,000,…
 HIGH   ES005 Expensive nested-loop inner side: Nested Loop repeats Seq Scan on …
+MEDIUM ES013 Planner settings force the plan: The plan was made with enable_has…
 j/k move  h/l fold  / search  1-9 hotspots  Tab list  i advice  ? help  q quit

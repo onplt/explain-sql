@@ -31,7 +31,8 @@
       "description": "Bitmap heap scan over most of the table with a tiny work_mem, so the bitmap becomes lossy and rows are rechecked.",
       "indexes": [],
       "rules": [
-        "ES008"
+        "ES008",
+        "ES013"
       ],
       "status": "generated"
     },
@@ -81,6 +82,7 @@
       "description": "enable_seqscan = off on a table without indexes; PostgreSQL 18 marks the node as disabled, older versions add disable_cost to its estimate.",
       "indexes": [],
       "rules": [
+        "ES013",
         "ES012?"
       ],
       "status": "generated"
@@ -103,7 +105,9 @@
       "advice": null,
       "description": "Sorted GROUP BY (group aggregate) with hash aggregation disabled.",
       "indexes": [],
-      "rules": [],
+      "rules": [
+        "ES013"
+      ],
       "status": "generated"
     },
     "hash_aggregate": {
@@ -118,7 +122,8 @@
       "description": "Hash aggregate that spills to disk because work_mem is tiny (PostgreSQL 13 and later).",
       "indexes": [],
       "rules": [
-        "ES004"
+        "ES004",
+        "ES013"
       ],
       "status": "generated"
     },
@@ -134,7 +139,8 @@
       "description": "Hash join whose hash table does not fit in work_mem and is split into batches on disk.",
       "indexes": [],
       "rules": [
-        "ES004"
+        "ES004",
+        "ES013"
       ],
       "status": "generated"
     },
@@ -150,7 +156,8 @@
       "description": "Index-only scan on a table whose visibility map is out of date, so most rows need a heap fetch.",
       "indexes": [],
       "rules": [
-        "ES007"
+        "ES007",
+        "ES013"
       ],
       "status": "generated"
     },
@@ -230,7 +237,9 @@
       "advice": null,
       "description": "Merge join, forced by disabling hash and nested-loop joins.",
       "indexes": [],
-      "rules": [],
+      "rules": [
+        "ES013"
+      ],
       "status": "generated"
     },
     "misestimate_correlated_columns": {
@@ -278,7 +287,8 @@
       ],
       "rules": [
         "ES001",
-        "ES005"
+        "ES005",
+        "ES013"
       ],
       "status": "generated"
     },
@@ -286,14 +296,18 @@
       "advice": null,
       "description": "Nested loop with a Memoize cache in front of the inner index scan (PostgreSQL 14 and later).",
       "indexes": [],
-      "rules": [],
+      "rules": [
+        "ES013"
+      ],
       "status": "generated"
     },
     "never_executed": {
       "advice": null,
       "description": "The outer side returns no rows, so the inner side of the nested loop is never executed.",
       "indexes": [],
-      "rules": [],
+      "rules": [
+        "ES013"
+      ],
       "status": "generated"
     },
     "parallel_aggregate": {

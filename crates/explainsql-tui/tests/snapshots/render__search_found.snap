@@ -27,8 +27,8 @@ On Seq Scan on order_items oi
 Seq Scan on order_items oi reads 3,000,000 rows over 10 loops, and the join filter above keeps 14 of
 them.
 Rows kept: 14 of 3,000,000 (<0.001%)
-Join filter: (o.id = oi.order_id)
- Findings (2) │ Advice (1) · Tab to browse, f/i to switch ──────────────────────────────────────────
+ Findings (3) │ Advice (1) · Tab to browse, f/i to switch ──────────────────────────────────────────
 HIGH   ES001 Selective sequential scan: Seq Scan on order_items oi reads 3,000,000 rows over 10 loo…
 HIGH   ES005 Expensive nested-loop inner side: Nested Loop repeats Seq Scan on order_items oi 10 ti…
+MEDIUM ES013 Planner settings force the plan: The plan was made with enable_hashjoin = off, enable_…
 Match 1 of 1

@@ -201,7 +201,7 @@ fn check_reports() {
             .as_array()
             .unwrap()
             .len(),
-        14
+        15
     );
 }
 
