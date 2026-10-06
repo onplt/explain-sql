@@ -6,6 +6,8 @@ All notable changes to ExplainSQL. The format follows
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-06
+
 ### Added
 
 - `explainsql anonymize`: a plan to share in a bug report or an issue, with
