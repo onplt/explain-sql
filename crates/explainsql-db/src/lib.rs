@@ -12,6 +12,7 @@ pub mod conn;
 mod exec;
 mod prepared;
 mod prove;
+mod stats;
 mod tls;
 
 use std::fmt;
@@ -365,6 +366,47 @@ impl Database {
             ));
         }
         Ok(())
+    }
+
+    /// The `limit` statements of this database with the most execution
+    /// time, from pg_stat_statements.
+    pub fn statements(
+        &self,
+        limit: usize,
+        safety: Safety,
+    ) -> Result<Vec<explainsql_core::top::Entry>, Error> {
+        self.canceller.cancelled.store(false, Ordering::SeqCst);
+        let result = self.runtime.block_on(stats::statements(
+            &self.client,
+            limit,
+            safety,
+            self.server_version,
+        ));
+        self.classify(result, safety)
+    }
+
+    /// Whether [`Database::generic_plan`] can plan statements with
+    /// parameters: `EXPLAIN (GENERIC_PLAN)` came with PostgreSQL 16.
+    pub fn has_generic_plan(&self) -> bool {
+        self.server_version >= 160_000
+    }
+
+    /// The generic plan of a statement with parameters, as JSON, estimated
+    /// and without values: nothing runs.
+    pub fn generic_plan(&self, sql: &str, safety: Safety) -> Result<String, Error> {
+        if !self.has_generic_plan() {
+            return Err(Error::Refused(
+                "planning a statement with parameters without their values needs PostgreSQL 16 or later, for EXPLAIN (GENERIC_PLAN)".to_owned(),
+            ));
+        }
+        self.canceller.cancelled.store(false, Ordering::SeqCst);
+        let result = self.runtime.block_on(exec::generic(
+            &self.client,
+            sql,
+            safety,
+            self.server_version,
+        ));
+        self.classify(result, safety)
     }
 
     /// What the catalog says about the tables and foreign keys a plan and

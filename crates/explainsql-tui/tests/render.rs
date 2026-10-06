@@ -261,3 +261,66 @@ fn limit() -> Duration {
         Duration::from_millis(16)
     }
 }
+
+/// The list of `explainsql top`: the costliest statements, one that
+/// cannot be planned dimmed and explained; then, smaller, with --measure.
+#[test]
+fn statement_list() {
+    use explainsql_core::top::{Entry, unplannable};
+    let entry = |query: &str, calls: i64, total_ms: f64, read: i64, temp: i64| Entry {
+        queryid: Some(calls * 7919),
+        query: query.to_owned(),
+        calls,
+        total_ms,
+        // Of a database whose statements took 1,000 s in all.
+        share: total_ms / 1_000_000.0,
+        mean_ms: total_ms / calls as f64,
+        rows: calls * 3,
+        shared_hit: read * 9,
+        shared_read: read,
+        temp_written: temp,
+        unplannable: unplannable(query, Some(1024)),
+    };
+    let entries = vec![
+        entry(
+            "SELECT o.id, o.amount\n  FROM orders o\n WHERE o.customer_id = $1\n ORDER BY o.created_at DESC\n LIMIT $2",
+            48_210,
+            812_400.0,
+            2_417,
+            0,
+        ),
+        entry(
+            "SELECT status, count(*) FROM orders GROUP BY status",
+            1_204,
+            96_300.0,
+            24_170,
+            3_412,
+        ),
+        entry("VACUUM (ANALYZE) orders", 12, 41_000.0, 30_000, 0),
+        entry(
+            "UPDATE orders SET note = $1 WHERE id = $2",
+            310_000,
+            12_900.0,
+            12,
+            0,
+        ),
+    ];
+    let mut list = explainsql_tui::List::new(
+        entries,
+        "app@db.internal:5432/shop, PostgreSQL 16.4".to_owned(),
+        true,
+    );
+    let theme = theme();
+    insta::assert_snapshot!(
+        "statement_list_120x40",
+        text(&explainsql_tui::render_list(&mut list, &theme, 120, 40))
+    );
+    list.handle(Key::Char('j'));
+    list.handle(Key::Char('j'));
+    assert_eq!(list.handle(Key::Enter), None);
+    list.measure = true;
+    insta::assert_snapshot!(
+        "statement_list_80x24",
+        text(&explainsql_tui::render_list(&mut list, &theme, 80, 24))
+    );
+}

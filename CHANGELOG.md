@@ -24,6 +24,12 @@ All notable changes to ExplainSQL. The format follows
 - `F` in the viewer: the plan as an icicle, each node as wide as the CPU
   time in it and below it (or its estimated cost, without timing), with
   zoom. See the guide.
+- `explainsql top -d DATABASE`: the statements that took the most execution
+  time, from pg_stat_statements. In a terminal, Enter shows the plan of the
+  one selected without running it, with `EXPLAIN (GENERIC_PLAN)` for a
+  statement with parameters from PostgreSQL 16, and p tries values for its
+  parameters as `--params` does. `--print` prints the list as text,
+  Markdown or JSON.
 
 ### Changed
 

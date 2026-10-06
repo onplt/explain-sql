@@ -10,6 +10,7 @@ use std::time::Duration;
 
 use explainsql_core::ir::Plan;
 use explainsql_core::scenario::Setting;
+use explainsql_core::top;
 use explainsql_db::{Cache, Database, Error, Mode, Safety, Settings, Writes};
 
 fn database() -> Option<Database> {
@@ -573,4 +574,164 @@ fn reads_column_statistics() {
         db.column_stats(None, "orders", "no_such_column").unwrap(),
         None
     );
+}
+
+/// The costliest statements from pg_stat_statements, and the generic plan
+/// of one with parameters, which runs nothing.
+#[test]
+fn reads_pg_stat_statements_and_plans_generically() {
+    let Some(db) = database() else { return };
+    let catalog = db.catalog(&[], &[]).unwrap();
+    if !catalog
+        .extensions
+        .iter()
+        .any(|name| name == "pg_stat_statements")
+    {
+        eprintln!("pg_stat_statements is not installed; skipping");
+        return;
+    }
+    // Something to count: a statement with a constant, which
+    // pg_stat_statements records with $1.
+    for _ in 0..3 {
+        db.explain(
+            "SELECT id, amount FROM orders WHERE customer_id = 4242",
+            Mode::Analyze,
+            Safety::default(),
+        )
+        .unwrap();
+    }
+    // All of them: other tests' statements may take more time.
+    let entries = db.statements(1000, Safety::default()).unwrap();
+    assert!(!entries.is_empty());
+    assert!(
+        entries
+            .windows(2)
+            .all(|pair| pair[0].total_ms >= pair[1].total_ms)
+    );
+    let entry = entries
+        .iter()
+        .find(|entry| {
+            entry.query.contains("FROM orders WHERE customer_id = $1")
+                && entry.query.starts_with("EXPLAIN")
+        })
+        .or_else(|| {
+            entries
+                .iter()
+                .find(|entry| entry.query.contains("customer_id = $1"))
+        })
+        .unwrap_or_else(|| panic!("{entries:#?}"));
+    assert!(entry.calls >= 3, "{entry:?}");
+    assert!(entries.iter().all(|entry| entry.queryid.is_some()));
+    let shares: f64 = entries.iter().map(|entry| entry.share).sum();
+    assert!(shares > 0.0 && shares <= 1.0 + 1e-9, "{shares}");
+
+    let sql = "SELECT id, amount FROM orders WHERE customer_id = $1";
+    if db.has_generic_plan() {
+        let json = db.generic_plan(sql, Safety::default()).unwrap();
+        let plan = explainsql_core::parse(&json).unwrap();
+        assert!(plan.root().actuals.is_none(), "estimated: nothing ran");
+        assert!(
+            plan.nodes
+                .iter()
+                .any(|node| node.relation_name.as_deref() == Some("orders"))
+        );
+        // Utility commands have no plan.
+        assert!(matches!(
+            db.generic_plan("VACUUM orders", Safety::default()),
+            Err(Error::Refused(_))
+        ));
+        // One statement only: the second is never run.
+        let refused = db.generic_plan(
+            "SELECT 1 FROM orders WHERE id = $1; UPDATE orders SET note = 'x'",
+            Safety::default(),
+        );
+        assert!(
+            matches!(&refused, Err(Error::Server(message)) if message.contains("multiple commands")),
+            "{refused:?}"
+        );
+        // A statement that writes is planned, not run.
+        let before = count(&db, "orders");
+        let json = db
+            .generic_plan(
+                "UPDATE orders SET note = $1 WHERE customer_id = $2",
+                Safety::default(),
+            )
+            .unwrap();
+        let plan = explainsql_core::parse(&json).unwrap();
+        assert_eq!(plan.root().node_type, "ModifyTable");
+        assert_eq!(count(&db, "orders"), before);
+    } else {
+        assert!(matches!(
+            db.generic_plan(sql, Safety::default()),
+            Err(Error::Refused(message)) if message.contains("PostgreSQL 16")
+        ));
+    }
+}
+
+/// What reading pg_stat_statements needs. Without the extension in the
+/// database (the same server's `postgres` database), it says what to run.
+/// A role without `pg_read_all_stats`, `EXPLAINSQL_TEST_READER_URL`'s, sees
+/// its own statements, and other roles' as statements it cannot plan; that
+/// part is skipped without it.
+#[test]
+fn says_what_reading_statements_needs() {
+    let Some(db) = database() else { return };
+    let url = std::env::var("EXPLAINSQL_TEST_DATABASE_URL").unwrap();
+    if let Some(other) = postgres_database(&url) {
+        let postgres = Database::connect(&Settings::resolve(Some(&other)).unwrap()).unwrap();
+        match postgres.statements(10, Safety::default()) {
+            Err(Error::Refused(message)) => assert!(
+                message.contains("CREATE EXTENSION pg_stat_statements"),
+                "{message}"
+            ),
+            Ok(_) => eprintln!("pg_stat_statements is in the postgres database too"),
+            Err(error) => panic!("{error}"),
+        }
+    }
+
+    let Ok(url) = std::env::var("EXPLAINSQL_TEST_READER_URL") else {
+        eprintln!("EXPLAINSQL_TEST_READER_URL is not set; skipping");
+        return;
+    };
+    let reader = Database::connect(&Settings::resolve(Some(&url)).unwrap()).unwrap();
+    // Statements of each role: the reader's first read is one of its own.
+    db.explain(
+        "SELECT count(*) FROM customers",
+        Mode::Estimate,
+        Safety::default(),
+    )
+    .unwrap();
+    match reader.statements(1000, Safety::default()) {
+        Err(Error::Refused(message)) if message.contains("not installed") => {
+            eprintln!("pg_stat_statements is not installed; skipping");
+            return;
+        }
+        read => read.unwrap(),
+    };
+    let entries = reader.statements(1000, Safety::default()).unwrap();
+    let hidden: Vec<_> = entries
+        .iter()
+        .filter(|entry| entry.query == top::HIDDEN)
+        .collect();
+    assert!(!hidden.is_empty(), "{entries:#?}");
+    for entry in hidden {
+        assert!(entry.queryid.is_none(), "{entry:?}");
+        let reason = entry.unplannable.as_deref().unwrap();
+        assert!(reason.contains("pg_read_all_stats"), "{reason}");
+    }
+    assert!(
+        entries
+            .iter()
+            .any(|entry| entry.query.contains("pg_stat_statements") && entry.queryid.is_some()),
+        "{entries:#?}"
+    );
+}
+
+/// The same server's `postgres` database, for a URL.
+fn postgres_database(url: &str) -> Option<String> {
+    let (base, query) = url.split_once('?').unwrap_or((url, ""));
+    let (server, _) = base.rsplit_once('/')?;
+    server
+        .contains("://")
+        .then(|| format!("{server}/postgres?{query}"))
 }

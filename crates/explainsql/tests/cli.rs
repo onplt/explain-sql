@@ -224,6 +224,67 @@ fn connected_mode_runs_queries_safely() {
     assert!(json["plan"]["nodes"][0].get("actuals").is_none());
 }
 
+/// The costliest statements from pg_stat_statements, printed, against the
+/// database named by `EXPLAINSQL_TEST_DATABASE_URL`; skipped without it or
+/// without the extension.
+#[test]
+fn lists_the_costliest_statements() {
+    let Ok(url) = std::env::var("EXPLAINSQL_TEST_DATABASE_URL") else {
+        eprintln!("EXPLAINSQL_TEST_DATABASE_URL is not set; skipping");
+        return;
+    };
+    // All of them: other tests' statements may take more time.
+    let output = run(
+        &["top", "-d", &url, "--limit", "1000", "--format", "json"],
+        None,
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    if stderr.contains("pg_stat_statements is not installed") {
+        eprintln!("pg_stat_statements is not installed; skipping");
+        return;
+    }
+    assert!(output.status.success(), "{output:?}");
+    let json: serde_json::Value = serde_json::from_str(&stdout(&output)).unwrap();
+    assert!(
+        json["source"].as_str().unwrap().contains("PostgreSQL "),
+        "{json}"
+    );
+    let statements = json["statements"].as_array().unwrap();
+    assert!(!statements.is_empty() && statements.len() <= 1000, "{json}");
+    let totals: Vec<f64> = statements
+        .iter()
+        .map(|statement| statement["total_ms"].as_f64().unwrap())
+        .collect();
+    assert!(
+        totals.windows(2).all(|pair| pair[0] >= pair[1]),
+        "{totals:?}"
+    );
+    // explainsql's own EXPLAINs are counted, and have no plan of their own.
+    let explains = statements
+        .iter()
+        .find(|statement| statement["query"].as_str().unwrap().starts_with("EXPLAIN"))
+        .unwrap_or_else(|| panic!("{json}"));
+    assert!(
+        explains["unplannable"]
+            .as_str()
+            .unwrap()
+            .contains("without a plan")
+    );
+
+    let output = run(
+        &["top", "-d", &url, "--limit", "5", "--color", "never"],
+        None,
+    );
+    assert!(output.status.success(), "{output:?}");
+    let text = stdout(&output);
+    assert!(text.starts_with("The 5 costliest statements in "), "{text}");
+    let output = run(&["top", "-d", &url, "--limit", "5", "--format", "md"], None);
+    assert!(
+        stdout(&output).starts_with("### The costliest statements in "),
+        "{output:?}"
+    );
+}
+
 /// Asking the planner why, against the database named by
 /// `EXPLAINSQL_TEST_DATABASE_URL`; skipped without it.
 #[test]

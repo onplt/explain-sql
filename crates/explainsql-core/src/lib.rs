@@ -35,6 +35,7 @@ pub mod report;
 pub mod rules;
 pub mod scenario;
 pub mod timeline;
+pub mod top;
 
 pub use analysis::{Analysis, analyze};
 pub use pg::{ParseError, parse, parse_all, parse_log};

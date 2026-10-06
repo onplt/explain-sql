@@ -179,6 +179,32 @@ Either way, each execution is planned again, which costs planning time. An index
 - Values are tried one parameter at a time, so how columns depend on each other is not taken into account.
 - A parameter inside an expression (`lower(email) = $1`), an array (`= ANY($1)`) or a `SET` clause gets no value from the statistics. Give one with `--bind`.
 
+## The costliest statements
+
+```sh
+explainsql top -d shop
+explainsql top -d shop --limit 50 --print
+explainsql top -d shop --format json > statements.json
+```
+
+`explainsql top` lists the statements that took the most execution time in the database, as [pg_stat_statements](https://www.postgresql.org/docs/current/pgstatstatements.html) counts them: their total time and its share of all the statements' time, calls, the mean time, pages read from the cache or from disk, and pages written to temporary files. In a terminal it is a list to pick a statement from:
+
+- `Enter` shows its plan in the viewer, estimated: nothing runs. pg_stat_statements writes the constants of a statement as `$1`, `$2`, …; from PostgreSQL 16, such a statement gets its generic plan, made for any value (`EXPLAIN (GENERIC_PLAN)`).
+- `p` tries values for its parameters, as `--params` does, and shows the report. Before PostgreSQL 16, `Enter` does so too. Only with `--measure` do the plans run, in a transaction that is rolled back, as in connected mode.
+- `q` goes back from the viewer to the list, and quits the list.
+
+Elsewhere, or with `--print`, the list is printed: text, Markdown or JSON (`--format`).
+
+The list marks the statements it cannot plan, and says why:
+
+- commands without a plan, such as `VACUUM`, `SET` or `EXPLAIN`, explainsql's own included;
+- other users' statements, whose text pg_stat_statements shows only to superusers and members of `pg_read_all_stats`;
+- texts cut at `track_activity_query_size` bytes (1024 by default).
+
+**Requirements.** pg_stat_statements must be loaded when the server starts (`shared_preload_libraries = 'pg_stat_statements'`, then a restart) and created in the database (`CREATE EXTENSION pg_stat_statements`); explainsql says which is missing. The list holds the current database's statements. From PostgreSQL 14, only those the application sent: a statement run inside a function counts in the call to the function. Reading the list runs in a `READ ONLY` transaction that is rolled back.
+
+**Limits.** The text pg_stat_statements keeps does not always parse again: a constant written with its type, such as `timestamptz '2026-01-01'`, becomes `timestamptz $1`, which PostgreSQL refuses. Planning such a statement shows the server's error: put the constant back and run the statement with `explainsql -d … -c`.
+
 ## Find plan changes in server logs
 
 "It was fast yesterday" is often a plan that changed: after an `ANALYZE`, as the data grew, when a prepared statement switched to its generic plan, or after an upgrade. With [auto_explain](https://www.postgresql.org/docs/current/auto-explain.html), the server logs the plans it ran, and `explainsql logs` reads them: which plans each statement got, when its plan changed, what changed, and what it cost.

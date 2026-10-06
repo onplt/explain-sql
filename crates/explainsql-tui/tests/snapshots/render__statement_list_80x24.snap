@@ -1,0 +1,28 @@
+---
+source: crates/explainsql-tui/tests/render.rs
+expression: "text(&explainsql_tui::render_list(&mut list, &theme, 80, 24))"
+---
+The costliest statements in app@db.internal:5432/shop, PostgreSQL 16.4
+By total execution time (pg_stat_statements). Measured runs are rolled back.
+ Statements (4) ────────────────────────────────────────────────────────────────
+      Total       Calls      Mean  Statement
+   13.5 min      48,210   16.9 ms  SELECT o.id, o.amount FROM orders o WHERE o.…
+    1.6 min       1,204   80.0 ms  SELECT status, count(*) FROM orders GROUP BY…
+–   41.00 s          12    3.42 s  VACUUM (ANALYZE) orders
+    12.90 s     310,000  0.042 ms  UPDATE orders SET note = $1 WHERE id = $2
+
+
+
+
+
+
+
+
+
+ Statement ─────────────────────────────────────────────────────────────────────
+12 calls · 3.42 s each · 36 rows · 300,000 pages, 90% from cache · query id
+95028
+Cannot be planned: VACUUM is a command without a plan.
+VACUUM (ANALYZE) orders
+
+This statement cannot be planned: VACUUM is a command without a plan.

@@ -15,6 +15,7 @@ use crate::params::{self, Parameter, Sensitivity};
 use crate::pg::{LogEntry, LogMeta};
 use crate::rules::{Finding, Severity};
 use crate::timeline::{Pattern, PlanChange, Statement, Timeline};
+use crate::top::Entry;
 
 /// Node labels longer than this are shortened in the plan table.
 const MAX_NODE_WIDTH: usize = 64;
@@ -787,6 +788,131 @@ fn check_details(item: &Checked) -> Option<String> {
     }
     out.push_str("\n</details>\n");
     Some(out)
+}
+
+/// The costliest statements of a database, as pg_stat_statements counts
+/// them, for a terminal: `source` says where from (`user@host/db,
+/// PostgreSQL 16`).
+pub fn top_text(entries: &[Entry], source: &str, color: bool) -> String {
+    let paint = Paint(color);
+    let mut out = String::new();
+    out.push_str(&paint.bold(&format!(
+        "The {} costliest statement{} in {source}, by total execution time",
+        entries.len(),
+        if entries.len() == 1 { "" } else { "s" }
+    )));
+    out.push_str("\n\n");
+    let cells: Vec<[String; 6]> = entries
+        .iter()
+        .map(|entry| {
+            [
+                format::duration(entry.total_ms),
+                format::percent(entry.share),
+                format::grouped(entry.calls),
+                format::duration(entry.mean_ms),
+                format::grouped(entry.pages()),
+                if entry.temp_written > 0 {
+                    format::grouped(entry.temp_written)
+                } else {
+                    String::new()
+                },
+            ]
+        })
+        .collect();
+    let headers = ["Total", "Share", "Calls", "Mean", "Pages", "Temp"];
+    let mut widths = headers.map(str::len);
+    for row in &cells {
+        for (width, cell) in widths.iter_mut().zip(row) {
+            *width = (*width).max(cell.chars().count());
+        }
+    }
+    let number = entries.len().to_string().len();
+    let mut header = format!("{:>number$}  ", "#");
+    for (heading, width) in headers.iter().zip(widths) {
+        header.push_str(&format!("{heading:>width$}  "));
+    }
+    header.push_str("Statement");
+    out.push_str(&paint.dim(&header));
+    out.push('\n');
+    let used = header.chars().count() - "Statement".len();
+    for (index, (entry, row)) in entries.iter().zip(&cells).enumerate() {
+        let mut line = format!("{:>number$}  ", index + 1);
+        for (cell, width) in row.iter().zip(widths) {
+            line.push_str(&format!("{cell:>width$}  "));
+        }
+        line.push_str(&shorten(
+            &entry.one_line(),
+            LINE_WIDTH.saturating_sub(used).max(20),
+        ));
+        out.push_str(&line);
+        out.push('\n');
+        if let Some(reason) = &entry.unplannable {
+            out.push_str(&paint.dim(&format!("{:used$}cannot be planned: {reason}", "")));
+            out.push('\n');
+        }
+    }
+    if entries.is_empty() {
+        out.push_str(NO_STATEMENTS);
+        out.push('\n');
+    }
+    out
+}
+
+const NO_STATEMENTS: &str =
+    "No statements yet: pg_stat_statements has counted none in this database.";
+
+/// [`top_text`] as Markdown.
+pub fn top_markdown(entries: &[Entry], source: &str) -> String {
+    let mut out = format!(
+        "### The costliest statements in {}, by total execution time\n\n",
+        escape(source)
+    );
+    if entries.is_empty() {
+        out.push_str(NO_STATEMENTS);
+        out.push('\n');
+        return out;
+    }
+    out.push_str("| # | Total | Share | Calls | Mean | Pages | Temp | Statement |\n|---:|---:|---:|---:|---:|---:|---:|---|\n");
+    for (index, entry) in entries.iter().enumerate() {
+        let mut statement = format!("`{}`", shorten(&entry.one_line(), 200).replace('`', "'"));
+        if let Some(reason) = &entry.unplannable {
+            statement.push_str(&format!(" (cannot be planned: {})", escape(reason)));
+        }
+        out.push_str(&format!(
+            "| {} | {} | {} | {} | {} | {} | {} | {} |\n",
+            index + 1,
+            format::duration(entry.total_ms),
+            format::percent(entry.share),
+            format::grouped(entry.calls),
+            format::duration(entry.mean_ms),
+            format::grouped(entry.pages()),
+            if entry.temp_written > 0 {
+                format::grouped(entry.temp_written)
+            } else {
+                String::new()
+            },
+            statement.replace('|', "\\|")
+        ));
+    }
+    out
+}
+
+/// [`top_text`] as JSON.
+pub fn top_json(entries: &[Entry], source: &str) -> String {
+    let report = serde_json::json!({ "source": source, "statements": entries });
+    let mut out = serde_json::to_string_pretty(&report).expect("the report serializes");
+    out.push('\n');
+    out
+}
+
+/// Text cut to `width` characters, ending with an ellipsis.
+fn shorten(text: &str, width: usize) -> String {
+    if text.chars().count() <= width {
+        return text.to_owned();
+    }
+    let mut short: String = text.chars().take(width.saturating_sub(1)).collect();
+    short.push('…');
+    short
 }
 
 /// The checks of a CI run as JSON.
