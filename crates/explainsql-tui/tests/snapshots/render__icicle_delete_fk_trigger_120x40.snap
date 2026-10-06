@@ -1,0 +1,44 @@
+---
+source: crates/explainsql-tui/tests/render.rs
+expression: "frame(&mut app, 120, 40)"
+---
+305.5 ms. 100% of it in the trigger for order_items_order_id_fkey.
+Planning 0.333 ms · Execution 305.5 ms · Triggers 305.3 ms · Buffers 47 pages, 100% from cache
+ Plan · icicle by CPU time · triggers 305.3 ms outside ───────────────────────┌ Details ────────────────────────────────
+▏Delete on orders 0.098 ms                                                    │Delete on orders
+▏Index Sc…                                                                    │Time in node: 0.085 ms (0.028% of the
+                                                                              │runtime)
+                                                                              │With children: 0.098 ms
+                                                                              │Rows: 0 per loop
+                                                                              │Estimate: 0 rows; cost 0.42..8.77, width
+                                                                              │0
+                                                                              │Buffers: shared hit 47
+                                                                              │Read by the node itself: 43 pages
+                                                                              │
+                                                                              │
+                                                                              │
+                                                                              │
+                                                                              │
+                                                                              │
+                                                                              │
+                                                                              │
+                                                                              │
+                                                                              │
+                                                                              │
+                                                                              │
+                                                                              │
+                                                                              │
+                                                                              │
+                                                                              │
+                                                                              │
+                                                                              │
+                                                                              │
+                                                                              │
+                                                                              │
+                                                                              │
+                                                                              │
+                                                                              │
+                                                                              │
+ Findings (1) │ Advice (1) · Tab to browse, f/i to switch ──────────────────────────────────────────────────────────────
+HIGH   ES009 Slow foreign-key trigger: The foreign-key trigger for order_items_order_id_fkey took 100% of the execution…
+k/j parent, child  h/l along the row  Enter zoom in or out  g whole plan  F tree  ? help  q quit

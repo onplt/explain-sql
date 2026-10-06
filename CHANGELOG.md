@@ -6,6 +6,12 @@ All notable changes to ExplainSQL. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- `F` in the viewer: the plan as an icicle, each node as wide as the CPU
+  time in it and below it (or its estimated cost, without timing), with
+  zoom. See the guide.
+
 ## [0.1.1] - 2026-10-06
 
 ### Added

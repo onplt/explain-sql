@@ -16,6 +16,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
 
 use crate::app::{App, Focus, Panel, Row};
+use crate::icicle::Basis;
 use crate::theme::Theme;
 
 /// From this width the details sit beside the tree rather than below it.
@@ -82,13 +83,28 @@ pub fn draw(frame: &mut Frame, app: &mut App, theme: &Theme) {
         (tree, detail)
     } else {
         // The tree takes what it needs, up to 60%; the details the rest.
-        let rows = u16::try_from(app.rows().len()).unwrap_or(u16::MAX);
+        let rows = if app.icicle.is_some() {
+            // One line per level of the plan.
+            app.plan
+                .walk()
+                .into_iter()
+                .map(|(depth, _)| depth + 1)
+                .max()
+                .unwrap_or(1)
+        } else {
+            app.rows().len()
+        };
+        let rows = u16::try_from(rows).unwrap_or(u16::MAX);
         let tree = rows.saturating_add(2).min(body.height * 60 / 100);
         let [tree, detail] =
             Layout::vertical([Constraint::Length(tree), Constraint::Min(0)]).areas(body);
         (tree, detail)
     };
-    draw_tree(frame, app, theme, tree);
+    if app.icicle.is_some() {
+        draw_icicle(frame, app, theme, tree);
+    } else {
+        draw_tree(frame, app, theme, tree);
+    }
     draw_detail(frame, app, theme, detail, area.width >= SIDE_BY_SIDE);
     if findings > 0 {
         match app.panel {
@@ -351,6 +367,132 @@ fn draw_tree(frame: &mut Frame, app: &mut App, theme: &Theme, area: Rect) {
         lines.push(tree_line(app, theme, row, &columns, selected, &matches));
     }
     frame.render_widget(Paragraph::new(lines), inner);
+}
+
+/// The icicle in place of the tree: each node a box under its parent, as
+/// wide as the time spent in it and below it, colored by its own share.
+fn draw_icicle(frame: &mut Frame, app: &mut App, theme: &Theme, area: Rect) {
+    let weights = app.weights();
+    let basis = weights.basis;
+    let mut title = vec![
+        Span::styled(" Plan ", theme.title),
+        Span::styled(
+            match basis {
+                Basis::Time => "· icicle by CPU time ",
+                Basis::Cost => "· icicle by estimated cost: no timing ",
+            },
+            theme.dim,
+        ),
+    ];
+    let zoom = app.icicle.unwrap_or(NodeId(0));
+    if zoom != NodeId(0) {
+        title.push(Span::styled(
+            format!("· in {} ", fit(app.label(zoom), 32)),
+            theme.warm,
+        ));
+    }
+    if let Some(time) = app
+        .analysis
+        .metrics
+        .statement
+        .trigger_time
+        .filter(|&time| time > 0.0)
+    {
+        title.push(Span::styled(
+            format!("· triggers {} outside ", format::duration(time)),
+            theme.dim,
+        ));
+    }
+    let block = Block::new()
+        .borders(Borders::TOP)
+        .border_style(if app.focus == Focus::Tree {
+            theme.focused_border
+        } else {
+            theme.border
+        })
+        .title(Line::from(title));
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+    if inner.height == 0 || inner.width == 0 {
+        return;
+    }
+    let width = usize::from(inner.width);
+    app.icicle_width = width;
+    app.tree_height = usize::from(inner.height);
+    let cells = app.icicle_cells(width);
+    let selected = app.selected_node();
+    let matches = app.matches();
+    let weights = app.weights();
+    // Rows on screen: the selected box's row is always among them.
+    let height = usize::from(inner.height);
+    let depth = cells
+        .iter()
+        .find(|cell| cell.node == selected)
+        .map_or(0, |cell| cell.depth);
+    let offset = depth.saturating_sub(height - 1);
+
+    let mut rows: Vec<Vec<(usize, String, Style)>> = vec![Vec::new(); height];
+    for cell in &cells {
+        let Some(row) = cell
+            .depth
+            .checked_sub(offset)
+            .and_then(|row| rows.get_mut(row))
+        else {
+            continue;
+        };
+        let figure = match basis {
+            Basis::Time => format::duration(weights.subtree[cell.node.index()]),
+            Basis::Cost => format!("{:.0}", weights.subtree[cell.node.index()]),
+        };
+        let text = format!("▏{} {figure}", app.label(cell.node));
+        let style = if cell.node == selected {
+            theme.selected
+        } else if matches.contains(&cell.node) {
+            theme.matched
+        } else {
+            theme.share(weights.own_share(cell.node))
+        };
+        row.push((cell.x, pad(&fit(&text, cell.width), cell.width), style));
+    }
+    // What is folded shows as … in the first free column under its box.
+    for cell in cells.iter().filter(|cell| cell.folded > 0) {
+        let Some(row) = (cell.depth + 1)
+            .checked_sub(offset)
+            .and_then(|row| rows.get_mut(row))
+        else {
+            continue;
+        };
+        let taken = |x: usize| {
+            row.iter()
+                .any(|(start, text, _)| x >= *start && x < start + text.chars().count())
+        };
+        if let Some(x) = (cell.x..cell.x + cell.width).find(|&x| !taken(x)) {
+            row.push((x, "…".to_owned(), theme.dim));
+        }
+    }
+    let lines: Vec<Line> = rows
+        .into_iter()
+        .map(|mut row| {
+            row.sort_by_key(|(x, _, _)| *x);
+            let mut spans = Vec::new();
+            let mut column = 0;
+            for (x, text, style) in row {
+                if x > column {
+                    spans.push(Span::raw(" ".repeat(x - column)));
+                }
+                column = x + text.chars().count();
+                spans.push(Span::styled(text, style));
+            }
+            Line::from(spans)
+        })
+        .collect();
+    frame.render_widget(Paragraph::new(lines), inner);
+}
+
+/// Text padded with spaces to `width` characters.
+fn pad(text: &str, width: usize) -> String {
+    let length = text.chars().count();
+    format!("{text}{}", " ".repeat(width.saturating_sub(length)))
 }
 
 fn tree_line<'a>(
@@ -1059,6 +1201,22 @@ fn draw_status(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
             ])
         }
         (_, Some(message)) => Line::raw(message.clone()),
+        _ if app.icicle.is_some() => {
+            let mut spans = Vec::new();
+            for (key, what) in [
+                ("k/j", "parent, child"),
+                ("h/l", "along the row"),
+                ("Enter", "zoom in or out"),
+                ("g", "whole plan"),
+                ("F", "tree"),
+                ("?", "help"),
+                ("q", "quit"),
+            ] {
+                spans.push(Span::styled(key, theme.key));
+                spans.push(Span::styled(format!(" {what}  "), theme.dim));
+            }
+            Line::from(spans)
+        }
         _ => {
             let mut spans = Vec::new();
             let connected = app.live.is_some();
@@ -1087,7 +1245,7 @@ fn draw_status(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
     frame.render_widget(Paragraph::new(line), area);
 }
 
-const HELP: [(&str, &str); 23] = [
+const HELP: [(&str, &str); 24] = [
     ("j k ↓ ↑", "Move"),
     ("PgDn PgUp", "Move a page"),
     ("g G", "First, last node"),
@@ -1104,6 +1262,7 @@ const HELP: [(&str, &str); 23] = [
     ("w", "Wall-clock or CPU time (parallel plans)"),
     ("b", "Time or buffers"),
     ("J K", "Scroll the details"),
+    ("F", "Icicle view: k j parent, child; h l row; Enter zoom"),
     ("r e", "Connected: run again, edit the statement"),
     ("t", "Connected: test the suggested index"),
     ("y", "Connected: ask the planner why it chose this node"),
