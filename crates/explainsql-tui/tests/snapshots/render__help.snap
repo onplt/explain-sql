@@ -21,14 +21,14 @@ Buffers: shared hi│ x           Time in the node, or including its children   
 Read by the node i│ w           Wall-clock or CPU time (parallel plans)          │
                   │ b           Time or buffers                                  │
 Join Filter: (o.id│ J K         Scroll the details                               │
-Output: o.id, oi.p│ r e         Connected: run again, edit the statement         │
-                  │ t           Connected: test the suggested index              │
-HIGH   ES005 Expen│ y           Connected: ask the planner why it chose this node│
-On Nested Loop    │ Esc         Connected: cancel a run                          │
-Nested Loop repeat│ ?           This help                                        │p's time.
-Inner loops: 10   │ q Esc       Quit                                             │
- Findings (3) │ Ad│             Any key closes this help.                        │──────────────────
-HIGH   ES001 Selec└──────────────────────────────────────────────────────────────┘ rows over 10 loo…
-HIGH   ES005 Expensive nested-loop inner side: Nested Loop repeats Seq Scan on order_items oi 10 ti…
+Output: o.id, oi.p│ F           Icicle view: k j parent, child; h l row; Enter zo│
+                  │ r e         Connected: run again, edit the statement         │
+HIGH   ES005 Expen│ t           Connected: test the suggested index              │
+On Nested Loop    │ y           Connected: ask the planner why it chose this node│
+Nested Loop repeat│ Esc         Connected: cancel a run                          │p's time.
+Inner loops: 10   │ ?           This help                                        │
+ Findings (3) │ Ad│ q Esc       Quit                                             │──────────────────
+HIGH   ES001 Selec│             Any key closes this help.                        │ rows over 10 loo…
+HIGH   ES005 Expen└──────────────────────────────────────────────────────────────┘er_items oi 10 ti…
 MEDIUM ES013 Planner settings force the plan: The plan was made with enable_hashjoin = off, enable_…
 j/k move  h/l fold  / search  1-9 hotspots  Tab list  i advice  ? help  q quit

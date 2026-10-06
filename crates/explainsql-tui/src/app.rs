@@ -9,6 +9,8 @@ use explainsql_core::fingerprint::leaf_key;
 use explainsql_core::format;
 use explainsql_core::ir::{NodeId, Plan};
 
+use crate::icicle::{self, Cell, Weights};
+
 /// Runs of at least this many similar siblings are shown as one row.
 const MIN_GROUP: usize = 4;
 
@@ -148,6 +150,12 @@ pub struct App {
     cpu_total: f64,
     /// CPU time summed over each node's subtree, by node index.
     subtree_cpu: Vec<f64>,
+    /// The icicle view, zoomed on this node, in place of the tree.
+    pub icicle: Option<NodeId>,
+    /// Columns of the icicle at the last frame, for moving between boxes.
+    pub icicle_width: usize,
+    /// What the boxes of the icicle are as wide as.
+    weights: Weights,
 }
 
 /// Keys, independent of the terminal library.
@@ -200,6 +208,13 @@ impl App {
             widths: [0; 3],
             cpu_total: 0.0,
             subtree_cpu: Vec::new(),
+            icicle: None,
+            icicle_width: 80,
+            weights: Weights {
+                basis: icicle::Basis::Cost,
+                own: Vec::new(),
+                subtree: Vec::new(),
+            },
         };
         app.load();
         app
@@ -225,6 +240,10 @@ impl App {
             self.focus = Focus::Tree;
         }
         self.panel = Panel::Findings;
+        // The new plan has other nodes: the icicle starts again at the root.
+        if self.icicle.is_some() {
+            self.icicle = Some(NodeId(0));
+        }
         self.load();
         self.selected = selected.min(self.rows.len().saturating_sub(1));
     }
@@ -266,6 +285,14 @@ impl App {
         }
         app.cpu_total = subtree.first().copied().unwrap_or(0.0);
         app.subtree_cpu = subtree;
+        let cpu: Vec<Option<f64>> = app
+            .analysis
+            .metrics
+            .nodes
+            .iter()
+            .map(|node| node.exclusive_cpu_time)
+            .collect();
+        app.weights = Weights::new(&app.plan, &cpu);
         app.rebuild();
     }
 
@@ -285,6 +312,24 @@ impl App {
     /// CPU time in a node and everything below it.
     pub fn subtree_cpu(&self, id: NodeId) -> f64 {
         self.subtree_cpu[id.index()]
+    }
+
+    pub fn weights(&self) -> &Weights {
+        &self.weights
+    }
+
+    /// The boxes of the icicle across `width` columns. When the selected
+    /// node is too narrow to show, the view zooms on its parent.
+    pub fn icicle_cells(&mut self, width: usize) -> Vec<Cell> {
+        let zoom = self.icicle.unwrap_or(NodeId(0));
+        let cells = icicle::layout(&self.plan, &self.weights, zoom, width);
+        let selected = self.selected_node();
+        if cells.iter().any(|cell| cell.node == selected) {
+            return cells;
+        }
+        let zoom = self.plan.node(selected).parent.unwrap_or(selected);
+        self.icicle = Some(zoom);
+        icicle::layout(&self.plan, &self.weights, zoom, width)
     }
 
     pub fn rows(&self) -> &[Row] {
@@ -478,8 +523,16 @@ impl App {
                     None => self.message = Some(format!("There is no hotspot {digit}.")),
                 }
             }
+            Key::Char('F') => {
+                self.icicle = match self.icicle {
+                    Some(_) => None,
+                    None => Some(NodeId(0)),
+                };
+                self.focus = Focus::Tree;
+            }
             _ if self.focus == Focus::Findings => self.findings_key(key, page),
             _ if self.focus == Focus::Advice => self.advice_key(key, page),
+            _ if self.icicle.is_some() => self.icicle_key(key),
             _ => self.tree_key(key, page),
         }
         Outcome::Continue
@@ -505,6 +558,81 @@ impl App {
                 }
             }
             _ => {}
+        }
+    }
+
+    /// Moves between the boxes of the icicle: k to the parent, j to the
+    /// widest child, h and l along the row; Enter zooms on a box, or out of
+    /// the box zoomed on.
+    fn icicle_key(&mut self, key: Key) {
+        let cells = self.icicle_cells(self.icicle_width);
+        let zoom = self.icicle.unwrap_or(NodeId(0));
+        let selected = self.selected_node();
+        let Some(here) = cells.iter().find(|cell| cell.node == selected).cloned() else {
+            return;
+        };
+        let row = |depth: usize| {
+            let mut row: Vec<&Cell> = cells.iter().filter(|cell| cell.depth == depth).collect();
+            row.sort_by_key(|cell| cell.x);
+            row
+        };
+        let target = match key {
+            Key::Up | Key::Char('k') => {
+                if selected == zoom {
+                    // Above the box zoomed on: zoom out.
+                    let parent = self.plan.node(zoom).parent;
+                    if parent.is_some() {
+                        self.icicle = parent;
+                    }
+                    parent
+                } else {
+                    self.plan.node(selected).parent
+                }
+            }
+            Key::Down | Key::Char('j') => {
+                let child = cells
+                    .iter()
+                    .filter(|cell| self.plan.node(cell.node).parent == Some(selected))
+                    .max_by_key(|cell| cell.width)
+                    .map(|cell| cell.node);
+                if child.is_none() {
+                    self.message = Some(match here.folded {
+                        0 => "This node has nothing below it.".to_owned(),
+                        n => format!(
+                            "{n} node{} below are too narrow to show; Enter zooms on this one.",
+                            if n == 1 { "" } else { "s" }
+                        ),
+                    });
+                }
+                child
+            }
+            Key::Left | Key::Char('h') => row(here.depth)
+                .iter()
+                .rev()
+                .find(|cell| cell.x < here.x)
+                .map(|cell| cell.node),
+            Key::Right | Key::Char('l') => row(here.depth)
+                .iter()
+                .find(|cell| cell.x > here.x)
+                .map(|cell| cell.node),
+            Key::Enter | Key::Char(' ') => {
+                if selected == zoom {
+                    if let Some(parent) = self.plan.node(zoom).parent {
+                        self.icicle = Some(parent);
+                    }
+                } else {
+                    self.icicle = Some(selected);
+                }
+                None
+            }
+            Key::Home | Key::Char('g') => {
+                self.icicle = Some(NodeId(0));
+                Some(NodeId(0))
+            }
+            _ => None,
+        };
+        if let Some(node) = target {
+            self.reveal(node);
         }
     }
 

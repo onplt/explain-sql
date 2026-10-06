@@ -21,6 +21,9 @@ All notable changes to ExplainSQL. The format follows
   on later runs. See the guide.
 - `explainsql check --sarif FILE` writes the SARIF report beside a report in
   another format.
+- `F` in the viewer: the plan as an icicle, each node as wide as the CPU
+  time in it and below it (or its estimated cost, without timing), with
+  zoom. See the guide.
 
 ### Changed
 

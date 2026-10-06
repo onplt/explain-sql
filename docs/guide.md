@@ -50,9 +50,12 @@ The top line is the verdict: the statement's time, where most of it went, and wh
 | `c` | Copy the suggested `CREATE INDEX` (OSC 52: works over SSH and in tmux) |
 | `x`, `w`, `b` | Time including children, CPU time, buffers |
 | `J` `K` | Scroll the details |
+| `F` | The icicle view in place of the tree (below) |
 | `r`, `e`, `t`, `Esc` | Connected: run again, edit the query, test a suggestion, cancel |
 | `y` | Connected: ask the planner why it chose the selected node |
 | `?`, `q` | Help, quit |
+
+`F` shows the plan as an icicle: the root on top and each node in a box under its parent, as wide as the CPU time spent in it and below it, colored by its own share. Workers of a parallel plan add up under the node that gathers them, InitPlans, SubPlans and CTEs sit under the node they belong to, and time in triggers, outside the tree, is in the title. A plan without timing (`TIMING OFF`, or not run) is drawn by estimated cost, and the title says so. `k` `j` go to the parent and to the widest child, `h` `l` along the row, `Enter` zooms on a box to fill the width with it (`Enter` on that box again zooms out, `g` goes back to the whole plan). Nodes too narrow for a column are folded into their parent and shown as `…`; zooming opens them. The details, search and hotspots work as in the tree, and `F` goes back to it on the same node.
 
 Colors follow the terminal: true color, 256 or 16 colors, or none with `NO_COLOR`. `--theme light` suits light backgrounds.
 

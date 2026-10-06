@@ -1,0 +1,44 @@
+---
+source: crates/explainsql-tui/tests/render.rs
+expression: "frame(&mut app, 120, 40)"
+---
+43.9 ms. 70% of it in [CTE per_status] HashAggregate.
+Planning 0.412 ms · Execution 43.9 ms · Buffers 2,417 pages, 93% from cache
+ Plan · icicle by CPU time ───────────────────────────────────────────────────┌ Details ────────────────────────────────
+▏Nested Loop 43.8 ms                                                          │Nested Loop
+▏[CTE per_status] HashAggregate 43.8 ms                                       │Time in node: 0.010 ms (0.023% of the
+▏Seq Scan on orders 13…                                                       │runtime)
+                                                                              │With children: 43.8 ms
+                                                                              │Rows: 10 per loop
+                                                                              │Estimate: 8 rows; cost 5417.05..5417.76,
+                                                                              │width 64
+                                                                              │Removed by join filter: 15 per loop
+                                                                              │Buffers: shared hit 2,243, read 174
+                                                                              │Read by the node itself: 0 pages
+                                                                              │
+                                                                              │Join Filter: (a.n < b.n)
+                                                                              │Output: a.status, b.status
+                                                                              │
+                                                                              │
+                                                                              │
+                                                                              │
+                                                                              │
+                                                                              │
+                                                                              │
+                                                                              │
+                                                                              │
+                                                                              │
+                                                                              │
+                                                                              │
+                                                                              │
+                                                                              │
+                                                                              │
+                                                                              │
+                                                                              │
+                                                                              │
+                                                                              │
+                                                                              │
+                                                                              │
+ Findings (0) │ Advice (1) · Tab to browse, f/i to switch ──────────────────────────────────────────────────────────────
+NO     Seq Scan on orders: it reads the whole table because the query needs every row; there is no condition for an ind…
+k/j parent, child  h/l along the row  Enter zoom in or out  g whole plan  F tree  ? help  q quit

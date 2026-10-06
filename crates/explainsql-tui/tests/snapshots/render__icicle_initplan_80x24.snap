@@ -1,0 +1,28 @@
+---
+source: crates/explainsql-tui/tests/render.rs
+expression: "frame(&mut app, 80, 24)"
+---
+63.3 ms. 45% of it in Seq Scan on orders, which reads 200,000 rows to keep
+1,000.
+Planning 0.312 ms · Execution 63.3 ms · Buffers 4,834 pages, 100% from cache
+ Plan · icicle by CPU time ─────────────────────────────────────────────────────
+▏Seq Scan on orders 63.2 ms
+▏[InitPlan 1 (returns $0)] Aggregate 34.7 ms
+▏Seq Scan on or…
+
+ Details ───────────────────────────────────────────────────────────────────────
+Seq Scan on orders
+Time in node: 28.5 ms (45% of the runtime)
+With children: 63.2 ms
+Rows: 1,000 per loop
+Estimate: 66,667 rows, 67× fewer in fact; cost 4917.01..9834.01, width 10
+Removed by filter: 199,000 per loop
+Buffers: shared hit 4,834
+Read by the node itself: 2,417 pages
+
+Filter: (orders.amount > $0)
+Output: orders.id, orders.amount
+ Findings (2) │ Advice (2) · Tab to browse, f/i to switch ──────────────────────
+MEDIUM ES001 Selective sequential scan: Seq Scan on orders reads 200,000 rows t…
+LOW    ES002 Row misestimate: Seq Scan on orders returned 1,000 rows where the …
+k/j parent, child  h/l along the row  Enter zoom in or out  g whole plan  F tree
