@@ -5,11 +5,12 @@
 # with it.
 set -uo pipefail
 
-out="${RUNNER_TEMP:-/tmp}/explainsql-action"
-mkdir -p "$out"
+# A directory of this run's own: a job can use the action more than once,
+# and each run's outputs must keep naming its own reports.
+mkdir -p "${RUNNER_TEMP:-/tmp}/explainsql-action"
+out="$(mktemp -d "${RUNNER_TEMP:-/tmp}/explainsql-action/check.XXXXXX")"
 report="$out/report.md"
 sarif="$out/report.sarif"
-rm -f "$report" "$sarif"
 
 # Split the paths and the extra arguments on white space, with no globbing.
 set -f

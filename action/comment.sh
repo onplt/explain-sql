@@ -24,7 +24,7 @@ existing="$(gh api --paginate "repos/$REPOSITORY/issues/$PR_NUMBER/comments" \
     exit 0
 }
 
-body="${RUNNER_TEMP:-/tmp}/explainsql-action/comment.md"
+body="$(dirname "$REPORT")/comment.md"
 if [ "$RESULT" = "failed" ]; then
     { cat "$REPORT"; echo; echo "$marker"; } > "$body"
 elif [ -n "$existing" ]; then
