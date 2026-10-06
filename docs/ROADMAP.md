@@ -1,6 +1,6 @@
 # Roadmap
 
-Status: v0.1 is released, and v0.2 is done with version 0.2.0; v0.3 is next (see [After v0.1](#after-v01)). Time estimates assume a single developer working part-time.
+Status: v0.1 and v0.2 are released (0.1.0, 0.1.1 and 0.2.0). Three more features are on `main` for the next release: lock footprints, the cost of writes, and N+1 detection in requests. v0.3 is next (see [After v0.1](#after-v01)). This page keeps the original v0.1 plan and its phases as a record of how the project was built; time estimates assume a single developer working part-time.
 
 ## v0.1 scope
 
@@ -92,5 +92,6 @@ On fresh containers, installing and running `explainsql --demo` takes seconds. T
 ## After v0.1
 
 - **v0.2: fit into team workflows.** Done, released in 0.1.1 and 0.2.0: asking the planner why it chose its plan (`--why-not`, `y` in the viewer), with comparisons that lead with pages and medians of several runs; plan diffs that match nodes between two plans (`explainsql diff`), plan shapes, and reading every plan of an input; `explainsql check`, a CI gate with locked plans, exit codes and SARIF/Markdown output, and `--fail-on`; `--params`, how the plan of a statement with parameters (`$n`, or JDBC's `?`) depends on their values, comparing custom and generic plans as an application gets them; ES013 for plans forced by planner settings, I/O time and a cold cache, and the work_mem a spill needs; `explainsql logs`, which reads auto_explain logs and tells when and how each statement's plan changed, with sqlcommenter tags and query identifiers; a GitHub Action that runs `explainsql check` and comments plan regressions on pull requests; `explainsql top`, a pg_stat_statements entry screen that plans a statement without its parameter values (`GENERIC_PLAN`, PostgreSQL 16+); an icicle view in the viewer (`F`); `explainsql anonymize`, to share a plan without its names and values.
+- **Since 0.2.0, unreleased.** From the second round of feature ideas: `--locks` and `L` in the viewer, the locks a statement takes, the fast path, partitions locked by generic plans, and the commands that would wait ([guide](guide/locks.md)); what a write costs with `--allow-dml` and `W` in the viewer, HOT updates, the indexes that block them, index entries and WAL, proven with `--prove --allow-ddl` ([guide](guide/writes.md)); `explainsql requests`, which groups statement logs into requests and finds N+1 loops, with the batched statement measured against the runs ([guide](guide/requests.md)).
 - **v0.3: become a tool for AI agents.** `explainsql mcp`, which exposes the deterministic analysis engine to coding agents; a viewer for `explainsql logs`, with its timeline and diffs; beta MySQL 8.x support (the `EXPLAIN ANALYZE` tree format and the 8.3+ JSON format).
 - **v0.4 and later:** MariaDB; an editor extension built on the WebAssembly core; ORM bridges (for example, reading the parameter values Hibernate logs next to a statement).

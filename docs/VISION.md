@@ -14,7 +14,7 @@ ExplainSQL is a terminal tool that goes from **plan → diagnosis → fix → pr
 
 > Pictures show you the plan. ExplainSQL tells you why it is slow, writes the fix, and proves it worked.
 
-The structural advantage of a local tool is that it can talk to your database. A web page cannot, and a chat assistant cannot measure anything. Everything in this project follows from using that advantage carefully.
+The structural advantage of a local tool is that it can talk to your database. A web page cannot, and a chat assistant cannot measure anything. Everything in this project follows from using that advantage carefully: asking the planner why it chose its plan, trying the values a prepared statement will see, reading the locks a statement takes and what its writes cost, all inside a transaction that is rolled back.
 
 ## The core feature: the proof loop
 
@@ -70,7 +70,7 @@ Verifying index suggestions is not a new idea. It goes back to the "what-if" ind
 | Parse failures on real plans | The first plan a user tries fails to parse, and they never come back | Lenient parsing; render whatever was understood along with a warning, never fail hard; `--debug-parse`; one-command anonymized bug reports that become test fixtures |
 | Bad index advice | Suggesting an index on a tiny table or a low-selectivity column | Precision over recall: negative rules, confidence levels, visible evidence, and no suggestion at all when unsure |
 | Scope creep | Many engines and features, none of them solid | A strict v0.1 scope (PostgreSQL only) and an explicit out-of-scope list in the [roadmap](ROADMAP.md) |
-| Occasional use | Opened a few times a year, then forgotten | psql pager mode from the start; CI checks and a pg_stat_statements entry point later |
+| Occasional use | Opened a few times a year, then forgotten | psql pager mode from the start; then CI checks and a GitHub Action, a pg_stat_statements entry point, and log analysis that finds the queries worth looking at |
 | "I just paste it into an LLM" | No reason to install a tool | Deterministic math, access to schema and statistics, measured proof; later, an MCP mode so AI agents can use the same engine |
 | Single-maintainer burnout | Issues pile up | Make rules the contribution surface: one rule is one file, its fixtures and a doc page |
 

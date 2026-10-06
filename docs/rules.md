@@ -4,7 +4,7 @@ Rules turn plan data into findings. Every finding names its rule, the node it is
 
 The index advisor builds its `CREATE INDEX` suggestions on the findings of ES001, ES005, ES006 and ES009 (see "Index advisor" in [ARCHITECTURE.md](ARCHITECTURE.md)).
 
-Each rule lives in its own file, `crates/explainsql-core/src/rules/esNNN_*.rs`, with its thresholds as named constants; they will become configurable. Every plan in the fixture corpus is checked against the rules its scenario expects, and no other rule may fire (see [fixtures/README.md](https://github.com/onplt/explain-sql/blob/HEAD/fixtures/README.md)). Each rule has a page with its thresholds, when it stays silent, and an example from the corpus.
+Each rule lives in its own file, `crates/explainsql-core/src/rules/esNNN_*.rs`, with its thresholds as named constants; they will become configurable. Every plan in the fixture corpus is checked against the rules its scenario expects, and no other rule may fire (see [fixtures/README.md](https://github.com/onplt/explain-sql/blob/HEAD/fixtures/README.md)). Each rule has a page with its thresholds, when it stays silent, and an example from the corpus. To propose a new rule, see [contributing](contributing.md#adding-or-changing-a-rule).
 
 **Severity** follows the share of the runtime involved: half or more is high, a fifth or more is medium, anything less is low. When the plan has no timing, the share is taken from buffers. Misestimates are low on their own and at least medium when they feed a join.
 

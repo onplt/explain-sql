@@ -1,98 +1,120 @@
 # ExplainSQL
 
-**Find out why your PostgreSQL query is slow, get a fix, and prove it works, without leaving the terminal.**
+**Find out why your PostgreSQL query is slow, get a fix, and prove that it works, without leaving the terminal.**
 
-![ExplainSQL run against PostgreSQL: the verdict on a slow query, why the planner uses no index, and the suggested index tested with HypoPG](https://raw.githubusercontent.com/onplt/explain-sql/main/docs/demo.svg)
+![ExplainSQL running a slow query against PostgreSQL: the verdict, the slowest node, why the planner uses no index, the suggested index measured before and after in a rolled-back transaction, and the locks the statement takes](https://raw.githubusercontent.com/onplt/explain-sql/main/docs/demo.svg)
 
-ExplainSQL reads `EXPLAIN (ANALYZE, BUFFERS)` output from PostgreSQL. Instead of only drawing the plan tree, it closes the loop:
+`EXPLAIN (ANALYZE, BUFFERS)` is the best tool PostgreSQL gives you for a slow query, and it is hard to read. Times are per-loop averages, buffers are totals, parallel workers and CTEs break simple arithmetic, and the real cause is rarely where the biggest number sits. Web visualizers draw the tree nicely, but they cannot look at your schema, and they cannot tell you whether a fix actually helps.
 
-1. **Diagnose.** It computes exclusive time and buffers for every node, including the parallel-query, CTE and trigger cases where simple subtraction gives the wrong answer. It opens on a one-line verdict: where the time went and why.
-2. **Suggest.** Thirteen rules flag known red flags: selective sequential scans, row misestimates, sorts and hashes spilling to disk, expensive nested loops, slow foreign-key triggers, plans forced by planner settings, and more. An index advisor writes `CREATE INDEX CONCURRENTLY` candidates, each with its evidence and a confidence level, and explains why a slow scan gets none.
-3. **Prove.** Connected to a database, it runs the query inside a transaction that is always rolled back. It tests a suggested index with HypoPG, or, only when you opt in, by building it in a rolled-back transaction. It then shows before and after, pages first, so that a warm cache cannot pass for an improvement.
-4. **Ask why.** It asks the planner again with its choice taken away (`enable_seqscan = off`, `enable_nestloop = off`, more `work_mem`) and tells why it chose its plan: no index can serve the condition, and why not; the planner is right; or it is wrong because of a row misestimate or its cost settings, measured and not guessed.
+ExplainSQL is a single binary that closes that loop:
 
-It works in three ways, all landing on the same screen:
+1. **Diagnose.** It works out the time and pages spent in each node, including the parallel, CTE, InitPlan and trigger cases where naive subtraction gets it wrong, and opens on one sentence: where the time went, and why.
+2. **Suggest.** [Thirteen rules](https://github.com/onplt/explain-sql/blob/main/docs/rules.md) catch the usual suspects: selective sequential scans, row misestimates, sorts and hashes spilling to disk, expensive nested loops, slow foreign-key checks, plans forced by planner settings, and more. An index advisor writes `CREATE INDEX CONCURRENTLY` statements with their evidence and a confidence level, and says plainly when no index would help.
+3. **Prove.** Point it at a database and it runs the query in a transaction that is always rolled back. It tests a suggested index with HypoPG, or, if you allow it, by building the index inside that transaction, and shows before and after. Pages come first, so a warm cache can never pass for an improvement.
 
-- **Offline:** open or pipe a plan, in JSON or text. It can be as EXPLAIN printed it, or still wrapped in psql output, a server log or a Markdown fence. No credentials, no network.
-- **As psql's pager:** with `PSQL_PAGER='explainsql --pager'`, every `EXPLAIN` you run in psql opens in the viewer, and all other output goes to your usual pager.
-- **Connected:** `explainsql -d "$DATABASE_URL" -f slow.sql` runs the query safely and unlocks the "prove" step.
-
-PostgreSQL 12 to 18 are supported. MySQL is on the roadmap but out of scope for the first release.
+Everything else builds on those three steps. It can ask the planner why it turned an index down, show which values of a parameter get a bad generic plan, list the locks a statement takes, explain why an update was not HOT, catch plan regressions in CI, find plan changes and N+1 loops in server logs, and anonymize a plan before you share it.
 
 ## Install
 
-The install scripts download the binary for your platform from the [latest release](https://github.com/onplt/explain-sql/releases/latest), check its SHA-256 checksum, and put it in `~/.local/bin`:
+On Linux or macOS:
 
 ```sh
 curl -fsSL https://github.com/onplt/explain-sql/releases/latest/download/install.sh | sh
 ```
 
+On Windows, in PowerShell:
+
 ```powershell
 irm https://github.com/onplt/explain-sql/releases/latest/download/install.ps1 | iex
 ```
 
-Binaries are built for Linux (x86_64 and aarch64, static), macOS (Intel and Apple silicon) and Windows (x86_64). With Rust 1.85 or later, Cargo builds it from [crates.io](https://crates.io/crates/explainsql), or from the latest commit:
+The scripts download the binary for your platform from the [latest release](https://github.com/onplt/explain-sql/releases/latest), verify its SHA-256 checksum and put it in `~/.local/bin` (`%LOCALAPPDATA%\explainsql\bin` on Windows). Binaries are built for Linux (x86_64 and aarch64, fully static), macOS (Intel and Apple silicon) and Windows (x86_64).
+
+With Rust 1.85 or later you can also build it yourself, from [crates.io](https://crates.io/crates/explainsql) or from the latest commit:
 
 ```sh
 cargo install explainsql --locked
 cargo install --git https://github.com/onplt/explain-sql explainsql --locked
 ```
 
-Then try it on the bundled example: `explainsql --demo`.
-
-## Use
+Then try it on the bundled example plan, no database needed:
 
 ```sh
-explainsql plan.json                                   # open a plan in the viewer (press ? for the keys)
-psql -XAtq -c "EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) SELECT …" | explainsql
-explainsql --print --format md plan.txt                # a report for an issue or a pull request
-explainsql -d "$DATABASE_URL" -f slow.sql              # run it: estimated plan, then EXPLAIN ANALYZE, rolled back
-explainsql -d "$DATABASE_URL" -f slow.sql --print --prove   # and test each suggested index
-explainsql -d "$DATABASE_URL" -f slow.sql --print --why-not --measure   # why the planner chose its plan
-explainsql -d "$DATABASE_URL" -f app.sql --params --measure   # a statement with $1 or ?: is the generic plan bad for some values?
-explainsql -d "$DATABASE_URL" -f slow.sql --print --locks      # the locks it takes, past the fast path, and what would wait for them
-explainsql -d "$DATABASE_URL" -f update.sql --print --allow-dml  # what a write costs: HOT updates, the indexes that block them, WAL
-explainsql diff before.json after.json                 # what changed between two plans, node by node
-explainsql check -d "$DATABASE_URL" queries/           # in CI: fail when a plan got worse than its locked plan
-explainsql logs postgresql.json --changed              # auto_explain logs: when and how each statement's plan changed
-explainsql top -d "$DATABASE_URL"                      # the costliest statements (pg_stat_statements): pick one, see its plan
-explainsql requests postgresql.log -d "$DATABASE_URL"  # N+1 loops in each request of the logs, and the batched statement, measured
-explainsql anonymize plan.json > shared.json           # names and values replaced, to share a plan in an issue
+explainsql --demo
 ```
 
-The [user guide](https://github.com/onplt/explain-sql/blob/main/docs/guide.md) covers the viewer's keys, the pager mode, connected mode and its safety rules, and testing suggestions. The [rule catalog](https://github.com/onplt/explain-sql/blob/main/docs/rules.md) explains every finding, with an example from real plans. Both are also published as the [documentation site](https://onplt.github.io/explain-sql/).
+## A quick tour
 
-## Design documents
+Open a plan you already have. JSON or text both work, as `EXPLAIN` printed it or still wrapped in psql's table, a server log line or a Markdown fence:
 
-- [Vision](https://github.com/onplt/explain-sql/blob/main/docs/VISION.md): the problem, positioning, how this differs from existing tools, risks and non-goals.
-- [Architecture](https://github.com/onplt/explain-sql/blob/main/docs/ARCHITECTURE.md): technology choice, crate layout, plan IR, parsing pipeline, metrics, the index advisor, connected mode and the release pipeline.
-- [Roadmap](https://github.com/onplt/explain-sql/blob/main/docs/ROADMAP.md): v0.1 scope, development phases with exit criteria, and what comes after.
+```sh
+explainsql plan.json
+pbpaste | explainsql
+psql -XAtq -c "EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) SELECT …" | explainsql
+```
+
+Make it psql's pager, and every `EXPLAIN` you run in psql opens in the viewer, while all other output goes to your usual pager:
+
+```sh
+export PSQL_PAGER='explainsql --pager'
+```
+
+Or let it run the query for you. It shows the estimated plan at once, then runs `EXPLAIN ANALYZE` in a rolled-back transaction:
+
+```sh
+explainsql -d "$DATABASE_URL" -f slow.sql
+```
+
+In the viewer, `1` jumps to the slowest node, `y` asks the planner why it chose it, `i` shows the suggested index, `t` tests it, `L` shows the locks, `F` draws the plan as an icicle, and `?` lists every key. Outside a terminal, or with `--print`, you get a report instead, as text, Markdown or JSON.
+
+Here is what else it does, each with a chapter in the guide:
+
+| Command | What it tells you |
+|---|---|
+| `explainsql -d DB -f q.sql --print --prove` | Each suggested index, tested: pages and time before and after. |
+| `explainsql -d DB -f q.sql --print --why-not --measure` | Why the planner chose its plan: no usable index (and why not), a misestimate, its cost settings, or simply that it is right. |
+| `explainsql -d DB -f q.sql --params --measure` | For a statement with `$1` or JDBC's `?`: which values the generic plan suits, and which it ruins. |
+| `explainsql -d DB -f q.sql --print --locks` | The locks it takes, how many miss the fast path, unused indexes it locks anyway, and which migrations would wait for it. |
+| `explainsql -d DB -f update.sql --print --allow-dml` | What a write costs: rows per table, whether updates were HOT, the indexes that stopped them, WAL per row. |
+| `explainsql top -d DB` | The costliest statements from pg_stat_statements. Pick one and see its plan. |
+| `explainsql logs postgresql.log --changed` | From auto_explain logs: when each statement's plan changed, what changed, and what it cost. |
+| `explainsql requests postgresql.log -d DB` | N+1 loops in each request of your logs, with the batched statement that replaces them, measured. |
+| `explainsql diff before.json after.json` | What changed between two plans of the same statement, node by node. |
+| `explainsql check -d DB queries/` | A CI gate: fail when a plan got worse than the one locked for it. Also a [GitHub Action](https://github.com/onplt/explain-sql/blob/main/docs/guide/ci.md#the-github-action). |
+| `explainsql anonymize plan.json` | The same plan with table, column and index names and literal values replaced, ready to paste into an issue. |
+
+## Safe by design
+
+When ExplainSQL runs your query, every run happens inside a transaction that is rolled back, with a statement timeout. Anything that writes or locks rows (`INSERT`, `UPDATE`, `DELETE`, `MERGE`, `SELECT … FOR UPDATE`) runs only with `--allow-dml`, and everything else runs `READ ONLY`, so even a function that writes fails. DDL is refused, and building a test index or dropping one for a proof needs `--allow-ddl` plus a confirmation in the viewer. A rollback cannot undo everything, though: sequences keep their new values, and dblink or foreign tables reach other systems. The [connected mode chapter](https://github.com/onplt/explain-sql/blob/main/docs/guide/connected.md) has the details.
+
+PostgreSQL 12 to 18 are supported.
+
+## Documentation
+
+The full documentation lives at **[onplt.github.io/explain-sql](https://onplt.github.io/explain-sql/)**, and its sources are in [`docs/`](https://github.com/onplt/explain-sql/tree/main/docs):
+
+- [Getting started](https://github.com/onplt/explain-sql/blob/main/docs/getting-started.md): install, read your first plan, run your first query.
+- [The user guide](https://github.com/onplt/explain-sql/blob/main/docs/guide.md): one chapter per feature.
+- [Command-line reference](https://github.com/onplt/explain-sql/blob/main/docs/reference.md): every command, option, environment variable and exit code.
+- [Rule catalog](https://github.com/onplt/explain-sql/blob/main/docs/rules.md): what each finding means, when it stays silent, with an example from a real plan.
+- [Troubleshooting](https://github.com/onplt/explain-sql/blob/main/docs/troubleshooting.md): common questions and surprises.
+- Design: the [vision](https://github.com/onplt/explain-sql/blob/main/docs/VISION.md), the [architecture](https://github.com/onplt/explain-sql/blob/main/docs/ARCHITECTURE.md) and the [roadmap](https://github.com/onplt/explain-sql/blob/main/docs/ROADMAP.md).
 - [Changelog](https://github.com/onplt/explain-sql/blob/main/CHANGELOG.md).
 
-## Development
+## Contributing
+
+Bug reports with a plan that ExplainSQL reads wrongly are the most valuable thing you can send. Run it through `explainsql anonymize` first if it holds anything private. To build and test locally:
 
 ```sh
-cargo test --workspace            # all tests, including the corpus checks
+cargo test --workspace            # every test; connected-mode tests need EXPLAINSQL_TEST_DATABASE_URL
 cargo run -p explainsql -- --demo # the viewer on the sample plan
-cargo xtask gen-fixtures          # regenerate the EXPLAIN corpus (requires Docker)
-cargo xtask rule-docs             # refresh the examples on the rule pages
-cargo xtask demo                  # redraw docs/demo.svg from its recording
-cargo xtask demo --record         # record a real session first (needs tmux and EXPLAINSQL_TEST_DATABASE_URL)
-mdbook build docs                 # the documentation site, in target/book
 ```
 
-Tests of connected mode run against a database with the fixture schema, named by `EXPLAINSQL_TEST_DATABASE_URL`; without it they are skipped. The plan corpus and its scenario format are described in [fixtures/README.md](https://github.com/onplt/explain-sql/blob/main/fixtures/README.md). The parsers are fuzzed with [cargo-fuzz](https://github.com/rust-fuzz/cargo-fuzz), which needs a nightly toolchain:
-
-```sh
-mkdir -p fuzz/corpus/parse
-cargo +nightly fuzz run parse fuzz/corpus/parse fixtures/pg/* fixtures/inputs
-```
-
-Releases are made by pushing a version tag. The release workflow builds every target, smoke-tests each archive on a clean runner, and publishes the GitHub release and the crates on crates.io. [RELEASING.md](https://github.com/onplt/explain-sql/blob/main/RELEASING.md) walks through the first release and every one after it.
+The [contributing guide](https://github.com/onplt/explain-sql/blob/main/docs/contributing.md) covers the test database, the fixture corpus, adding a rule, the documentation site, the demo recording, fuzzing and releases.
 
 ## Status
 
-Pre-alpha. Phases 0 to 4 are done: the fixture corpus, the parsers, the metrics engine and rules, the viewer, the index advisor, connected mode and the proof loop. Phase 5, release hardening, is done: version 0.1.0 was released with binaries for Linux, macOS and Windows. Version 0.2.0 fits it into team workflows: plan diffs, a CI gate with a GitHub Action, statements with parameters, server logs, pg_stat_statements and shareable plans. Feedback is welcome in the issues.
+ExplainSQL is young but complete for its first scope. Version 0.1 shipped the diagnosis, the viewer, the index advisor and the proof loop. Version 0.2 brought it into team workflows: plan diffs, a CI gate and GitHub Action, statements with parameters, server logs, pg_stat_statements, the icicle view and plan anonymization. Lock footprints, the cost of writes and N+1 detection are on `main` for the next release. Feedback and issues are very welcome.
 
 ## License
 

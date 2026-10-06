@@ -1,6 +1,6 @@
 # Architecture
 
-This document describes the design. The plan IR and the parsers (Phase 1), and the metrics engine, the rules and the static report (Phase 2) are implemented; everything from [Predicate parsing](#predicate-parsing) onwards is still planned, and this document will be updated as that code lands.
+This document describes how ExplainSQL is built and why it is built that way: the choice of language, the crates, the plan IR, the parsers, the metrics engine, the rules and the advisor, connected mode and each analysis built on it, and the release pipeline. Everything described here is implemented. For how to use each feature, see the [user guide](guide.md); for how to work on the code, see [contributing](contributing.md).
 
 ## Technology choice: Rust, Ratatui and Crossterm
 
@@ -43,14 +43,16 @@ explain-sql/
 │  │  ├─ src/params.rs           # statements with parameters: values to try, generic and custom plans
 │  │  ├─ src/locks.rs            # the locks a statement takes: fast path, partitions, conflicts, waits
 │  │  ├─ src/writes.rs           # what a write costs: HOT updates, the indexes that block them, WAL
+│  │  ├─ src/top.rs              # pg_stat_statements rows: what can be planned, and why not
+│  │  ├─ src/anonymize.rs        # names and values replaced, consistently, in JSON and text plans
 │  │  ├─ src/timeline.rs         # plans over time from server logs: statements, plan changes, tags
 │  │  ├─ src/requests.rs         # requests from statement logs: grouping, loops (N+1), the batched statement
 │  │  ├─ src/analysis.rs         # metrics + findings + the one-sentence verdict
 │  │  ├─ src/report.rs           # static reports: text, Markdown, JSON
 │  │  └─ tests/                  # corpus, inputs, metrics, rules, report snapshots, robustness
-│  ├─ explainsql-db/             # tokio-postgres + rustls: safe executor, prepared statements, catalog reader, HypoPG/rollback prover
-│  ├─ explainsql-tui/            # Ratatui app: state, views, keymap, theme
-│  └─ explainsql/                # binary: clap CLI, mode dispatch (tui | print | pager | json), diff, check, logs
+│  ├─ explainsql-db/             # tokio-postgres + rustls: safe executor, prepared statements, catalog reader, locks, writes, HypoPG/rollback prover
+│  ├─ explainsql-tui/            # Ratatui app: state, views, keymap, theme, icicle, the top list
+│  └─ explainsql/                # binary: clap CLI, mode dispatch (tui | print | pager | json), connected mode, check, logs, top, requests
 ├─ fixtures/
 │  ├─ schema.sql                 # deterministic dataset
 │  ├─ scenarios/<name>.sql       # one statement plus expectations (rules, advice) per scenario
@@ -60,7 +62,8 @@ explain-sql/
 │  └─ requests/                  # an application's requests, as statement logging writes them
 ├─ fuzz/                         # cargo-fuzz target for the parsers (its own workspace; needs nightly)
 ├─ tools/cross-check/            # compares exclusive times with pev2 and explain.depesz.com
-├─ docs/                         # the documentation site (mdBook): guide, rule catalog, design documents
+├─ action/                       # the GitHub Action's scripts (action.yml is at the root)
+├─ docs/                         # the documentation site (mdBook): getting started, guide chapters, reference, rule catalog, design documents
 │  ├─ rules/ES001.md …           # one page per rule, with an example from the corpus
 │  └─ demo.svg                   # the README's demo, drawn from xtask/demo/recording.json
 ├─ install/                      # install.sh, install.ps1, packaging and smoke tests for releases
@@ -118,7 +121,7 @@ input ─▶ normalize() ─┬─▶ json::parse() ─┬─▶ raw tree ─▶
                       └─▶ text::parse() ─┘
 ```
 
-- **JSON is the primary format and the source of truth.** When connected, we will always request `EXPLAIN (ANALYZE, BUFFERS, VERBOSE, SETTINGS, FORMAT JSON)`, with the options adjusted to the server version.
+- **JSON is the primary format and the source of truth.** When connected, ExplainSQL always requests `EXPLAIN (ANALYZE, BUFFERS, VERBOSE, SETTINGS, FORMAT JSON)` (`VERBOSE, SETTINGS, FORMAT JSON` for the estimated plan), with `SETTINGS` from PostgreSQL 12 and `WAL` added for statements that write from 13.
 - **The text format is supported from v0.1.** It is the default in psql and in `auto_explain`, and most plans shared in issues and chats are text. Accepting only JSON would turn away a large share of users on their first try.
 - **`normalize()`** removes what surrounds a plan and tells JSON (input starting with `[` or `{`) from text. It handles psql's aligned output (ASCII and Unicode line styles, borders 0–2, `+` and `↵` continuation marks, the `(N rows)` footer) as well as its wrapped, expanded and CSV formats; `auto_explain` entries in stderr logs (whatever the `log_line_prefix`), `jsonlog` and `csvlog`, keeping the logged query text; result cells copied in double quotes, as GUI clients such as pgAdmin copy them; Markdown code fences; prompts and other text before a plan; shared indentation; and byte order marks, CRLF line endings and non-breaking spaces. Wrappers can nest (a fenced log excerpt), and each one removed is recorded in `Plan::source`.
 - **Both parsers build the same raw tree:** nodes holding their properties under PostgreSQL's JSON names. The JSON parser reads it off directly. The text parser translates each line into those names: `Buffers: shared hit=5 read=2` becomes `Shared Hit Blocks` and `Shared Read Blocks`, and `Sort Method: quicksort  Memory: 25kB` becomes `Sort Method`, `Sort Space Type` and `Sort Space Used`. One lowering step then serves both formats, and comparing them is direct.
@@ -168,7 +171,7 @@ The results agree with pev2 and explain.depesz.com, compared node by node on 24 
 ## Rules and reports
 
 - **Rules** (`rules/`) read the IR and the metrics and return findings: the rule, the node, a severity from the share of the runtime involved, the evidence, and an action. Each rule is one file with its thresholds as constants, and each documents when it stays silent. The catalog is [rules.md](rules.md).
-- **Conditions** are read by a small predicate reader. It is enough to tell which columns a filter compares with what, whether it wraps them in a cast or a function, and whether it ORs conditions on different columns. The full expression parser comes with the advisor (below).
+- **Conditions** are read by the predicate reader in `expr.rs` (see [Predicate parsing](#predicate-parsing)): enough to tell which columns a filter compares with what, whether it wraps them in a cast or a function, and whether it ORs conditions on different columns.
 - **The verdict** is one sentence: the statement's time, where most of it went, and the finding about that node, if any. For example: `11.9 ms. 100% of it in Seq Scan on orders, which reads 200,000 rows to keep 10.`
 - **Reports** (`report.rs`) come in three formats:
   - text for terminals: the verdict, statement figures, the plan tree with exclusive time, bars and misestimate marks, and the findings;
@@ -202,6 +205,10 @@ The results agree with pev2 and explain.depesz.com, compared node by node on 24 
 - **Input.** Keys come from the terminal even when the plan arrived on standard input: Crossterm opens `/dev/tty` on Unix and the console input on Windows.
 - **Pager mode.** `--pager` reads what psql sends to its pager. A plan opens in the viewer. Anything else goes to `$EXPLAINSQL_PAGER`, `$PAGER` or `less -S`, never back to `explainsql`, and is printed directly when none of them runs. When the output is not a terminal, everything passes through unchanged.
 - **Tests.** `tests/render.rs` draws frames with Ratatui's `TestBackend` and compares them with snapshots: five reference plans at 120×40 and 80×24, help, search, the findings and the view modes. A 5,000-node plan that cannot be folded must draw a frame in under 16 ms in release builds (200 ms in debug builds).
+
+### The icicle view
+
+`icicle.rs` draws the plan as nested boxes: the root on top, each node under its parent, as wide as the time spent in it and below it. The weight is CPU time when the plan was timed, so that the workers of a parallel plan add up under the node that gathers them, and estimated cost otherwise, a node's own cost being its cost less its children's. InitPlans, SubPlans and CTEs sit under the node they are listed under; trigger time, outside the tree, goes in the title. Widths are whole columns: a subtree too narrow for one is folded into its parent and drawn as `…`, and zooming on a box redraws it at the full width, which opens those folds. The view shares the tree's selection, details, search and hotspots, so `F` switches between the two on the same node, and `tests/render.rs` snapshots it.
 
 ## Predicate parsing
 
@@ -413,6 +420,18 @@ The transaction that `exec.rs` rolls back also counts what the statement wrote. 
 - **Reports** (`report::requests_*`). Text and Markdown: each loop with its example request, the batched statement, the proof, the foreign key and the advice. JSON: the requests, the loops and every statement with what the log says, without the values of parameters.
 - **Tests.** `fixtures/requests/` holds a real session logged by PostgreSQL 16 in the three formats at once (see its README). `pg/log.rs` checks that the three give the same statements, values, sessions and durations; `requests.rs` covers grouping, loops, the tokenizer and the batched forms on small inputs; `tests/cli.rs` checks that the three formats give the same report and, against the fixture database, the measured proof and the foreign key; `tests/live.rs` reads foreign keys and round trips.
 
+## The costliest statements: pg_stat_statements
+
+`explainsql top` reads `pg_stat_statements` for the current database in a `READ ONLY` transaction that is rolled back, ordered by total execution time, with calls, mean time, shared pages hit and read, and temporary pages written. It first checks that the library is loaded and the extension created, and says which is missing. `top.rs` in the core is pure: it decides which rows can be planned and why not (a utility command, a text pg_stat_statements hides from roles without `pg_read_all_stats`, or one cut at `track_activity_query_size`), and formats the list in text, Markdown and JSON.
+
+In a terminal, the list is part of `explainsql-tui` (`top.rs`). Enter plans the selected statement without running it: with `EXPLAIN (GENERIC_PLAN)` from PostgreSQL 16 when it has `$n` parameters, as pg_stat_statements writes its constants; before 16, or with `p`, the statement goes through the parameter analysis of [Statements with parameters](#statements-with-parameters). The viewer opens on the result and `q` returns to the list. Tests: `top.rs` covers the rows on small inputs, and `crates/explainsql-db/tests/live.rs` reads the view, including as a role that cannot see other roles' texts (`EXPLAINSQL_TEST_READER_URL`).
+
+## Anonymized plans
+
+`anonymize.rs` replaces what a plan tells about the schema and the data, so that it can be shared: the names of tables, indexes, CTEs, aliases, schemas, columns, constraints and triggers, and literal values. Each name gets a replacement by its kind (`table_a`, `index_a`, `column_a`, …), and each literal one of its form (`'value_a'`, a `LIKE` pattern keeping its `%` at either end, other numbers), the same way everywhere in the input. Names that differ only in their numbers keep differing only in their numbers (`table_b_1`, `table_b_2`), because the viewer's folding, `diff` and plan shapes group partitions by their names with the numbers blanked out, and the anonymized plan must group and match as the original does.
+
+It works on the plans themselves, JSON or text, after `normalize()` has removed their wrappers, and rewrites names in node properties, in conditions and in the query text. Function and type names, keywords, `$n` parameters and system names are kept. A property or line it does not know has every name and value in it replaced. Finally the result is parsed again and must have the same nodes as the input, or nothing is printed. `tests/anonymize.rs` runs it on every corpus plan and every captured input form: each must read back with the same nodes, and nothing it named may be left.
+
 ## Checks in CI
 
 `explainsql check` is a gate: it exits with 0 when every plan passed, 1 when one failed and 2 when it could not run, and says why in text, Markdown, JSON or SARIF.
@@ -422,6 +441,7 @@ The transaction that `exec.rs` rolls back also counts what the statement wrote. 
 - **Binary** (`check.rs`). It collects the files (directories are searched in order: `*.sql` with `-d`, `*.json` and `*.txt` without), reads or runs each one as connected mode does, with the advice checked against the catalog, checks it, and with `--prove` tests the suggested indexes of the plans that failed. A file it cannot read or run is reported on standard error and makes the exit code 2, after the others are checked.
 - **Reports** (`report::check_*`). Text: one line per plan with its shape, then why it failed, notes and fixes. Markdown: a table, and for each plan that failed or changed, its diff folded under `<details>`. JSON: every check with its findings and advice. SARIF 2.1.0: the rules and two more, `plan-worse` and `plan-changed`; each finding is a result on its file, an error when it fails the plan and otherwise a warning or a note by severity.
 - **Tests.** `check.rs` covers the policy and the lock; `tests/report.rs` snapshots the text and Markdown reports; `tests/cli.rs` runs a plan from new to locked to worse, every format, the exit codes, and the same against the fixture database with `--prove`.
+- **The GitHub Action** (`action.yml`, a composite action, with its scripts in `action/`). `install.sh` puts a binary on the runner: the `binary` input as it is, or the release named by `version`, or the one the action was referenced by (`github.action_ref`, such as `v0.2.0`), or the latest. `check.sh` runs `explainsql check` with `--format md` and `--sarif`, keeps both reports in a directory of the run's own, and lets the step pass so that the comment can still be written; the exit code goes to the outputs, and the last step fails with it. `comment.sh` finds the pull request's comment by the hidden marker (with `comment-key` in it) and updates it in place: a failed check posts or updates it, a passing one only updates a comment already there. Pull requests from forks get no comment, since their token cannot write one. The scripts are checked by shellcheck and actionlint in CI, and the `action` workflow runs the action on the plans in `action/test/`: one that matches its lock and passes, and one whose index scan became a sequential scan and fails.
 
 ## Releases and documentation
 
@@ -443,12 +463,12 @@ The transaction that `exec.rs` rolls back also counts what the statement wrote. 
   - a tampered checksum is refused;
   - Linux binaries are static, and the aarch64 one runs under QEMU;
   - on fresh Alpine and Ubuntu containers, installing and running `--demo` takes under a minute, the roadmap's exit criterion (download time aside).
-- **When it runs.** A `v*` tag that matches the version in `Cargo.toml` publishes a GitHub release: the archives, `SHA256SUMS`, both install scripts and the changelog's section as notes. A manual run, or a branch push that changes the pipeline, is a dry run that publishes nothing. While the repository is private, the install scripts' downloads need authentication.
+- **When it runs.** A `v*` tag that matches the version in `Cargo.toml` publishes a GitHub release: the archives, `SHA256SUMS`, both install scripts and the changelog's section as notes. A manual run, or a branch push that changes the pipeline, is a dry run that publishes nothing.
 - **crates.io.** The four crates are published together: `explainsql-core`, `explainsql-db`, `explainsql-tui` and the `explainsql` binary. Each package holds only its sources, a README and the licenses; tests stay out, as they read the corpus outside the crate. The binary's README is the repository's, so its links are absolute. CI packages and builds every crate as crates.io would (`cargo publish --workspace --dry-run`) on every push. On a release tag, the release workflow publishes them in dependency order through Trusted Publishing: crates.io trusts the workflow's OIDC token, and no token is stored. Versions already published are skipped. [RELEASING.md](https://github.com/onplt/explain-sql/blob/main/RELEASING.md) has the steps.
-- **Documentation site** (`docs/`, mdBook): the guide, the rule catalog with one page per rule, and the design documents. Findings link to their rule's page (`Rule::doc_url`):
+- **Documentation site** (`docs/`, mdBook): getting started, a guide chapter per feature, the command-line reference, troubleshooting, the rule catalog with one page per rule, the design documents and the contributing guide. Findings link to their rule's page (`Rule::doc_url`):
   - in the viewer's details;
   - in Markdown reports;
   - as `rule.docs` in JSON.
 
   `cargo xtask rule-docs` writes each rule page's example: the scenario that shows the rule best, its plan and explainsql's finding. `cargo xtask check-links` checks every relative link and anchor, and keeps site pages from linking outside `docs/`. The `docs` workflow runs both checks and builds the site on every push. It deploys to GitHub Pages only when run by hand or on a release tag, once Pages is enabled in the repository settings.
-- **Demo.** The README's demo is a recording of a real session. `cargo xtask demo --record` builds the release binary and runs it in a tmux pane against the database named by `EXPLAINSQL_TEST_DATABASE_URL` (the fixture schema, with HypoPG). It types the query and a scripted sequence of keys, waits for each result, and saves every screen as tmux shows it, colors included, to `xtask/demo/recording.json`. `cargo xtask demo` draws the animated SVG (`docs/demo.svg`) from that recording: drawing needs no database and gives the same SVG every time, so CI checks it is current.
+- **Demo.** The README's demo is a recording of a real session. `cargo xtask demo --record` builds the release binary and runs it in a tmux pane against the database named by `EXPLAINSQL_TEST_DATABASE_URL` (the fixture schema, without HypoPG, so that `t` builds the index in a rolled-back transaction and measures it). It types the query and a scripted sequence of keys (the verdict, the slowest node, why not, the advice, the measured proof, the locks and the help), waits for each result, and saves every screen as tmux shows it, colors included, to `xtask/demo/recording.json`. `cargo xtask demo` draws the animated SVG (`docs/demo.svg`) from that recording: drawing needs no database and gives the same SVG every time, so CI checks it is current.
