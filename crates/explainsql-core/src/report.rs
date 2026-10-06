@@ -10,6 +10,7 @@ use crate::counterfactual::{Answer, Verdict};
 use crate::diff::{ChangeKind, PlanDiff};
 use crate::format;
 use crate::ir::{NodeId, Plan};
+use crate::locks::{BLOCKED_BY, Footprint, LOCK_TIMEOUT, Waits};
 use crate::metrics;
 use crate::params::{self, Parameter, Sensitivity};
 use crate::pg::{LogEntry, LogMeta, LoggedStatement};
@@ -78,6 +79,9 @@ pub fn text(plan: &Plan, analysis: &Analysis, color: bool) -> String {
 
     text_advice(&mut out, plan, analysis, &paint);
     text_counterfactuals(&mut out, analysis, &paint);
+    for footprint in &analysis.locks {
+        text_locks(&mut out, footprint, &paint);
+    }
 
     if !plan.warnings.is_empty() {
         out.push('\n');
@@ -1734,6 +1738,9 @@ pub fn markdown(plan: &Plan, analysis: &Analysis) -> String {
     }
     markdown_advice(&mut out, plan, analysis);
     markdown_counterfactuals(&mut out, analysis);
+    for footprint in &analysis.locks {
+        markdown_locks(&mut out, footprint);
+    }
     if !plan.warnings.is_empty() {
         out.push_str("\n### Parser warnings\n\n");
         for warning in &plan.warnings {
@@ -1754,6 +1761,8 @@ pub fn json(plan: &Plan, analysis: &Analysis) -> String {
         counterfactuals: &'a [Answer],
         #[serde(skip_serializing_if = "Option::is_none")]
         parameters: Option<&'a Sensitivity>,
+        #[serde(skip_serializing_if = "<[_]>::is_empty")]
+        locks: &'a [Footprint],
         metrics: &'a metrics::Metrics,
         plan: &'a Plan,
     }
@@ -1763,6 +1772,7 @@ pub fn json(plan: &Plan, analysis: &Analysis) -> String {
         advice: &analysis.advice,
         counterfactuals: &analysis.counterfactuals,
         parameters: analysis.parameters.as_ref(),
+        locks: &analysis.locks,
         metrics: &analysis.metrics,
         plan,
     };
@@ -1907,6 +1917,104 @@ fn markdown_counterfactuals(out: &mut String, analysis: &Analysis) {
             out.push_str(&format!("  - **Action:** {}\n", escape(action)));
         }
         out.push_str(&format!("  - {}\n", escape(&planned_with(answer))));
+    }
+}
+
+/// The locks the statement takes: by table, what they call for, and the
+/// commands that would wait for them.
+fn text_locks(out: &mut String, footprint: &Footprint, paint: &Paint) {
+    out.push('\n');
+    out.push_str(&paint.bold(footprint.stage.heading()));
+    out.push('\n');
+    out.push_str(&wrap(&footprint.summary, 2));
+    out.push('\n');
+    let width = footprint
+        .tables
+        .iter()
+        .map(|table| table.table.chars().count())
+        .max()
+        .unwrap_or(0)
+        .min(MAX_NODE_WIDTH);
+    for table in &footprint.tables {
+        let describe = wrap(&table.describe(), width + 4);
+        out.push_str(&format!(
+            "  {:<width$}  {}\n",
+            table.table,
+            &describe[width + 4..]
+        ));
+    }
+    for other in &footprint.other {
+        out.push_str(&wrap(&format!("Also {other}."), 2));
+        out.push('\n');
+    }
+    if let Some(line) = footprint.waits.as_ref().and_then(Waits::line) {
+        out.push_str(&wrap(&line, 2));
+        out.push('\n');
+    }
+    for note in &footprint.notes {
+        out.push('\n');
+        let summary = wrap(&note.summary, 10);
+        out.push_str(&format!(
+            "  {}  {}\n",
+            paint.severity(note.severity),
+            &summary[10..]
+        ));
+        if let Some(action) = &note.action {
+            out.push_str(&wrap(&format!("→ {action}"), 10));
+            out.push('\n');
+        }
+    }
+    if !footprint.blocked_by.is_empty() {
+        out.push('\n');
+        out.push_str(&wrap(BLOCKED_BY, 2));
+        out.push('\n');
+        for line in &footprint.blocked_by {
+            out.push_str(&format!("  - {}\n", &wrap(line, 4)[4..]));
+        }
+        out.push_str(&paint.dim(&wrap(&format!("→ {LOCK_TIMEOUT}"), 2)));
+        out.push('\n');
+    }
+}
+
+fn markdown_locks(out: &mut String, footprint: &Footprint) {
+    out.push_str(&format!("\n### {}\n\n", footprint.stage.heading()));
+    out.push_str(&format!("{}\n\n", escape(&footprint.summary)));
+    if !footprint.tables.is_empty() {
+        out.push_str("| Table | Locks |\n|---|---|\n");
+        for table in &footprint.tables {
+            out.push_str(&format!(
+                "| {} | {} |\n",
+                escape(&table.table),
+                escape(&table.describe())
+            ));
+        }
+        out.push('\n');
+    }
+    for other in &footprint.other {
+        out.push_str(&format!("Also {}.\n\n", escape(other)));
+    }
+    if let Some(line) = footprint.waits.as_ref().and_then(Waits::line) {
+        out.push_str(&format!("{}\n\n", escape(&line)));
+    }
+    for note in &footprint.notes {
+        out.push_str(&format!(
+            "- **{}:** {}\n",
+            severity_name(note.severity),
+            escape(&note.summary)
+        ));
+        if let Some(action) = &note.action {
+            out.push_str(&format!("  - **Action:** {}\n", escape(action)));
+        }
+    }
+    if !footprint.notes.is_empty() {
+        out.push('\n');
+    }
+    if !footprint.blocked_by.is_empty() {
+        out.push_str(&format!("{BLOCKED_BY}\n\n"));
+        for line in &footprint.blocked_by {
+            out.push_str(&format!("- {}\n", escape(line)));
+        }
+        out.push_str(&format!("\n{}\n", escape(LOCK_TIMEOUT)));
     }
 }
 

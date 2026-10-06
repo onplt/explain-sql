@@ -1,0 +1,35 @@
+---
+source: crates/explainsql-tui/tests/render.rs
+assertion_line: 256
+expression: "frame(&mut app, 100, 30)"
+---
+11.9 ms. 100% of it in Seq Scan on orders, which reads 200,000 rows to keep 10.
+Pl┌ Locks ───────────────────────────────────────────────────────────────────────────────────────┐
+ P│Locks the statement takes                                                                     │──
+  │4 relation locks on 1 table.                                                                  │rs
+! │  orders  4 locks: AccessShareLock on the table, 3 indexes (the plan uses none)               │17
+ D│                                                                                              │──
+Se│LOW    The planner locks every index of the tables it plans, used or not: orders_note_idx is  │
+Ti│not used by this plan and not scanned since 2026-03-02 09:00:00.                              │
+Wi│→ An index nothing uses adds a lock to every run of every statement on its table, and work to │
+Ro│every write: drop it, after checking the statistics of every server that runs queries         │
+Es│(replicas count their own scans).                                                             │
+Re│                                                                                              │
+Bu│These commands would wait for the statement's locks, and while they wait, every later run of  │
+Re│the statement waits behind them:                                                              │
+I/│  - ALTER TABLE (most forms), DROP, TRUNCATE, REINDEX, CLUSTER, VACUUM FULL, LOCK TABLE on    │
+  │orders                                                                                        │
+Fi│  - REINDEX, DROP INDEX or ALTER INDEX of any of the 3 indexes it locks, none of which the    │
+Ou│plan uses: the planner locks every index of a table it plans                                  │
+  │→ In schema changes, SET lock_timeout = '2s' (or so) makes a command that has to wait give up │
+HI│instead of holding up every query on the table; CREATE INDEX CONCURRENTLY and REINDEX         │
+On│CONCURRENTLY take weaker locks.                                                               │
+Se│                                                                                              │
+Ro│                                                                                              │
+Fi│                                                                                              │
+Ta│                                                                                              │
+Ti│                                                                                              │
+→ │                                                                                              │
+ F│                                                                                              │──
+HI└ j/k scroll · any other key closes ───────────────────────────────────────────────────────────┘
+j/k move  h/l fold  / search  1-9 hotspots  Tab list  i advice  ? help  q quit

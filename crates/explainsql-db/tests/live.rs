@@ -736,6 +736,198 @@ fn postgres_database(url: &str) -> Option<String> {
         .then(|| format!("{server}/postgres?{query}"))
 }
 
+/// Another session: after `delay`, it runs `sql` in a transaction, keeps
+/// the transaction open for `hold` and rolls it back. Returns its PID, and
+/// a receiver told once `sql` has run.
+fn other_session(
+    delay: Duration,
+    sql: &'static str,
+    hold: Duration,
+) -> (
+    i32,
+    std::sync::mpsc::Receiver<()>,
+    std::thread::JoinHandle<()>,
+) {
+    let url = std::env::var("EXPLAINSQL_TEST_DATABASE_URL").unwrap();
+    let (pid_sender, pid) = std::sync::mpsc::channel();
+    let (ran_sender, ran) = std::sync::mpsc::channel();
+    let thread = std::thread::spawn(move || {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        runtime.block_on(async {
+            let (client, connection) = tokio_postgres::connect(&url, tokio_postgres::NoTls)
+                .await
+                .unwrap();
+            tokio::spawn(connection);
+            let pid: i32 = client
+                .query_one("SELECT pg_backend_pid()", &[])
+                .await
+                .unwrap()
+                .get(0);
+            pid_sender.send(pid).unwrap();
+            tokio::time::sleep(delay).await;
+            client.batch_execute("BEGIN").await.unwrap();
+            client.batch_execute(sql).await.unwrap();
+            let _ = ran_sender.send(());
+            tokio::time::sleep(hold).await;
+            client.batch_execute("ROLLBACK").await.unwrap();
+        });
+    });
+    (pid.recv().unwrap(), ran, thread)
+}
+
+#[test]
+fn reads_the_locks_a_statement_takes() {
+    use explainsql_core::locks::{self, Stage};
+    let Some(db) = database() else { return };
+    // now() is not a constant to the planner: it plans every partition,
+    // with its index, and run-time pruning keeps one or none.
+    let sql = "SELECT * FROM events WHERE created_at > now() - interval '1 day'";
+    for (mode, stage) in [
+        (Mode::Estimate, Stage::Planned),
+        (Mode::Analyze, Stage::Ran),
+    ] {
+        let (json, capture) = db.explain_locks(sql, mode, Safety::default()).unwrap();
+        let capture = capture.unwrap();
+        assert_eq!(capture.stage, stage);
+        let plan = explainsql_core::parse(&json).unwrap();
+        let footprint = locks::footprint(&capture, &plan);
+        // The table, 12 partitions and 13 indexes, 10 past the 16 slots.
+        assert_eq!(footprint.relation_locks, 26, "{footprint:#?}");
+        assert_eq!(footprint.outside_fast_path, 10, "{footprint:#?}");
+        assert_eq!(footprint.tables.len(), 1);
+        assert_eq!(footprint.tables[0].table, "events");
+        assert_eq!(footprint.tables[0].partitions, 12);
+        assert_eq!(footprint.tables[0].indexes, 13);
+        // Only the statement's: nothing of the transaction or of the
+        // queries that read them.
+        assert!(footprint.other.is_empty(), "{:?}", footprint.other);
+        assert!(
+            capture
+                .held
+                .iter()
+                .all(|lock| lock
+                    .relation
+                    .is_none_or(|oid| capture.relations.iter().any(|relation| relation.oid
+                        == oid
+                        && !relation.schema.starts_with("pg_"))))
+        );
+    }
+
+    // A write: its table's lock, and its transaction ID.
+    let (json, capture) = db
+        .explain_locks(
+            "UPDATE orders SET note = note WHERE id = 1",
+            Mode::Analyze,
+            allow_dml(),
+        )
+        .unwrap();
+    let footprint = locks::footprint(&capture.unwrap(), &explainsql_core::parse(&json).unwrap());
+    assert_eq!(footprint.tables[0].mode.name(), "RowExclusiveLock");
+    assert!(
+        footprint
+            .other
+            .iter()
+            .any(|other| other.contains("transaction ID")),
+        "{:?}",
+        footprint.other
+    );
+    assert!(
+        footprint.blocked_by[0].contains("CREATE INDEX without CONCURRENTLY"),
+        "{:?}",
+        footprint.blocked_by
+    );
+}
+
+#[test]
+fn reads_the_locks_of_generic_and_custom_plans() {
+    use explainsql_core::locks::{self, Stage};
+    let Some(db) = database() else { return };
+    let sql = "SELECT * FROM events WHERE created_at > $1";
+    let values = [Some("2025-12-20".to_owned())];
+    let mut footprints = Vec::new();
+    for (cache, mode) in [
+        (Cache::Generic, Mode::Analyze),
+        (Cache::Custom, Mode::Estimate),
+    ] {
+        let (json, capture) = db
+            .prepared_locks(sql, cache, &values, mode, Safety::default())
+            .unwrap();
+        footprints.push(locks::footprint(
+            &capture,
+            &explainsql_core::parse(&json).unwrap(),
+        ));
+    }
+    let (generic, custom) = (&footprints[0], &footprints[1]);
+    assert_eq!(generic.stage, Stage::Generic);
+    // Each execution of the generic plan locks every partition, and the
+    // index of the one it reads; a custom plan, the partition it reads
+    // and its indexes.
+    assert_eq!(generic.tables[0].partitions, 12, "{generic:#?}");
+    assert_eq!(generic.tables[0].partitions_in_plan, Some(1));
+    assert_eq!(custom.stage, Stage::Custom);
+    assert_eq!(custom.tables[0].partitions, 1, "{custom:#?}");
+    assert!(custom.relation_locks < generic.relation_locks);
+    locks::compare_executions(&mut footprints);
+    assert!(
+        footprints[0].notes.iter().any(|note| note
+            .summary
+            .contains("a custom plan for the same values takes")),
+        "{:#?}",
+        footprints[0].notes
+    );
+}
+
+#[test]
+fn watches_what_a_run_waits_for() {
+    let Some(db) = database() else { return };
+    db.watch_waits();
+    let update = "UPDATE orders SET note = note WHERE id = 1";
+    // Another session holds the row for a while: the run waits for it.
+    let (pid, ran, other) = other_session(Duration::ZERO, update, Duration::from_millis(400));
+    ran.recv().unwrap();
+    let (_, capture) = db
+        .explain_locks(update, Mode::Analyze, allow_dml())
+        .unwrap();
+    other.join().unwrap();
+    let waits = capture.unwrap().waits.unwrap();
+    assert!(waits.lock_samples() > 0, "{waits:#?}");
+    assert!(
+        waits.blockers.iter().any(|blocker| blocker.pid == pid),
+        "{waits:#?}"
+    );
+    assert!(db.take_notes().is_empty());
+
+    // Another session asks for a lock that conflicts with the statement's
+    // while it runs, and waits behind it.
+    let (pid, _, other) = other_session(
+        Duration::from_millis(150),
+        "SET LOCAL lock_timeout = '5s'; LOCK TABLE orders IN ACCESS EXCLUSIVE MODE",
+        Duration::ZERO,
+    );
+    let (json, capture) = db
+        .explain_locks(
+            "SELECT pg_sleep(0.6), id FROM orders WHERE id = 1",
+            Mode::Analyze,
+            Safety::default(),
+        )
+        .unwrap();
+    other.join().unwrap();
+    let footprint = explainsql_core::locks::footprint(
+        &capture.unwrap(),
+        &explainsql_core::parse(&json).unwrap(),
+    );
+    assert!(
+        footprint
+            .conflicts
+            .iter()
+            .any(|other| other.pid == Some(pid) && !other.granted),
+        "{footprint:#?}"
+    );
+}
+
 /// The foreign keys of a column, both ways, and the time of a round trip.
 #[test]
 fn reads_foreign_keys_and_round_trips() {

@@ -15,6 +15,7 @@
 use tokio_postgres::Client;
 
 use crate::exec::{self, Mode, options, statement};
+use crate::locks::Watch;
 use crate::{Error, Safety, describe};
 
 /// How long building an index may wait for its lock.
@@ -88,6 +89,7 @@ pub(crate) async fn hypothetical(
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn measured(
     client: &Client,
     sql: &str,
@@ -95,6 +97,8 @@ pub(crate) async fn measured(
     runs: usize,
     safety: Safety,
     server_version: u32,
+    watch: Option<&Watch>,
+    notes: &mut Vec<String>,
 ) -> Result<Proof, Error> {
     if !safety.allow_ddl {
         return Err(Error::Refused(
@@ -106,7 +110,8 @@ pub(crate) async fn measured(
     let ddl = plain(ddl)?;
     // Refuses a statement that writes without --allow-dml, before anything
     // is built.
-    let before = exec::measure(client, sql, &[], runs, safety, server_version).await?;
+    let before =
+        exec::measure(client, sql, &[], runs, safety, server_version, watch, notes).await?;
     let server = |error: tokio_postgres::Error| Error::Server(describe(&error));
     let explain = format!("EXPLAIN ({}) {sql}", options(Mode::Analyze, server_version));
     client.batch_execute("BEGIN").await.map_err(server)?;

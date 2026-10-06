@@ -6,6 +6,7 @@ use crate::advisor::{self, Advice};
 use crate::counterfactual::Answer;
 use crate::format;
 use crate::ir::Plan;
+use crate::locks::Footprint;
 use crate::metrics::{self, Metrics};
 use crate::params::Sensitivity;
 use crate::rules::{self, Finding};
@@ -30,6 +31,11 @@ pub struct Analysis {
     /// parameters.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub parameters: Option<Sensitivity>,
+    /// The locks the statement takes and what they mean (connected mode,
+    /// `--locks` and `L` in the viewer): one footprint, or with `--params`
+    /// those of an execution of the generic plan and of a custom plan.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub locks: Vec<Footprint>,
 }
 
 /// Computes the metrics and runs the rules.
@@ -45,6 +51,7 @@ pub fn analyze(plan: &Plan) -> Analysis {
         advice,
         counterfactuals: Vec::new(),
         parameters: None,
+        locks: Vec::new(),
     }
 }
 

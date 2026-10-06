@@ -128,6 +128,16 @@ struct Cli {
     #[arg(long, value_name = "TABLE", num_args = 0..=1, default_missing_value = "")]
     why_not: Option<String>,
 
+    /// Connected mode: report the locks the statement takes, read before
+    /// the rollback: how many fall outside the fast path, the tables,
+    /// partitions and indexes they come from, the commands that would wait
+    /// for them, and other sessions' conflicting locks right now. A second
+    /// connection watches what the statement waits on while it runs. With
+    /// --params, the locks of an execution of the generic plan and of a
+    /// custom plan. In the viewer, press L instead.
+    #[arg(long)]
+    locks: bool,
+
     /// Connected mode: the statement takes parameters ($1, or ? as in
     /// JDBC). Prepare it as an application does, try values from the
     /// columns' statistics and common LIMIT and OFFSET row counts, and
@@ -566,9 +576,9 @@ fn main() -> ExitCode {
         eprintln!("error: give the query to run with -f FILE or -c SQL");
         return ExitCode::FAILURE;
     }
-    if cli.why_not.is_some() || cli.measure || cli.params || !cli.bind.is_empty() {
+    if cli.why_not.is_some() || cli.measure || cli.params || !cli.bind.is_empty() || cli.locks {
         eprintln!(
-            "error: --why-not, --params and --measure ask the database: give the query to run with -d DATABASE and -f FILE or -c SQL"
+            "error: --why-not, --params, --measure and --locks ask the database: give the query to run with -d DATABASE and -f FILE or -c SQL"
         );
         return ExitCode::FAILURE;
     }

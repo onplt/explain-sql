@@ -10,22 +10,27 @@
 mod catalog;
 pub mod conn;
 mod exec;
+mod locks;
 mod prepared;
 mod prove;
 mod stats;
 mod tls;
 
 use std::fmt;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use explainsql_core::catalog::Catalog;
+use explainsql_core::locks::{Capture, Stage};
 use explainsql_core::params::ColumnStats;
 use explainsql_core::scenario::Setting;
 use tokio::runtime::Runtime;
 use tokio_postgres::{CancelToken, Client};
 use tokio_postgres_rustls::MakeRustlsConnect;
+
+use crate::exec::Observe;
+use crate::locks::Watch;
 
 pub use conn::Settings;
 pub use exec::{Mode, Writes};
@@ -100,6 +105,21 @@ pub struct Database {
     canceller: Canceller,
     server_version: u32,
     description: String,
+    settings: Settings,
+    watching: Mutex<Watching>,
+    /// What the user should know about runs, such as a measured run that
+    /// waited for a lock: see [`Database::take_notes`].
+    notes: Mutex<Vec<String>>,
+}
+
+/// Whether a second connection watches what statements wait on.
+enum Watching {
+    Off,
+    /// Asked for; the connection opens with the first run it watches.
+    Wanted,
+    On(Watch),
+    /// The connection could not be opened.
+    Failed,
 }
 
 /// Stops the statement a [`Database`] is running, from any thread.
@@ -129,17 +149,7 @@ impl Database {
             .enable_all()
             .build()
             .map_err(|error| Error::Connect(error.to_string()))?;
-        let config = settings.config().map_err(Error::Connect)?;
-        let tls = tls::connector(settings).map_err(Error::Connect)?;
-        let (client, connection) =
-            runtime
-                .block_on(config.connect(tls.clone()))
-                .map_err(|error| {
-                    Error::Connect(format!("{}: {}", settings.describe(), describe(&error)))
-                })?;
-        runtime.spawn(async move {
-            let _ = connection.await;
-        });
+        let (client, tls) = open(&runtime, settings)?;
         let version: String = runtime
             .block_on(client.query_one("SELECT current_setting('server_version_num')", &[]))
             .map_err(|error| Error::Connect(describe(&error)))?
@@ -162,7 +172,64 @@ impl Database {
             canceller,
             server_version,
             description: settings.describe(),
+            settings: settings.clone(),
+            watching: Mutex::new(Watching::Off),
+            notes: Mutex::new(Vec::new()),
         })
+    }
+
+    /// Watches what statements wait on from a second connection, opened
+    /// with the first run it watches: the runs [`Database::explain_locks`]
+    /// and [`Database::prepared_locks`] read locks of, and measured runs,
+    /// which run again when they waited for another session's lock.
+    pub fn watch_waits(&self) {
+        let mut watching = self
+            .watching
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        if matches!(*watching, Watching::Off) {
+            *watching = Watching::Wanted;
+        }
+    }
+
+    /// The watching connection, opened if it is wanted and not yet open.
+    fn watch(&self) -> Option<Watch> {
+        let mut watching = self
+            .watching
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        if matches!(*watching, Watching::Wanted) {
+            *watching = match open(&self.runtime, &self.settings) {
+                Ok((client, _)) => Watching::On(Watch {
+                    client: Arc::new(client),
+                    server_version: self.server_version,
+                }),
+                Err(error) => {
+                    self.note(vec![format!(
+                        "cannot watch what statements wait on from a second connection: {error}"
+                    )]);
+                    Watching::Failed
+                }
+            };
+        }
+        match &*watching {
+            Watching::On(watch) => Some(watch.clone()),
+            _ => None,
+        }
+    }
+
+    fn note(&self, notes: Vec<String>) {
+        self.notes
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .extend(notes);
+    }
+
+    /// What the user should know about the runs since the last call: a
+    /// measured run that waited for another session's lock and ran again,
+    /// or a watching connection that could not be opened.
+    pub fn take_notes(&self) -> Vec<String> {
+        std::mem::take(&mut *self.notes.lock().unwrap_or_else(|error| error.into_inner()))
     }
 
     /// `server_version_num`: 160004 for 16.4.
@@ -207,6 +274,39 @@ impl Database {
         self.classify(result, safety)
     }
 
+    /// The plan of a statement, as [`Database::explain`] makes it, and the
+    /// locks its last run took, read before the rollback: those planning
+    /// takes, or with `EXPLAIN ANALYZE` planning and running. `None` when
+    /// they could not be read. Watched ([`Database::watch_waits`]), they
+    /// come with what the run waited on.
+    pub fn explain_locks(
+        &self,
+        sql: &str,
+        mode: Mode,
+        safety: Safety,
+    ) -> Result<(String, Option<Capture>), Error> {
+        let watch = self.watch();
+        self.canceller.cancelled.store(false, Ordering::SeqCst);
+        let observe = Observe {
+            locks: Some(match mode {
+                Mode::Estimate => Stage::Planned,
+                Mode::Analyze => Stage::Ran,
+            }),
+            watch: watch.as_ref().filter(|_| mode == Mode::Analyze),
+            server_version: self.server_version,
+        };
+        let result = self.runtime.block_on(exec::explain_observed(
+            &self.client,
+            sql,
+            mode,
+            &[],
+            safety,
+            observe,
+        ));
+        self.classify(result, safety)
+            .map(|(plan, observed)| (plan, observed.locks))
+    }
+
     /// `runs` measured plans of a statement under planner settings, after a
     /// run that only warms the cache. Each run is rolled back.
     pub fn measure(
@@ -216,7 +316,9 @@ impl Database {
         runs: usize,
         safety: Safety,
     ) -> Result<Vec<String>, Error> {
+        let watch = self.watch();
         self.canceller.cancelled.store(false, Ordering::SeqCst);
+        let mut notes = Vec::new();
         let result = self.runtime.block_on(exec::measure(
             &self.client,
             sql,
@@ -224,7 +326,10 @@ impl Database {
             runs,
             safety,
             self.server_version,
+            watch.as_ref(),
+            &mut notes,
         ));
+        self.note(notes);
         self.classify(result, safety)
     }
 
@@ -250,7 +355,9 @@ impl Database {
         runs: usize,
         safety: Safety,
     ) -> Result<Proof, Error> {
+        let watch = if measured { self.watch() } else { None };
         self.canceller.cancelled.store(false, Ordering::SeqCst);
+        let mut notes = Vec::new();
         let result = if measured {
             self.runtime.block_on(prove::measured(
                 &self.client,
@@ -259,6 +366,8 @@ impl Database {
                 runs,
                 safety,
                 self.server_version,
+                watch.as_ref(),
+                &mut notes,
             ))
         } else {
             self.runtime.block_on(prove::hypothetical(
@@ -269,6 +378,7 @@ impl Database {
                 self.server_version,
             ))
         };
+        self.note(notes);
         self.classify(result, safety)
     }
 
@@ -314,7 +424,9 @@ impl Database {
         safety: Safety,
     ) -> Result<Vec<String>, Error> {
         self.plan_cache_mode()?;
+        let watch = self.watch();
         self.canceller.cancelled.store(false, Ordering::SeqCst);
+        let mut notes = Vec::new();
         let result = self.runtime.block_on(prepared::measure(
             &self.client,
             sql,
@@ -323,6 +435,40 @@ impl Database {
             runs,
             safety,
             self.server_version,
+            watch.as_ref(),
+            &mut notes,
+        ));
+        self.note(notes);
+        self.classify(result, safety)
+    }
+
+    /// The plan of one execution of a statement with parameters, prepared
+    /// and executed with `values` under `plan_cache_mode`, and the locks
+    /// that execution took. The plan is made in a first transaction, and
+    /// the locks read in a second: those of an execution of the cached
+    /// generic plan, which PostgreSQL does not plan again, or of a custom
+    /// plan, planned for each execution. Estimated, or with
+    /// `EXPLAIN ANALYZE` run, and always rolled back.
+    pub fn prepared_locks(
+        &self,
+        sql: &str,
+        cache: Cache,
+        values: &[Option<String>],
+        mode: Mode,
+        safety: Safety,
+    ) -> Result<(String, Capture), Error> {
+        self.plan_cache_mode()?;
+        let watch = self.watch();
+        self.canceller.cancelled.store(false, Ordering::SeqCst);
+        let result = self.runtime.block_on(prepared::locks(
+            &self.client,
+            sql,
+            cache,
+            values,
+            mode,
+            safety,
+            self.server_version,
+            watch.as_ref().filter(|_| mode == Mode::Analyze),
         ));
         self.classify(result, safety)
     }
@@ -476,6 +622,21 @@ impl Database {
             other => other,
         }
     }
+}
+
+/// Opens a connection, run in the background by the runtime.
+fn open(runtime: &Runtime, settings: &Settings) -> Result<(Client, MakeRustlsConnect), Error> {
+    let config = settings.config().map_err(Error::Connect)?;
+    let tls = tls::connector(settings).map_err(Error::Connect)?;
+    let (client, connection) = runtime
+        .block_on(config.connect(tls.clone()))
+        .map_err(|error| {
+            Error::Connect(format!("{}: {}", settings.describe(), describe(&error)))
+        })?;
+    runtime.spawn(async move {
+        let _ = connection.await;
+    });
+    Ok((client, tls))
 }
 
 /// A database error with its SQLSTATE, detail and hint.

@@ -27,6 +27,7 @@ pub mod expr;
 pub mod fingerprint;
 pub mod format;
 pub mod ir;
+pub mod locks;
 mod memory;
 pub mod metrics;
 pub mod params;

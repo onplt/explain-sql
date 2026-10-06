@@ -6,6 +6,7 @@ use explainsql_core::advisor::{Advice, AdviceKind, Confidence, Verification};
 use explainsql_core::counterfactual::{Answer, Verdict};
 use explainsql_core::format;
 use explainsql_core::ir::{Buffers, NodeId, PredicateKind};
+use explainsql_core::locks::{self, Footprint};
 use explainsql_core::metrics;
 use explainsql_core::report;
 use explainsql_core::rules::{Finding, Severity};
@@ -113,6 +114,9 @@ pub fn draw(frame: &mut Frame, app: &mut App, theme: &Theme) {
         }
     }
     draw_status(frame, app, theme, status);
+    if let Some(line) = app.locks {
+        draw_locks(frame, app, theme, area, line);
+    }
     if app.help {
         draw_help(frame, theme, area);
     }
@@ -1230,10 +1234,11 @@ fn draw_status(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
                 ("r", "run"),
                 ("t", "test"),
                 ("y", "why"),
+                ("L", "locks"),
                 ("?", "help"),
                 ("q", "quit"),
             ] {
-                if !connected && matches!(key, "r" | "t" | "y") {
+                if !connected && matches!(key, "r" | "t" | "y" | "L") {
                     continue;
                 }
                 spans.push(Span::styled(key, theme.key));
@@ -1245,7 +1250,7 @@ fn draw_status(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
     frame.render_widget(Paragraph::new(line), area);
 }
 
-const HELP: [(&str, &str); 24] = [
+const HELP: [(&str, &str); 25] = [
     ("j k ↓ ↑", "Move"),
     ("PgDn PgUp", "Move a page"),
     ("g G", "First, last node"),
@@ -1266,11 +1271,98 @@ const HELP: [(&str, &str); 24] = [
     ("r e", "Connected: run again, edit the statement"),
     ("t", "Connected: test the suggested index"),
     ("y", "Connected: ask the planner why it chose this node"),
+    ("L", "Connected: the locks the statement takes"),
     ("Esc", "Connected: cancel a run"),
     ("?", "This help"),
     ("q Esc", "Quit"),
     ("", "Any key closes this help."),
 ];
+
+/// The locks the statement takes, over the plan, scrolled to `line`.
+fn draw_locks(frame: &mut Frame, app: &mut App, theme: &Theme, area: Rect, line: u16) {
+    let width = area.width.saturating_sub(4).min(100);
+    let height = area.height.saturating_sub(2);
+    let popup = Rect {
+        x: area.x + (area.width - width) / 2,
+        y: area.y + (area.height - height) / 2,
+        width,
+        height,
+    };
+    let lines: Vec<Line> = app
+        .analysis
+        .locks
+        .iter()
+        .enumerate()
+        .flat_map(|(index, footprint)| {
+            let mut lines = lock_lines(theme, footprint);
+            if index > 0 {
+                lines.insert(0, Line::default());
+            }
+            lines
+        })
+        .collect();
+    // Not past the last line.
+    let last = u16::try_from(lines.len().saturating_sub(1)).unwrap_or(u16::MAX);
+    let line = line.min(last);
+    app.locks = Some(line);
+    frame.render_widget(Clear, popup);
+    frame.render_widget(
+        Paragraph::new(lines)
+            .wrap(Wrap { trim: false })
+            .scroll((line, 0))
+            .block(
+                Block::bordered()
+                    .border_style(theme.focused_border)
+                    .title(Span::styled(" Locks ", theme.title))
+                    .title_bottom(Span::styled(
+                        " j/k scroll · any other key closes ",
+                        theme.dim,
+                    )),
+            ),
+        popup,
+    );
+}
+
+fn lock_lines<'a>(theme: &Theme, footprint: &Footprint) -> Vec<Line<'a>> {
+    let mut lines = vec![
+        Line::styled(footprint.stage.heading(), theme.title),
+        Line::raw(footprint.summary.clone()),
+    ];
+    for table in &footprint.tables {
+        lines.push(Line::from(vec![
+            Span::styled(format!("  {}  ", table.table), theme.key),
+            Span::raw(table.describe()),
+        ]));
+    }
+    for other in &footprint.other {
+        lines.push(Line::raw(format!("  Also {other}.")));
+    }
+    if let Some(waits) = footprint.waits.as_ref().and_then(|waits| waits.line()) {
+        lines.push(Line::raw(format!("  {waits}")));
+    }
+    for note in &footprint.notes {
+        lines.push(Line::default());
+        lines.push(Line::from(vec![
+            severity(theme, note.severity),
+            Span::raw(format!(" {}", note.summary)),
+        ]));
+        if let Some(action) = &note.action {
+            lines.push(Line::styled(format!("→ {action}"), theme.good));
+        }
+    }
+    if !footprint.blocked_by.is_empty() {
+        lines.push(Line::default());
+        lines.push(Line::raw(locks::BLOCKED_BY));
+        for blocked in &footprint.blocked_by {
+            lines.push(Line::raw(format!("  - {blocked}")));
+        }
+        lines.push(Line::styled(
+            format!("→ {}", locks::LOCK_TIMEOUT),
+            theme.dim,
+        ));
+    }
+    lines
+}
 
 fn draw_confirm(frame: &mut Frame, theme: &Theme, area: Rect, question: &str) {
     let width = area.width.min(60);

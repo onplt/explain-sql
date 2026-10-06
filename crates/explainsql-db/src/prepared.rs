@@ -13,12 +13,14 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
+use explainsql_core::locks::{Capture, Stage};
 use explainsql_core::params::ColumnStats;
 use explainsql_core::scenario::Setting;
 use tokio_postgres::Client;
 use tokio_postgres::error::SqlState;
 
-use crate::exec::{self, Mode, Writes};
+use crate::exec::{self, Mode, Observe, Observed, Writes};
+use crate::locks::{self, Watch};
 use crate::{Error, Safety, describe};
 
 /// Which plan a prepared statement gets.
@@ -96,7 +98,9 @@ pub(crate) async fn explain(
 }
 
 /// `runs` measured plans of a statement with parameters, after a run that
-/// only warms the cache. Each run is rolled back.
+/// only warms the cache. Each run is rolled back. Watched, a measured run
+/// that waited for another session's lock is run again, with a note.
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn measure(
     client: &Client,
     sql: &str,
@@ -105,6 +109,8 @@ pub(crate) async fn measure(
     runs: usize,
     safety: Safety,
     server_version: u32,
+    watch: Option<&Watch>,
+    notes: &mut Vec<String>,
 ) -> Result<Vec<String>, Error> {
     let sql = exec::statement(sql)?;
     let settings = [cache.setting()];
@@ -123,21 +129,107 @@ pub(crate) async fn measure(
     let analyze = exec::options(Mode::Analyze, server_version);
     let mut plans = Vec::with_capacity(runs.max(1));
     for warm_up in std::iter::once(true).chain(std::iter::repeat_n(false, runs.max(1))) {
-        let plan = run(
-            client,
-            sql,
-            &analyze,
-            writes == Writes::No,
-            safety.timeout,
-            &settings,
-            values,
-        )
-        .await?;
+        let observe = Observe {
+            watch: watch.filter(|_| !warm_up),
+            ..Observe::nothing(server_version)
+        };
+        let mut tries = 0;
+        let plan = loop {
+            let name = next_name();
+            let result = run_named(
+                client,
+                &name,
+                Some(sql),
+                &analyze,
+                writes == Writes::No,
+                safety.timeout,
+                &settings,
+                values,
+                observe,
+            )
+            .await;
+            let deallocate = deallocate(client, &name).await;
+            let (plan, observed) = result?;
+            deallocate.map_err(|error| Error::Server(describe(&error)))?;
+            if !locks::again(observed.waits.as_ref(), &mut tries, notes) {
+                break plan;
+            }
+        };
         if !warm_up {
             plans.push(plan);
         }
     }
     Ok(plans)
+}
+
+/// The plan of one execution of a statement with parameters, and the locks
+/// that execution took. The statement is prepared and its plan made in one
+/// transaction, then executed in a second, whose locks are read: a cached
+/// generic plan is not planned again, so they are those every later
+/// execution of it takes. Both transactions are rolled back, and the
+/// statement deallocated after them.
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn locks(
+    client: &Client,
+    sql: &str,
+    cache: Cache,
+    values: &[Option<String>],
+    mode: Mode,
+    safety: Safety,
+    server_version: u32,
+    watch: Option<&Watch>,
+) -> Result<(String, Capture), Error> {
+    let sql = exec::statement(sql)?;
+    let settings = [cache.setting()];
+    let name = next_name();
+    let estimate = exec::options(Mode::Estimate, server_version);
+    let observe = Observe {
+        locks: Some(match cache {
+            Cache::Generic => Stage::Generic,
+            Cache::Custom => Stage::Custom,
+        }),
+        watch,
+        server_version,
+    };
+    let result = async {
+        let (estimated, _) = run_named(
+            client,
+            &name,
+            Some(sql),
+            &estimate,
+            true,
+            safety.timeout,
+            &settings,
+            values,
+            Observe::nothing(server_version),
+        )
+        .await?;
+        let read_only = match mode {
+            Mode::Estimate => true,
+            Mode::Analyze => exec::allowed_writes(&estimated, safety)? == Writes::No,
+        };
+        run_named(
+            client,
+            &name,
+            None,
+            &exec::options(mode, server_version),
+            read_only,
+            safety.timeout,
+            &settings,
+            values,
+            observe,
+        )
+        .await
+    }
+    .await;
+    // Always, whatever happened above.
+    let deallocate = deallocate(client, &name).await;
+    let (plan, observed) = result?;
+    deallocate.map_err(|error| Error::Server(describe(&error)))?;
+    let capture = observed.locks.ok_or_else(|| {
+        Error::Server("the locks the statement took could not be read".to_owned())
+    })?;
+    Ok((plan, capture))
 }
 
 /// The types PostgreSQL infers for a statement's parameters.
@@ -194,6 +286,41 @@ async fn run(
     values: &[Option<String>],
 ) -> Result<String, Error> {
     let name = next_name();
+    let result = run_named(
+        client,
+        &name,
+        Some(sql),
+        options,
+        read_only,
+        timeout,
+        settings,
+        values,
+        Observe::nothing(0),
+    )
+    .await;
+    // Always, whatever happened; the prepared statement outlives the
+    // transaction.
+    let deallocate = deallocate(client, &name).await;
+    let (plan, _) = result?;
+    deallocate.map_err(|error| Error::Server(describe(&error)))?;
+    Ok(plan)
+}
+
+/// One `EXPLAIN EXECUTE` of the prepared statement `name` under settings,
+/// inside a transaction that is rolled back; `sql` prepares it first. The
+/// statement outlives the transaction: the caller deallocates it.
+#[allow(clippy::too_many_arguments)]
+async fn run_named(
+    client: &Client,
+    name: &str,
+    sql: Option<&str>,
+    options: &str,
+    read_only: bool,
+    timeout: Duration,
+    settings: &[Setting],
+    values: &[Option<String>],
+    observe: Observe<'_>,
+) -> Result<(String, Observed), Error> {
     let server = |error: tokio_postgres::Error| Error::Server(describe(&error));
     client
         .batch_execute(if read_only {
@@ -211,29 +338,24 @@ async fn run(
             ))
             .await?;
         exec::apply(client, settings).await?;
-        client
-            .execute(format!("PREPARE {name} AS {sql}").as_str(), &[])
-            .await?;
-        client
-            .query(
-                format!("EXPLAIN ({options}) EXECUTE {name}{}", arguments(values)).as_str(),
-                &[],
-            )
-            .await
+        if let Some(sql) = sql {
+            client
+                .execute(format!("PREPARE {name} AS {sql}").as_str(), &[])
+                .await?;
+        }
+        let explain = format!("EXPLAIN ({options}) EXECUTE {name}{}", arguments(values));
+        exec::in_transaction(client, observe, client.query(explain.as_str(), &[])).await
     }
     .await;
-    // Always, whatever happened above; the prepared statement outlives
-    // the transaction.
+    // Always, whatever happened above.
     let rollback = client.batch_execute("ROLLBACK").await;
-    let deallocate = deallocate(client, &name).await;
-    let rows = result.map_err(server)?;
+    let (rows, observed) = result.map_err(server)?;
     rollback.map_err(server)?;
-    deallocate.map_err(server)?;
     let row = rows
         .first()
         .ok_or_else(|| Error::Server("EXPLAIN returned no plan".to_owned()))?;
     let plan: serde_json::Value = row.try_get(0).map_err(server)?;
-    Ok(plan.to_string())
+    Ok((plan.to_string(), observed))
 }
 
 /// Deallocates a prepared statement; one that was never prepared, because

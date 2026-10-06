@@ -132,6 +132,8 @@ pub struct App {
     pub view: View,
     pub search: Option<Search>,
     pub help: bool,
+    /// The locks overlay, open at this line.
+    pub locks: Option<u16>,
     /// A one-line notice in the status bar.
     pub message: Option<String>,
     /// Set in connected mode.
@@ -176,6 +178,11 @@ pub enum Key {
     Backspace,
 }
 
+/// A page of a scrolled text, in lines.
+fn page_lines(page: usize) -> u16 {
+    u16::try_from(page.max(1)).unwrap_or(u16::MAX)
+}
+
 impl App {
     pub fn new(plan: Plan, analysis: Analysis) -> Self {
         let mut app = App {
@@ -199,6 +206,7 @@ impl App {
             },
             search: None,
             help: false,
+            locks: None,
             message: None,
             live: None,
             confirm: None,
@@ -438,6 +446,18 @@ impl App {
             self.help = false;
             return Outcome::Continue;
         }
+        if let Some(line) = self.locks {
+            self.locks = match key {
+                Key::Down | Key::Char('j') => Some(line.saturating_add(1)),
+                Key::Up | Key::Char('k') => Some(line.saturating_sub(1)),
+                Key::PageDown => Some(line.saturating_add(page_lines(page))),
+                Key::PageUp => Some(line.saturating_sub(page_lines(page))),
+                Key::Home | Key::Char('g') => Some(0),
+                // Any other key closes it.
+                _ => None,
+            };
+            return Outcome::Continue;
+        }
         if let Some(confirm) = self.confirm.take() {
             if matches!(key, Key::Char('y' | 'Y')) {
                 return Outcome::Prove {
@@ -467,6 +487,18 @@ impl App {
             Key::Char('r') => return Outcome::Run,
             Key::Char('e') => return Outcome::Edit,
             Key::Char('?') => self.help = true,
+            Key::Char('L') => {
+                if !self.analysis.locks.is_empty() {
+                    self.locks = Some(0);
+                } else if self.live.is_none() {
+                    self.message = Some(
+                        "Not connected: L shows the locks the statement takes in connected mode (explainsql -d … -f query.sql)."
+                            .to_owned(),
+                    );
+                } else {
+                    self.message = Some("The locks of this run could not be read.".to_owned());
+                }
+            }
             Key::Tab => {
                 self.focus = match (self.focus, self.panel) {
                     (Focus::Tree, Panel::Findings) if !self.analysis.findings.is_empty() => {
