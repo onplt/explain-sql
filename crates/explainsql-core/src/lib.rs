@@ -27,6 +27,7 @@ pub mod fingerprint;
 pub mod format;
 pub mod ir;
 pub mod metrics;
+pub mod params;
 pub mod pg;
 pub mod report;
 pub mod rules;

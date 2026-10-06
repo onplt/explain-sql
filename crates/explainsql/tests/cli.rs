@@ -313,8 +313,110 @@ fn asking_why_needs_a_database() {
     assert!(!output.status.success());
     assert!(
         String::from_utf8_lossy(&output.stderr)
-            .contains("--why-not and --measure ask the database")
+            .contains("--why-not, --params and --measure ask the database")
     );
+}
+
+/// Statements with parameters, against the database named by
+/// `EXPLAINSQL_TEST_DATABASE_URL`; skipped without it.
+#[test]
+fn connected_mode_tries_the_values_of_parameters() {
+    let Ok(url) = std::env::var("EXPLAINSQL_TEST_DATABASE_URL") else {
+        eprintln!("EXPLAINSQL_TEST_DATABASE_URL is not set; skipping");
+        return;
+    };
+    let json = |args: &[&str]| -> serde_json::Value {
+        let mut all = vec!["-d", url.as_str(), "--format", "json"];
+        all.extend_from_slice(args);
+        let output = run(&all, None);
+        assert!(output.status.success(), "{output:?}");
+        serde_json::from_str(&stdout(&output)).unwrap()
+    };
+
+    // A customer's latest orders, as a Java application sends them: the
+    // generic plan walks the index of dates and filters, which suits the
+    // LIMIT it cannot see but not a customer with few orders.
+    let latest = "SELECT * FROM orders WHERE customer_id = ? ORDER BY created_at DESC LIMIT ?";
+    let report = json(&["-c", latest, "--params", "--measure"]);
+    let parameters = &report["parameters"];
+    assert_eq!(parameters["verdict"], "sensitive", "{parameters}");
+    assert_eq!(parameters["converted"], true);
+    assert_eq!(
+        parameters["parameters"][0]["column"]["column"],
+        "customer_id"
+    );
+    assert_eq!(parameters["parameters"][1]["clause"], "limit");
+    let worst = parameters["rows"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["measured"]["change"] == "worse")
+        .unwrap_or_else(|| panic!("{parameters}"));
+    assert_eq!(worst["generic"], false);
+    assert!(
+        worst["measured"]["after"]["pages"].as_u64().unwrap()
+            > 10 * worst["measured"]["before"]["pages"].as_u64().unwrap(),
+        "{worst}"
+    );
+    assert!(
+        parameters["advice"][0]
+            .as_str()
+            .unwrap()
+            .contains("force_custom_plan"),
+        "{parameters}"
+    );
+    // The plan shown is the generic plan, measured with those values, and
+    // its advice is the index that serves both.
+    assert!(
+        parameters["shown"]
+            .as_str()
+            .unwrap()
+            .contains("the values it does worst with")
+    );
+    assert!(report["plan"]["summary"]["execution_time"].is_number());
+    assert!(
+        report["advice"][0]["ddl"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("(customer_id, created_at)"),
+        "{}",
+        report["advice"]
+    );
+
+    // No index on status: every value gets the same plan.
+    let report = json(&["-c", "SELECT * FROM orders WHERE status = $1", "--params"]);
+    assert_eq!(report["parameters"]["verdict"], "insensitive");
+    assert_eq!(report["parameters"]["rows"][0]["value"], "delivered");
+
+    // Values given: those alone. A value the statistics cannot give needs
+    // one.
+    let expression = "SELECT * FROM orders WHERE lower(note) = $1";
+    let report = json(&["-c", expression, "--params"]);
+    assert_eq!(report["parameters"]["verdict"], "unknown");
+    let report = json(&["-c", expression, "--bind", "1=abc"]);
+    let rows = report["parameters"]["rows"].as_array().unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0]["values"][0], "abc");
+
+    // A statement with parameters needs --params, and --params needs one.
+    let output = run(
+        &[
+            "-d",
+            &url,
+            "-c",
+            "SELECT * FROM orders WHERE id = $1",
+            "--print",
+        ],
+        None,
+    );
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("--params tries values for it"),
+        "{output:?}"
+    );
+    let output = run(&["-d", &url, "-c", "SELECT 1", "--params", "--print"], None);
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("takes no parameters"));
 }
 
 #[test]
@@ -538,5 +640,19 @@ fn checks_statements_against_a_database() {
         "{text}"
     );
     assert!(text.contains("HypoPG"), "{text}");
+    // A statement with parameters cannot run as it is: an error, which
+    // says so, and the other statements are still checked.
+    std::fs::write(
+        dir.join("plans/by_status.sql"),
+        "SELECT id FROM orders WHERE status = $1",
+    )
+    .unwrap();
+    let output = check(&[]);
+    assert_eq!(output.status.code(), Some(2), "{output:?}");
+    assert!(stdout(&output).contains("PASS  plans/customer.sql"));
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("takes parameters ($1)"),
+        "{output:?}"
+    );
     let _ = std::fs::remove_dir_all(&dir);
 }

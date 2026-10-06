@@ -15,7 +15,7 @@ use explainsql_core::{Analysis, advisor, catalog, compare};
 use explainsql_db::{Database, Error, Mode, Safety, Settings};
 use explainsql_tui::{Command, Connection, Event};
 
-use crate::{Cli, Format, emit, interactive, report_for, viewer_options, with_findings};
+use crate::{Cli, Format, emit, interactive, params, report_for, viewer_options, with_findings};
 
 pub fn run(cli: &Cli) -> ExitCode {
     match try_run(cli) {
@@ -41,6 +41,24 @@ fn try_run(cli: &Cli) -> Result<ExitCode, String> {
         timeout: Duration::from_secs(cli.timeout.max(1)),
     };
     let runs = usize::from(cli.runs);
+    if cli.params || !cli.bind.is_empty() {
+        let trying = params::Trying {
+            measure: cli.measure,
+            runs,
+            safety,
+        };
+        let (plan, sensitivity) = params::sensitivity(&db, &sql, &cli.bind, trying)?;
+        let (mut analysis, _) = analyzed(&db, &plan);
+        analysis.parameters = Some(sensitivity);
+        return Ok(with_findings(
+            cli,
+            &analysis,
+            emit(&report_for(cli, &plan, &analysis)),
+        ));
+    }
+    if let Some(error) = undeclared_parameters(&sql) {
+        return Err(error);
+    }
     let viewer = cli.format == Format::Text && !cli.print && interactive();
     if !viewer {
         let mode = if cli.no_analyze {
@@ -180,6 +198,29 @@ fn try_run(cli: &Cli) -> Result<ExitCode, String> {
     explainsql_tui::run_connected(plan, analysis, viewer_options(cli), connection)
         .map_err(|error| format!("cannot open the viewer: {error}"))?;
     Ok(ExitCode::SUCCESS)
+}
+
+/// A statement with `$n` placeholders cannot run without values: what to
+/// do instead.
+fn undeclared_parameters(sql: &str) -> Option<String> {
+    let (list, count) = placeholder_list(sql)?;
+    Some(format!(
+        "the statement takes parameters ({list}): --params tries values for {}, or --bind N=VALUE gives them",
+        if count == 1 { "it" } else { "them" }
+    ))
+}
+
+/// `$1`, or `$1 to $3`, and how many, when the statement has `$n`
+/// placeholders, which it cannot run without values.
+pub(crate) fn placeholder_list(sql: &str) -> Option<(String, usize)> {
+    let placeholders = explainsql_core::params::placeholders(sql);
+    (placeholders.count > 0 && !placeholders.converted).then(|| {
+        let list = match placeholders.count {
+            1 => "$1".to_owned(),
+            count => format!("$1 to ${count}"),
+        };
+        (list, placeholders.count)
+    })
 }
 
 /// Runs EXPLAIN, analyzes the plan, and checks the advice against the

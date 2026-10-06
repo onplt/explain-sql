@@ -11,6 +11,7 @@ use crate::diff::{ChangeKind, PlanDiff};
 use crate::format;
 use crate::ir::{NodeId, Plan};
 use crate::metrics;
+use crate::params::{self, Parameter, Sensitivity};
 use crate::rules::{Finding, Severity};
 
 /// Node labels longer than this are shortened in the plan table.
@@ -26,6 +27,10 @@ const MARKED_MISESTIMATE: f64 = 10.0;
 pub fn text(plan: &Plan, analysis: &Analysis, color: bool) -> String {
     let paint = Paint(color);
     let mut out = String::new();
+    if let Some(sensitivity) = &analysis.parameters {
+        text_parameters(&mut out, sensitivity, &paint);
+        out.push('\n');
+    }
     out.push_str(&paint.bold(&wrap(&analysis.verdict, 0)));
     out.push_str("\n\n");
     let facts = facts(plan, analysis);
@@ -613,7 +618,12 @@ fn write_table(
 
 /// The report as Markdown, for an issue, a pull request or a chat.
 pub fn markdown(plan: &Plan, analysis: &Analysis) -> String {
-    let mut out = format!("**{}**\n\n", escape(&analysis.verdict));
+    let mut out = String::new();
+    if let Some(sensitivity) = &analysis.parameters {
+        markdown_parameters(&mut out, sensitivity);
+        out.push_str("\n### The plan\n\n");
+    }
+    out.push_str(&format!("**{}**\n\n", escape(&analysis.verdict)));
     let facts = facts(plan, analysis);
     if !facts.is_empty() {
         out.push_str(&format!("{}\n\n", escape(&facts.join(" · "))));
@@ -677,6 +687,8 @@ pub fn json(plan: &Plan, analysis: &Analysis) -> String {
         advice: &'a [Advice],
         #[serde(skip_serializing_if = "<[_]>::is_empty")]
         counterfactuals: &'a [Answer],
+        #[serde(skip_serializing_if = "Option::is_none")]
+        parameters: Option<&'a Sensitivity>,
         metrics: &'a metrics::Metrics,
         plan: &'a Plan,
     }
@@ -685,6 +697,7 @@ pub fn json(plan: &Plan, analysis: &Analysis) -> String {
         findings: &analysis.findings,
         advice: &analysis.advice,
         counterfactuals: &analysis.counterfactuals,
+        parameters: analysis.parameters.as_ref(),
         metrics: &analysis.metrics,
         plan,
     };
@@ -830,6 +843,215 @@ fn markdown_counterfactuals(out: &mut String, analysis: &Analysis) {
         }
         out.push_str(&format!("  - {}\n", escape(&planned_with(answer))));
     }
+}
+
+/// How the plan depends on the statement's parameters: the verdict, the
+/// parameters, each value tried, whether PostgreSQL would switch to the
+/// generic plan, what to do, and which plan the rest of the report shows.
+fn text_parameters(out: &mut String, sensitivity: &Sensitivity, paint: &Paint) {
+    out.push_str(&format!(
+        "{}  {}\n",
+        paint.bold("Parameters"),
+        paint.sensitivity(sensitivity.verdict)
+    ));
+    out.push_str(&wrap(&sensitivity.summary, 2));
+    out.push_str("\n\n");
+    for parameter in &sensitivity.parameters {
+        out.push_str(&wrap(
+            &format!("${}  {}", parameter.number, parameter_facts(parameter)),
+            2,
+        ));
+        out.push('\n');
+    }
+    if !sensitivity.rows.is_empty() {
+        out.push('\n');
+        let values: Vec<String> = sensitivity
+            .rows
+            .iter()
+            .map(|row| tried_values(sensitivity, row))
+            .collect();
+        let width = values
+            .iter()
+            .map(|value| value.chars().count())
+            .max()
+            .unwrap_or(0)
+            .min(32);
+        for (row, value) in sensitivity.rows.iter().zip(&values) {
+            let indent = 4 + width;
+            let from = row
+                .sample
+                .as_ref()
+                .map(params::Sample::describe)
+                .unwrap_or_else(|| "the values given".to_owned());
+            if value.chars().count() > width {
+                out.push_str(&format!("  {value}\n"));
+                out.push_str(&wrap(&from, indent));
+            } else {
+                out.push_str(&format!("  {value:<width$}  {from}"));
+            }
+            out.push('\n');
+            let plan = if row.empty {
+                paint.dim(NO_ROW)
+            } else if row.generic {
+                paint.dim("the generic plan")
+            } else {
+                custom_plan(row)
+            };
+            out.push_str(&wrap(&plan, indent));
+            out.push('\n');
+            if let Some(line) = measured_line(row) {
+                out.push_str(&wrap(
+                    &format!("measured, custom plan → generic plan: {line}"),
+                    indent,
+                ));
+                out.push('\n');
+            }
+        }
+    }
+    if let Some(switch) = &sensitivity.switch {
+        out.push('\n');
+        out.push_str(&wrap(&switch.reason, 2));
+        out.push('\n');
+    }
+    for advice in &sensitivity.advice {
+        out.push_str(&wrap(&format!("→ {advice}"), 2));
+        out.push('\n');
+    }
+    for note in &sensitivity.notes {
+        out.push_str(&paint.dim(&wrap(note, 2)));
+        out.push('\n');
+    }
+    out.push('\n');
+    out.push_str(&wrap(&sensitivity.shown, 0));
+    out.push('\n');
+}
+
+fn markdown_parameters(out: &mut String, sensitivity: &Sensitivity) {
+    out.push_str(&format!(
+        "### Parameters: {}\n\n{}\n\n",
+        sensitivity.verdict.label(),
+        escape(&sensitivity.summary)
+    ));
+    for parameter in &sensitivity.parameters {
+        out.push_str(&format!(
+            "- `${}` {}\n",
+            parameter.number,
+            escape(&parameter_facts(parameter))
+        ));
+    }
+    if !sensitivity.rows.is_empty() {
+        out.push_str("\n| Value | From | Custom plan | Measured, custom plan → generic plan |\n|---|---|---|---|\n");
+        for row in &sensitivity.rows {
+            let from = row
+                .sample
+                .as_ref()
+                .map(params::Sample::describe)
+                .unwrap_or_else(|| "the values given".to_owned());
+            let plan = if row.empty {
+                NO_ROW.to_owned()
+            } else if row.generic {
+                "the generic plan".to_owned()
+            } else {
+                custom_plan(row)
+            };
+            out.push_str(&format!(
+                "| `{}` | {} | {} | {} |\n",
+                tried_values(sensitivity, row).replace('`', "'"),
+                escape(&from),
+                escape(&plan),
+                escape(&measured_line(row).unwrap_or_default())
+            ));
+        }
+    }
+    out.push('\n');
+    if let Some(switch) = &sensitivity.switch {
+        out.push_str(&format!("{}\n\n", escape(&switch.reason)));
+    }
+    for advice in &sensitivity.advice {
+        out.push_str(&format!("- **Action:** {}\n", escape(advice)));
+    }
+    for note in &sensitivity.notes {
+        out.push_str(&format!("- {}\n", escape(note)));
+    }
+    out.push_str(&format!("\n{}\n", escape(&sensitivity.shown)));
+}
+
+/// A value that selects no row by its own logic, as a range that ends
+/// before it starts.
+const NO_ROW: &str = "no row: the planner proves it from the values alone";
+
+/// `integer, compared with orders.customer_id (=), held at 4242`.
+fn parameter_facts(parameter: &Parameter) -> String {
+    let mut facts = Vec::new();
+    if let Some(type_name) = &parameter.type_name {
+        facts.push(type_name.clone());
+    }
+    facts.push(match (&parameter.column, parameter.clause) {
+        (Some(column), _) => format!("compared with {} ({})", column.name(), column.operator),
+        (None, Some(clause)) => format!("the {}", clause.keyword()),
+        (None, None) => "not compared with a column".to_owned(),
+    });
+    facts.push(match &parameter.held {
+        Some(value) => format!(
+            "{} {}",
+            if parameter.given { "given:" } else { "held at" },
+            params::show_typed(Some(value), parameter.type_name.as_deref())
+        ),
+        None => "no value to try".to_owned(),
+    });
+    facts.join(", ")
+}
+
+/// The value a row tries, `$1 = 4242`, or all the values given.
+fn tried_values(sensitivity: &Sensitivity, row: &params::Row) -> String {
+    let shown: Vec<String> = sensitivity
+        .parameters
+        .iter()
+        .zip(&row.values)
+        .filter(|(parameter, _)| {
+            row.parameter
+                .is_none_or(|number| number == parameter.number)
+        })
+        .map(|(parameter, value)| parameter.show(value.as_deref()))
+        .collect();
+    shown.join(", ")
+}
+
+/// `Parallel Seq Scan on orders, cost 5,095`.
+fn custom_plan(row: &params::Row) -> String {
+    match row.plan.cost {
+        Some(cost) => format!("{}, cost {}", row.plan.access, format::rows(cost.round())),
+        None => row.plan.access.clone(),
+    }
+}
+
+/// How the custom plan and then the generic plan did, measured with the
+/// row's values.
+fn measured_line(row: &params::Row) -> Option<String> {
+    if let Some(timeout) = &row.timed_out {
+        let custom = row
+            .measured
+            .as_ref()
+            .and_then(|comparison| comparison.before.execution_time)
+            .map(|time| format!(", while the custom plan took {}", format::duration(time)))
+            .unwrap_or_default();
+        return Some(format!(
+            "the generic plan ran past the {timeout} timeout{custom}"
+        ));
+    }
+    let comparison = row.measured.as_ref()?;
+    Some(format!(
+        "{}; {}",
+        comparison.details(),
+        match comparison.change {
+            crate::compare::Change::Worse => "the generic plan does worse",
+            crate::compare::Change::Better => "the generic plan does better",
+            crate::compare::Change::Mixed => "neither does better on both",
+            crate::compare::Change::Same | crate::compare::Change::Unknown => {
+                "the generic plan does no worse"
+            }
+        }
+    ))
 }
 
 /// `Planned again with enable_seqscan = off; measured, 3 runs each.`
@@ -1152,6 +1374,16 @@ impl Paint {
                 self.wrap("33", &label)
             }
             ChangeKind::Work => self.wrap("2", &label),
+        }
+    }
+
+    /// Whether the plan depends on the parameters' values.
+    fn sensitivity(&self, verdict: params::Verdict) -> String {
+        let label = verdict.label();
+        match verdict {
+            params::Verdict::Sensitive => self.wrap("1;31", label),
+            params::Verdict::Insensitive | params::Verdict::Harmless => self.wrap("32", label),
+            params::Verdict::Unknown => self.wrap("2", label),
         }
     }
 

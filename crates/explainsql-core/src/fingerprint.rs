@@ -140,46 +140,81 @@ pub fn shape(plan: &Plan) -> String {
     let mut out = String::new();
     for (depth, node) in plan.walk() {
         out.push_str(&"  ".repeat(depth));
-        out.push_str(&node.node_type);
-        let mut field = |name: &str, value: Option<&str>| {
-            if let Some(value) = value {
-                out.push_str(&format!(" {name}={}", blank_numbers(value)));
-            }
-        };
-        field("parallel", node.parallel_aware.then_some("yes"));
-        field("join", node.join_type.as_deref());
-        field("strategy", node.strategy.as_deref());
-        field("partial", node.partial_mode.as_deref());
-        field("operation", node.operation.as_deref());
-        field("command", node.command.as_deref());
-        field("direction", node.scan_direction.as_deref());
-        field(
-            "relationship",
-            node.relationship.map(|relationship| match relationship {
-                Relationship::Outer => "outer",
-                Relationship::Inner => "inner",
-                Relationship::Member => "member",
-                Relationship::InitPlan => "initplan",
-                Relationship::SubPlan => "subplan",
-                Relationship::Subquery => "subquery",
-            }),
-        );
-        field("relation", node.relation_name.as_deref());
-        field("index", node.index_name.as_deref());
-        field("cte", node.cte_name.as_deref());
-        field("function", node.function_name.as_deref());
-        field("provider", node.custom_plan_provider.as_deref());
-        let kinds: BTreeSet<&str> = node
-            .predicates
-            .iter()
-            .map(|predicate| predicate.kind.key())
-            .collect();
-        for kind in kinds {
-            out.push_str(&format!(" [{kind}]"));
-        }
-        out.push('\n');
+        shape_line(&mut out, node, node.relationship);
     }
     out
+}
+
+/// The [shape](shape) of a plan as it would be had the planner pruned its
+/// partitions: an Append or Merge Append left with one child counts as that
+/// child. A generic plan prunes partitions when it starts, with the values
+/// it runs with, and keeps the Append that does it; a custom plan prunes
+/// them when it is planned, and an Append with one child left goes.
+pub fn pruned_shape(plan: &Plan) -> String {
+    let mut out = String::new();
+    pruned_lines(plan, plan.root().id, 0, None, &mut out);
+    out
+}
+
+fn pruned_lines(
+    plan: &Plan,
+    id: NodeId,
+    depth: usize,
+    relationship: Option<Option<Relationship>>,
+    out: &mut String,
+) {
+    let node = plan.node(id);
+    let relationship = relationship.unwrap_or(node.relationship);
+    if matches!(node.node_type.as_str(), "Append" | "Merge Append") && node.children.len() == 1 {
+        return pruned_lines(plan, node.children[0], depth, Some(relationship), out);
+    }
+    out.push_str(&"  ".repeat(depth));
+    shape_line(out, node, relationship);
+    for &child in &node.children {
+        pruned_lines(plan, child, depth + 1, None, out);
+    }
+}
+
+/// A node's line of a shape, with the relationship to its parent given.
+fn shape_line(out: &mut String, node: &Node, relationship: Option<Relationship>) {
+    out.push_str(&node.node_type);
+    let mut field = |name: &str, value: Option<&str>| {
+        if let Some(value) = value {
+            out.push_str(&format!(" {name}={}", blank_numbers(value)));
+        }
+    };
+    field("parallel", node.parallel_aware.then_some("yes"));
+    field("join", node.join_type.as_deref());
+    field("strategy", node.strategy.as_deref());
+    field("partial", node.partial_mode.as_deref());
+    field("operation", node.operation.as_deref());
+    field("command", node.command.as_deref());
+    field("direction", node.scan_direction.as_deref());
+    field(
+        "relationship",
+        relationship.map(|relationship| match relationship {
+            Relationship::Outer => "outer",
+            Relationship::Inner => "inner",
+            Relationship::Member => "member",
+            Relationship::InitPlan => "initplan",
+            Relationship::SubPlan => "subplan",
+            Relationship::Subquery => "subquery",
+        }),
+    );
+    field("relation", node.relation_name.as_deref());
+    field("index", node.index_name.as_deref());
+    field("cte", node.cte_name.as_deref());
+    field("function", node.function_name.as_deref());
+    field("provider", node.custom_plan_provider.as_deref());
+    let kinds: BTreeSet<&str> = node
+        .predicates
+        .iter()
+        .map(|predicate| predicate.kind.key())
+        .collect();
+    for kind in kinds {
+        out.push_str(&format!(" [{kind}]"));
+    }
+    out.push('\n');
 }
 
 /// The [shape](shape) of a plan as 16 hexadecimal digits (64-bit FNV-1a),
@@ -309,6 +344,43 @@ Nested Loop  (cost=0.29..20.00 rows=10 width=8)
         )
         .unwrap();
         assert_ne!(id(&plan), id(&other));
+    }
+
+    #[test]
+    fn a_plan_pruned_as_it_starts_has_the_shape_of_one_pruned_as_planned() {
+        // The generic plan, run with values that leave one partition.
+        let generic = crate::parse(
+            "\
+Append  (cost=4.81..1183.72 rows=599 width=63)
+  Subplans Removed: 11
+  ->  Bitmap Heap Scan on events_2025_03 events_1  (cost=4.81..100.67 rows=51 width=63)
+        Recheck Cond: ((created_at >= $1) AND (created_at < $2))
+        ->  Bitmap Index Scan on events_2025_03_created_at_idx  (cost=0.00..4.79 rows=51 width=0)
+              Index Cond: ((created_at >= $1) AND (created_at < $2))",
+        )
+        .unwrap();
+        let custom = crate::parse(
+            "\
+Bitmap Heap Scan on events_2025_03 events  (cost=11.80..137.95 rows=343 width=63)
+  Recheck Cond: ((created_at >= '2025-03-01 00:00:00+00'::timestamp with time zone) AND (created_at < '2025-03-02 00:00:00+00'::timestamp with time zone))
+  ->  Bitmap Index Scan on events_2025_03_created_at_idx  (cost=0.00..11.71 rows=343 width=0)
+        Index Cond: ((created_at >= '2025-03-01 00:00:00+00'::timestamp with time zone) AND (created_at < '2025-03-02 00:00:00+00'::timestamp with time zone))",
+        )
+        .unwrap();
+        assert_ne!(shape(&generic), shape(&custom));
+        assert_eq!(pruned_shape(&generic), pruned_shape(&custom));
+        // An Append of several partitions stays.
+        let plan = crate::parse(JOIN).unwrap();
+        assert_eq!(pruned_shape(&plan), shape(&plan));
+        let two = crate::parse(
+            "\
+Append  (cost=4.81..1183.72 rows=599 width=63)
+  Subplans Removed: 10
+  ->  Seq Scan on events_2025_03 events_1  (cost=0.00..100.67 rows=51 width=63)
+  ->  Seq Scan on events_2025_04 events_2  (cost=0.00..96.71 rows=49 width=63)",
+        )
+        .unwrap();
+        assert!(pruned_shape(&two).starts_with("Append\n"));
     }
 
     #[test]

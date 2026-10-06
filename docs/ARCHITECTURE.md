@@ -39,10 +39,11 @@ explain-sql/
 │  │  ├─ src/scenario.rs         # the planner settings explainsql may plan under
 │  │  ├─ src/fingerprint.rs      # the same scan or join in another plan; plan shapes
 │  │  ├─ src/counterfactual.rs   # why the planner chose its plan: questions and answers
+│  │  ├─ src/params.rs           # statements with parameters: values to try, generic and custom plans
 │  │  ├─ src/analysis.rs         # metrics + findings + the one-sentence verdict
 │  │  ├─ src/report.rs           # static reports: text, Markdown, JSON
 │  │  └─ tests/                  # corpus, inputs, metrics, rules, report snapshots, robustness
-│  ├─ explainsql-db/             # tokio-postgres + rustls: safe executor, catalog reader, HypoPG/rollback prover
+│  ├─ explainsql-db/             # tokio-postgres + rustls: safe executor, prepared statements, catalog reader, HypoPG/rollback prover
 │  ├─ explainsql-tui/            # Ratatui app: state, views, keymap, theme
 │  └─ explainsql/                # binary: clap CLI, mode dispatch (tui | print | pager | json), diff, check
 ├─ fixtures/
@@ -314,6 +315,29 @@ A plan shows what the planner chose, not what it turned down. `counterfactual.rs
 - **Approximation.** `enable_*` settings hold for the whole statement, so other scans and joins can change too. The answer lists them and is marked approximate.
 - **Advice.** `Analysis::record` keeps the answers and puts them into the advice: an existing index that the planner did not use gets the reason found instead of the likely ones.
 - **Tests.** `counterfactual.rs` covers every answer on small plans. `crates/explainsql-db/tests/live.rs` checks that settings hold only inside their transaction and that others are refused; `crates/explainsql/tests/cli.rs` asks about a function of a column, a broad range and a sort that spills, against the fixture database.
+
+## Statements with parameters
+
+A statement with parameters has two kinds of plans. A custom plan is made for the values of one execution. The generic plan is made once for any value. After five custom plans, PostgreSQL switches to the generic plan when its estimated cost is below the custom plans' average cost, each with a charge for planning (`choose_custom_plan` in `plancache.c`), and then keeps it. `params.rs` finds how the plan depends on the values. It is pure: it maps the parameters, picks the values and judges the plans. `params.rs` in the binary runs the plans through `explainsql-db`'s `prepared.rs`.
+
+- **Placeholders.** `$n`, or JDBC's `?` turned into `$n` in order. Literals, quoted identifiers, dollar quotes and comments are skipped, and `??` becomes the `?` operator. PostgreSQL infers each parameter's type from a `PREPARE` (`pg_prepared_statements.parameter_types`).
+- **Running.** Each plan comes from its own `PREPARE` and `EXPLAIN EXECUTE`. They run inside a transaction that is rolled back, under `plan_cache_mode` (`force_generic_plan` or `force_custom_plan`, from PostgreSQL 12). The values travel as literals in dollar quotes whose tag they do not contain. The statement is deallocated after the rollback, which does not undo a `PREPARE`, whatever happened. Each run prepares the statement again, so that no cached generic plan carries over from earlier settings. The usual safety holds: the estimated plan first, `READ ONLY` unless `--allow-dml`, and a timeout.
+- **Mapping.** A parameter is compared with a column when a scan's index condition, recheck condition or filter does so: `col = $1`, a cast of the column, `$1 <= col` flipped, or `col = ANY (ARRAY[$1, $2])` for an `IN` list. A parameter after `LIMIT`, `OFFSET` or `FETCH FIRST` counts rows. Mapping uses the generic plan with NULL values and `enable_partition_pruning = off`. The generic plan prunes partitions when it starts, using the values it runs with, so with NULL values it would prune them all.
+- **Values.**
+  - For equality: two most common values, the least common of the most common values, and a histogram value outside them.
+  - For a range: the bounds at the 0th, 25th, 50th, 75th and 100th percentiles of the histogram.
+  - For a `LIMIT` or an `OFFSET`: fixed row counts.
+  - Statistics come from `pg_stats`, of the partitioned table (`pg_partition_root`, inherited) when the scanned table is a partition and the partitioned table has them.
+
+  Each parameter is tried with the others held at a typical value: the one that keeps the most rows, or a page of 10 rows for a `LIMIT`. `--bind` fixes a value. A parameter with no value stops the trials: holding it at NULL would make every custom plan a contradiction.
+- **Same plan.** A custom plan is the generic plan when their shapes match. Before comparing, an Append or Merge Append that the generic plan's run-time pruning left with one child is replaced by that child (`fingerprint::pruned_shape`). A custom plan that proves there is no row (a Result whose one-time filter is false, as a range that ends before it starts) is set aside.
+- **Judging.**
+  - Estimated: values that get another plan make the statement sensitive.
+  - Measured (`--measure`): the custom plan and the generic plan run with the same values. The generic plan hurts when it reads at least twice the pages, or, for as many pages, takes twice the time, or runs past the timeout while the custom plan finished. Another plan that does not hurt is harmless.
+  - The switch is predicted from the planner's costs. The generic plan is kept whatever the first five values when its cost is below every custom plan's, never when it is above them all, and otherwise depending on those values.
+  - Advice to plan each execution (`plan_cache_mode = force_custom_plan`, pgJDBC's `prepareThreshold=0`) comes only when PostgreSQL could switch.
+- **Report.** Measured, the report shows the generic plan run with the values it does worst with, so that the findings and the advice (often an index that serves every value) are about that plan. The parameters section comes first, in text, Markdown and JSON.
+- **Tests.** `params.rs` covers placeholders, clauses, mapping, values, holding, trials and every verdict on small plans. `fingerprint.rs` covers pruned shapes, and `tests/report.rs` snapshots the report. `crates/explainsql-db/tests/live.rs` checks generic and custom plans, values that try to escape their quotes, writes refused without `--allow-dml`, that nothing stays prepared, and partition pruning. `crates/explainsql/tests/cli.rs` runs a customer's latest orders, whose generic plan walks the index of dates, against the fixture database.
 
 ## Plan diff
 

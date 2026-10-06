@@ -6,6 +6,7 @@ use std::{env, fs, io};
 
 mod check;
 mod connected;
+mod params;
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use explainsql_core::Analysis;
@@ -28,6 +29,9 @@ use explainsql_core::report;
 /// Connected mode runs a query itself: explainsql -d "$DATABASE_URL" -f
 /// slow.sql. It shows the estimated plan, then runs EXPLAIN ANALYZE in a
 /// transaction that is always rolled back, READ ONLY unless --allow-dml.
+/// With --params, a statement with parameters ($1, or ? as in JDBC) is
+/// prepared as an application runs it, and the plans its values get are
+/// compared with the generic plan.
 ///
 /// explainsql diff BEFORE AFTER compares two plans of the same statement;
 /// explainsql check checks plans in continuous integration.
@@ -117,9 +121,29 @@ struct Cli {
     #[arg(long, value_name = "TABLE", num_args = 0..=1, default_missing_value = "")]
     why_not: Option<String>,
 
+    /// Connected mode: the statement takes parameters ($1, or ? as in
+    /// JDBC). Prepare it as an application does, try values from the
+    /// columns' statistics and common LIMIT and OFFSET row counts, and
+    /// compare the plan each gets with the generic plan, which PostgreSQL
+    /// may switch to after five executions. Prints a report.
+    #[arg(long, conflicts_with_all = ["why_not", "prove"])]
+    params: bool,
+
+    /// Connected mode: with --params, the value of a parameter, as 1=pending
+    /// for $1, tried instead of values from the statistics. Repeat it for
+    /// each parameter to give; implies --params.
+    #[arg(
+        long,
+        value_name = "N=VALUE",
+        value_parser = params::binding,
+        conflicts_with_all = ["why_not", "prove"]
+    )]
+    bind: Vec<(usize, String)>,
+
     /// Connected mode: measure the alternatives of --why-not (and of y in
-    /// the viewer) with EXPLAIN ANALYZE rather than only estimating them.
-    /// Every run is rolled back.
+    /// the viewer), and the plans of --params where they differ, with
+    /// EXPLAIN ANALYZE rather than only estimating them. Every run is
+    /// rolled back.
     #[arg(long)]
     measure: bool,
 
@@ -319,9 +343,9 @@ fn main() -> ExitCode {
         eprintln!("error: give the query to run with -f FILE or -c SQL");
         return ExitCode::FAILURE;
     }
-    if cli.why_not.is_some() || cli.measure {
+    if cli.why_not.is_some() || cli.measure || cli.params || !cli.bind.is_empty() {
         eprintln!(
-            "error: --why-not and --measure ask the database: give the query to run with -d DATABASE and -f FILE or -c SQL"
+            "error: --why-not, --params and --measure ask the database: give the query to run with -d DATABASE and -f FILE or -c SQL"
         );
         return ExitCode::FAILURE;
     }

@@ -84,6 +84,11 @@ fn try_run(args: &CheckArgs) -> Result<ExitCode, String> {
         let read = || fs::read_to_string(file).map_err(|error| error.to_string());
         let captured = match &database {
             Some(db) => read().and_then(|sql| {
+                if let Some((list, _)) = connected::placeholder_list(&sql) {
+                    return Err(format!(
+                        "the statement takes parameters ({list}), and explainsql check runs statements as they are: write it with values (explainsql -d DATABASE -f FILE --params shows how its plan depends on them)"
+                    ));
+                }
                 let json = db.explain(&sql, mode, safety).map_err(|e| e.to_string())?;
                 let plan = explainsql_core::parse(&json).map_err(|e| e.to_string())?;
                 let (analysis, _) = connected::analyzed(db, &plan);

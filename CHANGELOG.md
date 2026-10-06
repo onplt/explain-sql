@@ -44,6 +44,17 @@ All notable changes to ExplainSQL. The format follows
   failed. Exit codes 0, 1 and 2; text, Markdown, JSON or SARIF.
 - `--fail-on SEVERITY`: with a printed report, exit with 1 when a finding is
   at least that severe.
+- `--params` in connected mode: how the plan of a statement with parameters
+  (`$1`, or JDBC's `?`) depends on their values. explainsql prepares the
+  statement as an application does, tries values from the columns'
+  statistics and common LIMIT and OFFSET row counts, and compares the
+  custom plan each value gets with the generic plan, which PostgreSQL may
+  switch to after five executions. With `--measure`, both plans run where
+  they differ; the report says whether the generic plan does much worse for
+  some value, whether PostgreSQL would switch to it, and what to do
+  (`plan_cache_mode = force_custom_plan`, pgJDBC's `prepareThreshold=0`),
+  and shows the generic plan with the values it does worst with. `--bind
+  N=VALUE` gives a parameter's value.
 
 ### Changed
 

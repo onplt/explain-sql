@@ -204,3 +204,128 @@ fn check_reports() {
         14
     );
 }
+
+/// How the plan of a statement with parameters depends on their values: a
+/// customer's latest orders, whose generic plan walks the whole index of
+/// dates for a customer with few orders.
+#[test]
+fn parameters_reports() {
+    use explainsql_core::params::{
+        self, ColumnStats, Trial, Tried, hold, row_counts, samples, sensitivity, trials,
+    };
+    let sql = "SELECT * FROM orders WHERE customer_id = $1 ORDER BY created_at DESC LIMIT $2";
+    let generic = parse(
+        "\
+Limit  (cost=0.42..1597.22 rows=1 width=64)
+  ->  Index Scan Backward using orders_created_at_idx on orders  (cost=0.42..15968.46 rows=10 width=64)
+        Filter: (customer_id = $1)",
+    )
+    .unwrap();
+    let sorted = parse(
+        "\
+Limit  (cost=5094.32..5095.01 rows=6 width=64)
+  ->  Gather Merge  (cost=5094.32..5095.01 rows=6 width=64)
+        Workers Planned: 1
+        ->  Sort  (cost=4094.31..4094.33 rows=6 width=64)
+              Sort Key: created_at DESC
+              ->  Parallel Seq Scan on orders  (cost=0.00..4094.24 rows=6 width=64)
+                    Filter: (customer_id = 4242)",
+    )
+    .unwrap();
+    let sorted_run = parse(
+        "\
+Limit  (cost=5094.32..5095.01 rows=6 width=64) (actual time=9.736..12.595 rows=10 loops=1)
+  Buffers: shared hit=2667
+  ->  Gather Merge  (cost=5094.32..5095.01 rows=6 width=64) (actual time=9.735..12.592 rows=10 loops=1)
+        Workers Planned: 1
+        Workers Launched: 1
+        Buffers: shared hit=2667
+        ->  Sort  (cost=4094.31..4094.33 rows=6 width=64) (actual time=7.161..7.162 rows=5 loops=2)
+              Sort Key: created_at DESC
+              Sort Method: quicksort  Memory: 25kB
+              Buffers: shared hit=2667
+              ->  Parallel Seq Scan on orders  (cost=0.00..4094.24 rows=6 width=64) (actual time=1.153..7.105 rows=5 loops=2)
+                    Filter: (customer_id = 4242)
+                    Rows Removed by Filter: 99995
+                    Buffers: shared hit=2610
+Planning Time: 0.131 ms
+Execution Time: 12.635 ms",
+    )
+    .unwrap();
+    let generic_run = parse(
+        "\
+Limit  (cost=0.42..1597.22 rows=1 width=64) (actual time=2.730..67.100 rows=10 loops=1)
+  Buffers: shared hit=176778
+  ->  Index Scan Backward using orders_created_at_idx on orders  (cost=0.42..15968.46 rows=10 width=64) (actual time=2.728..67.088 rows=10 loops=1)
+        Filter: (customer_id = $1)
+        Rows Removed by Filter: 164404
+        Buffers: shared hit=176778
+Planning Time: 0.200 ms
+Execution Time: 67.123 ms",
+    )
+    .unwrap();
+
+    let types = ["integer".to_owned(), "bigint".to_owned()];
+    let mut parameters = params::parameters(&generic, sql, &types);
+    let stats = ColumnStats {
+        table: "orders".to_owned(),
+        n_distinct: 19_897.0,
+        common_values: vec!["15453".to_owned()],
+        common_freqs: vec![0.000_27],
+        histogram: (0..101).map(|i| (1 + i * 200).to_string()).collect(),
+        ..ColumnStats::default()
+    };
+    let samples = vec![samples(&stats, "="), row_counts(params::Clause::Limit)];
+    hold(&mut parameters, &samples, &[]);
+    assert_eq!(trials(&parameters, &samples).len(), 2 + 5);
+    let trial = |parameter: usize, value: &str, values: [&str; 2]| Trial {
+        parameter: Some(parameter),
+        sample: samples[parameter - 1]
+            .iter()
+            .find(|sample| sample.value.as_deref() == Some(value))
+            .cloned(),
+        values: values.map(|value| Some(value.to_owned())).to_vec(),
+    };
+    let tried = vec![
+        Tried {
+            trial: trial(1, "15453", ["15453", "10"]),
+            custom: generic.clone(),
+            generic: generic.clone(),
+            measured: None,
+            timed_out: None,
+        },
+        Tried {
+            trial: trial(1, "10001", ["10001", "10"]),
+            custom: sorted.clone(),
+            generic: generic.clone(),
+            measured: Some(explainsql_core::compare::compare(&sorted_run, &generic_run)),
+            timed_out: None,
+        },
+        Tried {
+            trial: trial(2, "1", ["15453", "1"]),
+            custom: generic.clone(),
+            generic: generic.clone(),
+            measured: None,
+            timed_out: None,
+        },
+    ];
+    let mut sensitivity = sensitivity(&generic, parameters, tried, true);
+    let worst = sensitivity.worst().unwrap();
+    let values = sensitivity.rows[worst].values.clone();
+    sensitivity.show_measured(&values, true);
+    let mut analysis = analyze(&generic_run);
+    analysis.parameters = Some(sensitivity);
+    insta::assert_snapshot!(
+        "parameters_text",
+        report::text(&generic_run, &analysis, false)
+    );
+    insta::assert_snapshot!(
+        "parameters_markdown",
+        report::markdown(&generic_run, &analysis)
+    );
+    let json: serde_json::Value =
+        serde_json::from_str(&report::json(&generic_run, &analysis)).unwrap();
+    assert_eq!(json["parameters"]["verdict"], "sensitive");
+    assert_eq!(json["parameters"]["parameters"][1]["clause"], "limit");
+    assert_eq!(json["parameters"]["rows"][1]["measured"]["change"], "worse");
+}

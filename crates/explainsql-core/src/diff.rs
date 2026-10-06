@@ -1133,7 +1133,7 @@ fn backward(node: &Node) -> bool {
 
 /// A scan's label, with its direction when backward, and the indexes a
 /// Bitmap Heap Scan reads through.
-fn access_label(plan: &Plan, node: &Node) -> String {
+pub fn access_label(plan: &Plan, node: &Node) -> String {
     let mut label = format::node(node);
     if backward(node) {
         label = label.replacen(&node.node_type, &format!("{} Backward", node.node_type), 1);

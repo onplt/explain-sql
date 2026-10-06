@@ -117,6 +117,65 @@ Without `--measure`, the alternatives are only planned: the answer says how much
 
 The settings are planner settings only, from a fixed list, set with `SET LOCAL` semantics inside the transaction that is rolled back: they never outlast the run. `enable_*` settings apply to the whole statement, so other parts of the plan can change as well; the answer says when they did.
 
+## Statements with parameters
+
+An application rarely sends `WHERE customer_id = 4242`. It sends `WHERE customer_id = $1`, or `?` through JDBC, with the value apart. PostgreSQL plans such a statement in one of two ways:
+
+- a **custom plan**, made for the values of one execution;
+- the **generic plan**, made once for any value.
+
+A prepared statement gets custom plans for its first five executions. From the sixth on, PostgreSQL switches to the generic plan if it estimates it cheaper than the custom plans were on average, and then keeps it. pgJDBC prepares a statement on the server from its fifth execution (`prepareThreshold`). So a statement that a Java application runs often can end up with the generic plan. That plan may suit some values and ruin others, while the same statement tried in psql with a literal value stays fast.
+
+```sh
+explainsql -d shop -c "SELECT * FROM orders WHERE customer_id = ? ORDER BY created_at DESC LIMIT ?" --params --print
+explainsql -d shop -f latest_orders.sql --params --measure --print
+explainsql -d shop -f latest_orders.sql --bind 1=4242 --bind 2=20 --measure --print
+```
+
+explainsql prepares the statement as the application does, then works in four steps:
+
+1. **It maps each parameter** to what the statement does with it. That is the column it is compared with in a scan's conditions (with `=`, a range or an `IN` list), or the `LIMIT` or `OFFSET` it counts rows for.
+2. **It picks values to try:**
+   - for equality: the most common values, the least common of them, and a value outside them, from `pg_stats` (for a partition, from the partitioned table's statistics);
+   - for a range: bounds from across the histogram;
+   - for a `LIMIT`: 1, 10, 100, 1,000 and 10,000 rows;
+   - for an `OFFSET`: 0, 1,000 and 100,000.
+3. **It tries the values one parameter at a time.** The other parameters are held at a typical value: the most common value, the end of a range that keeps every row, a page of 10 rows, or the first page. For each value it compares the custom plan with the generic plan.
+4. **With `--measure`, it runs both plans** for each value whose custom plan differs. Each runs `--runs N` times, after one run that warms the cache.
+
+| Verdict | What it means |
+|---|---|
+| `INSENSITIVE` | Every value gets the generic plan. Whichever plan PostgreSQL uses, it is the same. |
+| `SENSITIVE` | Some values get another plan. Measured, for at least one value the generic plan reads at least twice as many pages (or, for as many pages, takes twice as long), or runs past the timeout. Estimated only, the planner prefers another plan for those values, and `--measure` tells how much that matters. |
+| `HARMLESS` | Some values get another plan, but measured, the generic plan does less than twice as badly for them. |
+| `UNKNOWN` | A parameter has no value to try: it is compared with an expression rather than a column, or its column has no statistics. `--bind N=VALUE` gives it one. |
+
+The report also says whether PostgreSQL would switch to the generic plan after five executions. It switches when the generic plan's estimated cost is below the average cost of the custom plans so far, each with a charge for planning. The outcome therefore depends on the values the first five executions happen to have.
+
+When PostgreSQL would switch and the generic plan does badly, the advice is to plan every execution:
+
+- set `plan_cache_mode = force_custom_plan` for the application's connections (in a JDBC URL, `options=-c%20plan_cache_mode=force_custom_plan`) or for its role;
+- or set `prepareThreshold=0` in pgJDBC, for the connection or for one statement.
+
+Either way, each execution is planned again, which costs planning time. An index that serves every value fixes the cause instead, and the report's advice may suggest one.
+
+**The plan in the report.** With `--measure`, it is the generic plan run with the values it does worst with, and the findings and advice are about that plan. Without `--measure`, it is the generic plan, estimated with the typical values.
+
+**Giving values.** `--bind N=VALUE` gives the value of `$N`, and that value is then the only one tried for it. Give a value for every parameter to compare the custom and generic plans for exactly those values, such as one call taken from a log.
+
+**Placeholders.**
+
+- `$1`, `$2`, … are read as PostgreSQL and `pg_stat_statements` write them.
+- JDBC's `?` is converted in order when the statement has no `$n`, and `??` becomes the `?` operator.
+- A statement with `$n` placeholders cannot run without values, so it needs `--params` or `--bind`.
+
+**Safety and requirements.** Every run is rolled back and every statement explainsql prepares is deallocated, as in connected mode. `--params` needs PostgreSQL 12 or later, for `plan_cache_mode`. It prints a report; the viewer does not show it yet.
+
+**Limits.**
+
+- Values are tried one parameter at a time, so how columns depend on each other is not taken into account.
+- A parameter inside an expression (`lower(email) = $1`), an array (`= ANY($1)`) or a `SET` clause gets no value from the statistics. Give one with `--bind`.
+
 ## Compare two plans
 
 A plan changed after an index, a statistics update, an upgrade or a rewrite of the query. `explainsql diff` tells what changed, node by node:

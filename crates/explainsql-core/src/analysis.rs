@@ -7,6 +7,7 @@ use crate::counterfactual::Answer;
 use crate::format;
 use crate::ir::Plan;
 use crate::metrics::{self, Metrics};
+use crate::params::Sensitivity;
 use crate::rules::{self, Finding};
 
 /// The metrics, the findings and the verdict for a plan.
@@ -24,6 +25,11 @@ pub struct Analysis {
     /// (connected mode); empty until asked.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub counterfactuals: Vec<Answer>,
+    /// How the plan depends on the statement's parameters (connected mode,
+    /// `--params`), when the plan is the generic plan of a statement with
+    /// parameters.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parameters: Option<Sensitivity>,
 }
 
 /// Computes the metrics and runs the rules.
@@ -38,6 +44,7 @@ pub fn analyze(plan: &Plan) -> Analysis {
         findings,
         advice,
         counterfactuals: Vec::new(),
+        parameters: None,
     }
 }
 
