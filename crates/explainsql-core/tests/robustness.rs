@@ -1,13 +1,15 @@
 //! The parser returns a plan or an error, but never panics or hangs,
 //! whatever it is given; and whatever plan it returns can be analyzed and
-//! reported.
+//! reported and anonymized.
 
 mod common;
 
 use common::{corpus, fixtures, plan_path, read};
+use explainsql_core::anonymize::{Options, anonymize};
 use explainsql_core::{analyze, report};
 
-/// Parses, and analyzes and renders whatever plan comes out.
+/// Parses, and analyzes and renders whatever plan comes out; anonymizes
+/// the input too.
 fn parse(input: &str) {
     if let Ok(plan) = explainsql_core::parse(input) {
         let analysis = analyze(&plan);
@@ -15,6 +17,7 @@ fn parse(input: &str) {
         let _ = report::markdown(&plan, &analysis);
         let _ = report::json(&plan, &analysis);
     }
+    let _ = anonymize(input, Options::default());
 }
 
 /// A small deterministic generator (xorshift64*), so failures reproduce.
