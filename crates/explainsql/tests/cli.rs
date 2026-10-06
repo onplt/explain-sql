@@ -723,3 +723,46 @@ fn tells_when_plans_in_logs_changed() {
     assert!(!output.status.success());
     assert!(String::from_utf8_lossy(&output.stderr).contains("no EXPLAIN plan found"));
 }
+
+/// A plan for sharing: names and values replaced, the report the same.
+#[test]
+fn anonymizes_a_plan() {
+    let path = fixture("pg/16/seq_scan_selective.txt");
+    let dir = std::env::temp_dir().join(format!("explainsql-anonymize-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let map = dir.join("map.json");
+    let output = run(
+        &[
+            "anonymize",
+            path.to_str().unwrap(),
+            "--map",
+            map.to_str().unwrap(),
+        ],
+        None,
+    );
+    assert!(output.status.success(), "{output:?}");
+    let plan = stdout(&output);
+    assert!(plan.starts_with("Seq Scan on public.table1"), "{plan}");
+    assert!(!plan.contains("orders"), "{plan}");
+    let mapping: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&map).unwrap()).unwrap();
+    assert_eq!(mapping["tables"]["orders"], "table1");
+
+    // The anonymized plan gets the same findings.
+    let report = stdout(&run(&["--print"], Some(&plan)));
+    assert!(
+        report.contains("ES001 Selective sequential scan"),
+        "{report}"
+    );
+
+    // Names kept on request; no plan, no output.
+    let kept = stdout(&run(
+        &["anonymize", "--keep-names", path.to_str().unwrap()],
+        None,
+    ));
+    assert!(kept.starts_with("Seq Scan on public.orders"), "{kept}");
+    let output = run(&["anonymize"], Some("hello"));
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    let _ = std::fs::remove_dir_all(&dir);
+}

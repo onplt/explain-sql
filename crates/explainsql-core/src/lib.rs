@@ -17,6 +17,7 @@
 
 pub mod advisor;
 pub mod analysis;
+pub mod anonymize;
 pub mod catalog;
 pub mod check;
 pub mod compare;

@@ -219,6 +219,22 @@ Statements whose plan changed come first, the costliest change first: the time t
 
 With `log_analyze`, every statement is instrumented, logged or not, which slows it down. On a busy server, set `auto_explain.log_timing = off`, or instrument a sample of statements with `auto_explain.sample_rate`.
 
+## Share a plan
+
+A plan tells a lot about a database: the names of its tables, columns and indexes, and the values a statement looked for. `explainsql anonymize` replaces them before a plan goes into a bug report, an issue or a chat:
+
+```sh
+explainsql anonymize plan.json > shared.json
+pbpaste | explainsql anonymize | pbcopy
+explainsql anonymize plan.txt --map names.json   # and keep what each name became
+```
+
+- **What changes.** Names of tables, indexes, CTEs, aliases, schemas, columns, constraints and triggers become `table1`, `index1`, `cte1`, `alias1`, `schema1`, `column1`, `constraint1` and `trigger1`. String literals become `'value1'`, `'value2'`, …, keeping a `LIKE` pattern's `%` at either end, and numbers in conditions become small integers. The same name or value gets the same replacement everywhere, in every plan of the input. A statement's text (`Query Text`) is anonymized the same way, without its comments.
+- **What stays.** The node types, estimates, timings, buffers and every other figure, so the plan reads and analyzes as before: the anonymized plan gets the same findings. Function and type names, keywords, `$n` parameters and system names (`pg_catalog`, `public`, `pg_…` relations, `ctid`, the triggers of foreign keys) stay too.
+- **What it reads and prints.** Any input explainsql reads, with every plan it holds. The plans come out in the format they were written in, JSON or text, without what surrounded them: psql's table, log lines, a Markdown fence. A line it cannot place has every name in it replaced. If the anonymized plans could not be read back the same, nothing is printed.
+
+`--keep-names` replaces only the values. `--map FILE` writes what each name and value became as JSON, to read an answer about the anonymized plan back; keep that file to yourself.
+
 ## Compare two plans
 
 A plan changed after an index, a statistics update, an upgrade or a rewrite of the query. `explainsql diff` tells what changed, node by node:
