@@ -11,16 +11,20 @@
 //! `set_config(…, true)` inside the transaction, so they end with it.
 //!
 //! Between the `EXPLAIN` and the rollback, the transaction still holds the
-//! locks the statement took: a run can read them there ([`Observe`]), and
-//! a second connection can watch what the statement waits on as it runs.
+//! locks the statement took and counts what it wrote: a run can read them
+//! there ([`Observe`]), and a second connection can watch what the
+//! statement waits on as it runs. A statement that writes reports the WAL
+//! it wrote too.
 
 use std::time::Duration;
 
 use explainsql_core::locks::{Capture, Stage, Waits};
 use explainsql_core::scenario::Setting;
+use explainsql_core::writes::WriteCapture;
 use tokio_postgres::{Client, SimpleQueryMessage};
 
 use crate::locks::{self, Watch};
+use crate::writes;
 use crate::{Error, Safety, describe};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -98,6 +102,17 @@ fn skip_comments(mut sql: &str) -> &str {
         } else {
             return sql;
         }
+    }
+}
+
+/// The options of `EXPLAIN ANALYZE` for a statement: for one that writes,
+/// with the WAL it wrote, from PostgreSQL 13.
+pub(crate) fn analyze_options(server_version: u32, writes: Writes) -> String {
+    let options = options(Mode::Analyze, server_version);
+    if writes != Writes::No && server_version >= 130_000 {
+        options.replacen("BUFFERS", "BUFFERS, WAL", 1)
+    } else {
+        options
     }
 }
 
@@ -195,13 +210,25 @@ pub(crate) async fn explain_observed(
     // Planned under the settings: whether the statement writes does not
     // depend on them.
     if mode == Mode::Estimate {
+        // Nothing is written.
+        let observe = Observe {
+            writes: false,
+            ..observe
+        };
         return run_observed(client, &estimate, true, safety.timeout, settings, observe).await;
     }
     let estimated = run(client, &estimate, true, safety.timeout, settings).await?;
     let writes = allowed_writes(&estimated, safety)?;
+    let observe = Observe {
+        writes: observe.writes && writes != Writes::No,
+        ..observe
+    };
     run_observed(
         client,
-        &format!("EXPLAIN ({}) {sql}", options(Mode::Analyze, server_version)),
+        &format!(
+            "EXPLAIN ({}) {sql}",
+            analyze_options(server_version, writes)
+        ),
         writes == Writes::No,
         safety.timeout,
         settings,
@@ -298,7 +325,10 @@ pub(crate) async fn measure(
     )
     .await?;
     let writes = allowed_writes(&estimated, safety)?;
-    let explain = format!("EXPLAIN ({}) {sql}", options(Mode::Analyze, server_version));
+    let explain = format!(
+        "EXPLAIN ({}) {sql}",
+        analyze_options(server_version, writes)
+    );
     let mut plans = Vec::with_capacity(runs.max(1));
     for warm_up in std::iter::once(true).chain(std::iter::repeat_n(false, runs.max(1))) {
         let observe = Observe {
@@ -361,6 +391,8 @@ pub(crate) struct Observe<'a> {
     pub locks: Option<Stage>,
     /// Sample what the statement waits on as it runs.
     pub watch: Option<&'a Watch>,
+    /// Read what the statement wrote, table by table.
+    pub writes: bool,
     pub server_version: u32,
 }
 
@@ -369,17 +401,18 @@ impl Observe<'_> {
         Observe {
             locks: None,
             watch: None,
+            writes: false,
             server_version,
         }
     }
 }
 
-/// What was observed of a run.
+/// What was observed of a run. `None` also for what could not be read.
 #[derive(Debug, Default)]
 pub(crate) struct Observed {
-    /// `None` also when they could not be read.
     pub locks: Option<Capture>,
     pub waits: Option<Waits>,
+    pub writes: Option<WriteCapture>,
 }
 
 /// Runs one EXPLAIN inside a transaction that is rolled back, and returns
@@ -447,13 +480,18 @@ pub(crate) async fn run_observed(
 }
 
 /// Runs the EXPLAIN of an open transaction, watched if asked, and then
-/// reads the locks if asked. Locks that cannot be read are left out
-/// rather than failing the run.
+/// reads the locks and what it wrote if asked. What cannot be read after
+/// the EXPLAIN is left out rather than failing the run.
 pub(crate) async fn in_transaction<T>(
     client: &Client,
     observe: Observe<'_>,
     explain: impl Future<Output = Result<T, tokio_postgres::Error>>,
 ) -> Result<(T, Observed), tokio_postgres::Error> {
+    let before = if observe.writes {
+        Some(writes::before(client, observe.server_version).await?)
+    } else {
+        None
+    };
     let sampler = match observe.watch {
         Some(watch) => {
             let pid: i32 = client
@@ -479,7 +517,21 @@ pub(crate) async fn in_transaction<T>(
     if let Some(locks) = &mut locks {
         locks.waits.clone_from(&waits);
     }
-    Ok((rows, Observed { locks, waits }))
+    // After the locks: reading this takes locks of its own.
+    let writes = match &before {
+        Some(before) => writes::capture(client, before, observe.server_version)
+            .await
+            .ok(),
+        None => None,
+    };
+    Ok((
+        rows,
+        Observed {
+            locks,
+            waits,
+            writes,
+        },
+    ))
 }
 
 #[cfg(test)]
@@ -508,6 +560,14 @@ mod tests {
     #[test]
     fn asks_for_version_specific_options() {
         assert_eq!(options(Mode::Estimate, 110_000), "VERBOSE, FORMAT JSON");
+        assert_eq!(
+            analyze_options(160_000, Writes::ModifiesData),
+            "ANALYZE, BUFFERS, WAL, VERBOSE, SETTINGS, FORMAT JSON"
+        );
+        assert_eq!(
+            analyze_options(120_000, Writes::ModifiesData),
+            "ANALYZE, BUFFERS, VERBOSE, SETTINGS, FORMAT JSON"
+        );
         assert_eq!(
             options(Mode::Analyze, 160_000),
             "ANALYZE, BUFFERS, VERBOSE, SETTINGS, FORMAT JSON"

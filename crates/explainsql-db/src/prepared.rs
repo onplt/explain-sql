@@ -84,7 +84,7 @@ pub(crate) async fn explain(
         return Ok(estimated);
     }
     let writes = exec::allowed_writes(&estimated, safety)?;
-    let analyze = exec::options(Mode::Analyze, server_version);
+    let analyze = exec::analyze_options(server_version, writes);
     run(
         client,
         sql,
@@ -126,7 +126,7 @@ pub(crate) async fn measure(
     )
     .await?;
     let writes = exec::allowed_writes(&estimated, safety)?;
-    let analyze = exec::options(Mode::Analyze, server_version);
+    let analyze = exec::analyze_options(server_version, writes);
     let mut plans = Vec::with_capacity(runs.max(1));
     for warm_up in std::iter::once(true).chain(std::iter::repeat_n(false, runs.max(1))) {
         let observe = Observe {
@@ -189,6 +189,7 @@ pub(crate) async fn locks(
             Cache::Custom => Stage::Custom,
         }),
         watch,
+        writes: false,
         server_version,
     };
     let result = async {
@@ -204,15 +205,21 @@ pub(crate) async fn locks(
             Observe::nothing(server_version),
         )
         .await?;
-        let read_only = match mode {
-            Mode::Estimate => true,
-            Mode::Analyze => exec::allowed_writes(&estimated, safety)? == Writes::No,
+        let (options, read_only) = match mode {
+            Mode::Estimate => (exec::options(mode, server_version), true),
+            Mode::Analyze => {
+                let writes = exec::allowed_writes(&estimated, safety)?;
+                (
+                    exec::analyze_options(server_version, writes),
+                    writes == Writes::No,
+                )
+            }
         };
         run_named(
             client,
             &name,
             None,
-            &exec::options(mode, server_version),
+            &options,
             read_only,
             safety.timeout,
             &settings,

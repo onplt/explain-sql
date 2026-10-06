@@ -10,6 +10,7 @@ use explainsql_core::locks::{self, Footprint};
 use explainsql_core::metrics;
 use explainsql_core::report;
 use explainsql_core::rules::{Finding, Severity};
+use explainsql_core::writes::Xray;
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::Style;
@@ -115,7 +116,29 @@ pub fn draw(frame: &mut Frame, app: &mut App, theme: &Theme) {
     }
     draw_status(frame, app, theme, status);
     if let Some(line) = app.locks {
-        draw_locks(frame, app, theme, area, line);
+        let lines = app
+            .analysis
+            .locks
+            .iter()
+            .enumerate()
+            .flat_map(|(index, footprint)| {
+                let mut lines = lock_lines(theme, footprint);
+                if index > 0 {
+                    lines.insert(0, Line::default());
+                }
+                lines
+            })
+            .collect();
+        app.locks = Some(draw_overlay(frame, theme, area, " Locks ", lines, line));
+    }
+    if let Some(line) = app.writes {
+        let lines = app
+            .analysis
+            .writes
+            .as_ref()
+            .map(|xray| write_lines(theme, xray))
+            .unwrap_or_default();
+        app.writes = Some(draw_overlay(frame, theme, area, " Writes ", lines, line));
     }
     if app.help {
         draw_help(frame, theme, area);
@@ -1235,10 +1258,14 @@ fn draw_status(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
                 ("t", "test"),
                 ("y", "why"),
                 ("L", "locks"),
+                ("W", "writes"),
                 ("?", "help"),
                 ("q", "quit"),
             ] {
                 if !connected && matches!(key, "r" | "t" | "y" | "L") {
+                    continue;
+                }
+                if key == "W" && app.analysis.writes.is_none() {
                     continue;
                 }
                 spans.push(Span::styled(key, theme.key));
@@ -1250,7 +1277,7 @@ fn draw_status(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
     frame.render_widget(Paragraph::new(line), area);
 }
 
-const HELP: [(&str, &str); 25] = [
+const HELP: [(&str, &str); 26] = [
     ("j k ↓ ↑", "Move"),
     ("PgDn PgUp", "Move a page"),
     ("g G", "First, last node"),
@@ -1272,14 +1299,23 @@ const HELP: [(&str, &str); 25] = [
     ("t", "Connected: test the suggested index"),
     ("y", "Connected: ask the planner why it chose this node"),
     ("L", "Connected: the locks the statement takes"),
+    ("W", "Connected: what the statement's writes cost"),
     ("Esc", "Connected: cancel a run"),
     ("?", "This help"),
     ("q Esc", "Quit"),
     ("", "Any key closes this help."),
 ];
 
-/// The locks the statement takes, over the plan, scrolled to `line`.
-fn draw_locks(frame: &mut Frame, app: &mut App, theme: &Theme, area: Rect, line: u16) {
+/// An overlay over the plan, scrolled to `line`, or to its last line when
+/// `line` is past it: the line it shows.
+fn draw_overlay(
+    frame: &mut Frame,
+    theme: &Theme,
+    area: Rect,
+    title: &str,
+    lines: Vec<Line>,
+    line: u16,
+) -> u16 {
     let width = area.width.saturating_sub(4).min(100);
     let height = area.height.saturating_sub(2);
     let popup = Rect {
@@ -1288,23 +1324,9 @@ fn draw_locks(frame: &mut Frame, app: &mut App, theme: &Theme, area: Rect, line:
         width,
         height,
     };
-    let lines: Vec<Line> = app
-        .analysis
-        .locks
-        .iter()
-        .enumerate()
-        .flat_map(|(index, footprint)| {
-            let mut lines = lock_lines(theme, footprint);
-            if index > 0 {
-                lines.insert(0, Line::default());
-            }
-            lines
-        })
-        .collect();
     // Not past the last line.
     let last = u16::try_from(lines.len().saturating_sub(1)).unwrap_or(u16::MAX);
     let line = line.min(last);
-    app.locks = Some(line);
     frame.render_widget(Clear, popup);
     frame.render_widget(
         Paragraph::new(lines)
@@ -1313,7 +1335,7 @@ fn draw_locks(frame: &mut Frame, app: &mut App, theme: &Theme, area: Rect, line:
             .block(
                 Block::bordered()
                     .border_style(theme.focused_border)
-                    .title(Span::styled(" Locks ", theme.title))
+                    .title(Span::styled(title.to_owned(), theme.title))
                     .title_bottom(Span::styled(
                         " j/k scroll · any other key closes ",
                         theme.dim,
@@ -1321,6 +1343,7 @@ fn draw_locks(frame: &mut Frame, app: &mut App, theme: &Theme, area: Rect, line:
             ),
         popup,
     );
+    line
 }
 
 fn lock_lines<'a>(theme: &Theme, footprint: &Footprint) -> Vec<Line<'a>> {
@@ -1360,6 +1383,36 @@ fn lock_lines<'a>(theme: &Theme, footprint: &Footprint) -> Vec<Line<'a>> {
             format!("→ {}", locks::LOCK_TIMEOUT),
             theme.dim,
         ));
+    }
+    lines
+}
+
+/// What the statement's writes cost: by table, the WAL, the notes and the
+/// proof.
+fn write_lines<'a>(theme: &Theme, xray: &Xray) -> Vec<Line<'a>> {
+    let mut lines = vec![Line::raw(xray.summary.clone())];
+    for table in &xray.tables {
+        lines.push(Line::from(vec![
+            Span::styled(format!("  {}  ", table.table), theme.key),
+            Span::raw(table.describe()),
+        ]));
+    }
+    if let Some(wal) = &xray.wal {
+        lines.push(Line::raw(format!("  {}", wal.describe())));
+    }
+    for note in &xray.notes {
+        lines.push(Line::default());
+        lines.push(Line::from(vec![
+            severity(theme, note.severity),
+            Span::raw(format!(" {}", note.summary)),
+        ]));
+        if let Some(action) = &note.action {
+            lines.push(Line::styled(format!("→ {action}"), theme.good));
+        }
+    }
+    if let Some(proof) = &xray.proof {
+        lines.push(Line::default());
+        lines.push(Line::raw(proof.summary.clone()));
     }
     lines
 }

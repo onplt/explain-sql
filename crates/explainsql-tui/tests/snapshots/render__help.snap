@@ -1,6 +1,5 @@
 ---
 source: crates/explainsql-tui/tests/render.rs
-assertion_line: 65
 expression: "frame(&mut app, 100, 30)"
 ---
 369.3 ms. 51% of it in Seq Scan on order_items oi, which reads 3,000,000 rows over 10 loops, and the
@@ -26,10 +25,10 @@ Output: o.id, oi.p│ r e         Connected: run again, edit the statement      
                   │ t           Connected: test the suggested index              │
 HIGH   ES005 Expen│ y           Connected: ask the planner why it chose this node│
 On Nested Loop    │ L           Connected: the locks the statement takes         │
-Nested Loop repeat│ Esc         Connected: cancel a run                          │p's time.
-Inner loops: 10   │ ?           This help                                        │
- Findings (3) │ Ad│ q Esc       Quit                                             │──────────────────
-HIGH   ES001 Selec│             Any key closes this help.                        │ rows over 10 loo…
-HIGH   ES005 Expen└──────────────────────────────────────────────────────────────┘er_items oi 10 ti…
-MEDIUM ES013 Planner settings force the plan: The plan was made with enable_hashjoin = off, enable_…
+Nested Loop repeat│ W           Connected: what the statement's writes cost      │p's time.
+Inner loops: 10   │ Esc         Connected: cancel a run                          │
+ Findings (3) │ Ad│ ?           This help                                        │──────────────────
+HIGH   ES001 Selec│ q Esc       Quit                                             │ rows over 10 loo…
+HIGH   ES005 Expen│             Any key closes this help.                        │er_items oi 10 ti…
+MEDIUM ES013 Plann└──────────────────────────────────────────────────────────────┘in = off, enable_…
 j/k move  h/l fold  / search  1-9 hotspots  Tab list  i advice  ? help  q quit

@@ -18,6 +18,7 @@ use crate::requests::{Batched, Form, Grouping, Loop, LoopKind, Options, Profile,
 use crate::rules::{Finding, Severity};
 use crate::timeline::{Pattern, PlanChange, Statement, Timeline};
 use crate::top::Entry;
+use crate::writes::{WalUse, Xray};
 
 /// Node labels longer than this are shortened in the plan table.
 const MAX_NODE_WIDTH: usize = 64;
@@ -79,6 +80,9 @@ pub fn text(plan: &Plan, analysis: &Analysis, color: bool) -> String {
 
     text_advice(&mut out, plan, analysis, &paint);
     text_counterfactuals(&mut out, analysis, &paint);
+    if let Some(xray) = &analysis.writes {
+        text_writes(&mut out, xray, &paint);
+    }
     for footprint in &analysis.locks {
         text_locks(&mut out, footprint, &paint);
     }
@@ -1738,6 +1742,9 @@ pub fn markdown(plan: &Plan, analysis: &Analysis) -> String {
     }
     markdown_advice(&mut out, plan, analysis);
     markdown_counterfactuals(&mut out, analysis);
+    if let Some(xray) = &analysis.writes {
+        markdown_writes(&mut out, xray);
+    }
     for footprint in &analysis.locks {
         markdown_locks(&mut out, footprint);
     }
@@ -1761,6 +1768,8 @@ pub fn json(plan: &Plan, analysis: &Analysis) -> String {
         counterfactuals: &'a [Answer],
         #[serde(skip_serializing_if = "Option::is_none")]
         parameters: Option<&'a Sensitivity>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        writes: Option<&'a Xray>,
         #[serde(skip_serializing_if = "<[_]>::is_empty")]
         locks: &'a [Footprint],
         metrics: &'a metrics::Metrics,
@@ -1772,6 +1781,7 @@ pub fn json(plan: &Plan, analysis: &Analysis) -> String {
         advice: &analysis.advice,
         counterfactuals: &analysis.counterfactuals,
         parameters: analysis.parameters.as_ref(),
+        writes: analysis.writes.as_ref(),
         locks: &analysis.locks,
         metrics: &analysis.metrics,
         plan,
@@ -1917,6 +1927,85 @@ fn markdown_counterfactuals(out: &mut String, analysis: &Analysis) {
             out.push_str(&format!("  - **Action:** {}\n", escape(action)));
         }
         out.push_str(&format!("  - {}\n", escape(&planned_with(answer))));
+    }
+}
+
+/// What the statement's writes cost: by table, the notes, and the proof.
+fn text_writes(out: &mut String, xray: &Xray, paint: &Paint) {
+    out.push('\n');
+    out.push_str(&paint.bold("Writes"));
+    out.push('\n');
+    out.push_str(&wrap(&xray.summary, 2));
+    out.push('\n');
+    let width = xray
+        .tables
+        .iter()
+        .map(|table| table.table.chars().count())
+        .max()
+        .unwrap_or(0)
+        .min(MAX_NODE_WIDTH);
+    for table in &xray.tables {
+        let describe = wrap(&table.describe(), width + 4);
+        out.push_str(&format!(
+            "  {:<width$}  {}\n",
+            table.table,
+            &describe[width + 4..]
+        ));
+    }
+    if let Some(line) = xray.wal.as_ref().map(WalUse::describe) {
+        out.push_str(&wrap(&line, 2));
+        out.push('\n');
+    }
+    for note in &xray.notes {
+        out.push('\n');
+        let summary = wrap(&note.summary, 10);
+        out.push_str(&format!(
+            "  {}  {}\n",
+            paint.severity(note.severity),
+            &summary[10..]
+        ));
+        if let Some(action) = &note.action {
+            out.push_str(&wrap(&format!("→ {action}"), 10));
+            out.push('\n');
+        }
+    }
+    if let Some(proof) = &xray.proof {
+        out.push('\n');
+        out.push_str(&wrap(&proof.summary, 2));
+        out.push('\n');
+    }
+}
+
+fn markdown_writes(out: &mut String, xray: &Xray) {
+    out.push_str("\n### Writes\n\n");
+    out.push_str(&format!("{}\n\n", escape(&xray.summary)));
+    out.push_str("| Table | Rows |\n|---|---|\n");
+    for table in &xray.tables {
+        out.push_str(&format!(
+            "| {} | {} |\n",
+            escape(&table.table),
+            escape(&table.describe())
+        ));
+    }
+    out.push('\n');
+    if let Some(line) = xray.wal.as_ref().map(WalUse::describe) {
+        out.push_str(&format!("{}\n\n", escape(&line)));
+    }
+    for note in &xray.notes {
+        out.push_str(&format!(
+            "- **{}:** {}\n",
+            severity_name(note.severity),
+            escape(&note.summary)
+        ));
+        if let Some(action) = &note.action {
+            out.push_str(&format!("  - **Action:** {}\n", escape(action)));
+        }
+    }
+    if !xray.notes.is_empty() {
+        out.push('\n');
+    }
+    if let Some(proof) = &xray.proof {
+        out.push_str(&format!("{}\n", escape(&proof.summary)));
     }
 }
 

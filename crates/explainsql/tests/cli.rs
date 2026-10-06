@@ -440,6 +440,83 @@ fn connected_mode_reports_the_locks() {
     );
 }
 
+/// What a write costs, against the database named by
+/// `EXPLAINSQL_TEST_DATABASE_URL`; skipped without it.
+#[test]
+fn connected_mode_reports_what_a_write_costs() {
+    let Ok(url) = std::env::var("EXPLAINSQL_TEST_DATABASE_URL") else {
+        eprintln!("EXPLAINSQL_TEST_DATABASE_URL is not set; skipping");
+        return;
+    };
+    let update =
+        "UPDATE orders SET created_at = created_at + interval '1 second' WHERE id = 200000";
+    let output = run(
+        &[
+            "-d",
+            &url,
+            "-c",
+            update,
+            "--allow-dml",
+            "--print",
+            "--color",
+            "never",
+        ],
+        None,
+    );
+    assert!(output.status.success(), "{output:?}");
+    let text = stdout(&output);
+    for expected in [
+        "Writes",
+        "1 row updated in orders, not HOT: 2 index entries",
+        "orders  1 updated (0 HOT",
+        "WAL: ",
+        "the statement sets created_at (orders_created_at_idx)",
+        "--prove --allow-ddl drops",
+    ] {
+        assert!(text.contains(expected), "{expected}: {text}");
+    }
+
+    // The proof, in JSON.
+    let output = run(
+        &[
+            "-d",
+            &url,
+            "-c",
+            update,
+            "--allow-dml",
+            "--allow-ddl",
+            "--prove",
+            "--format",
+            "json",
+        ],
+        None,
+    );
+    assert!(output.status.success(), "{output:?}");
+    let report: serde_json::Value = serde_json::from_str(&stdout(&output)).unwrap();
+    let writes = &report["writes"];
+    assert_eq!(writes["tables"][0]["table"], "orders", "{report}");
+    assert_eq!(writes["tables"][0]["hot_updated"], 0);
+    assert_eq!(writes["to_drop"][0]["name"], "orders_created_at_idx");
+    assert_eq!(writes["proof"]["dropped"][0], "orders_created_at_idx");
+    assert_eq!(writes["proof"]["hot_updated"], 1, "{report}");
+    assert_eq!(writes["proof"]["index_entries"], 0);
+
+    // A query writes nothing.
+    let output = run(
+        &[
+            "-d",
+            &url,
+            "-c",
+            "SELECT * FROM orders WHERE id = 1",
+            "--format",
+            "json",
+        ],
+        None,
+    );
+    let report: serde_json::Value = serde_json::from_str(&stdout(&output)).unwrap();
+    assert!(report.get("writes").is_none(), "{report}");
+}
+
 /// Statements with parameters, against the database named by
 /// `EXPLAINSQL_TEST_DATABASE_URL`; skipped without it.
 #[test]

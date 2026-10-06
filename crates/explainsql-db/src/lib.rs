@@ -15,6 +15,7 @@ mod prepared;
 mod prove;
 mod stats;
 mod tls;
+mod writes;
 
 use std::fmt;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -22,9 +23,10 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use explainsql_core::catalog::Catalog;
-use explainsql_core::locks::{Capture, Stage};
+use explainsql_core::locks::{Capture, QualifiedName, Stage};
 use explainsql_core::params::ColumnStats;
 use explainsql_core::scenario::Setting;
+use explainsql_core::writes::WriteCapture;
 use tokio::runtime::Runtime;
 use tokio_postgres::{CancelToken, Client};
 use tokio_postgres_rustls::MakeRustlsConnect;
@@ -96,6 +98,22 @@ impl Default for Safety {
             timeout: Duration::from_secs(30),
         }
     }
+}
+
+/// What to read of a run besides its plan: see
+/// [`Database::explain_reading`].
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Reading {
+    pub locks: bool,
+    pub writes: bool,
+}
+
+/// What was read of a run. `None` for what was not asked for, could not be
+/// read, or for writes, when the run did not write.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Observation {
+    pub locks: Option<Capture>,
+    pub writes: Option<WriteCapture>,
 }
 
 /// A connection to a database.
@@ -285,14 +303,35 @@ impl Database {
         mode: Mode,
         safety: Safety,
     ) -> Result<(String, Option<Capture>), Error> {
-        let watch = self.watch();
+        let reading = Reading {
+            locks: true,
+            writes: false,
+        };
+        self.explain_reading(sql, mode, safety, reading)
+            .map(|(plan, observation)| (plan, observation.locks))
+    }
+
+    /// The plan of a statement, as [`Database::explain`] makes it, and what
+    /// `reading` asks for of its last run: the locks it took, as
+    /// [`Database::explain_locks`] reads them, and, measured, what a
+    /// statement that writes wrote, table by table, read from the
+    /// transaction's own counters before the rollback.
+    pub fn explain_reading(
+        &self,
+        sql: &str,
+        mode: Mode,
+        safety: Safety,
+        reading: Reading,
+    ) -> Result<(String, Observation), Error> {
+        let watch = if reading.locks { self.watch() } else { None };
         self.canceller.cancelled.store(false, Ordering::SeqCst);
         let observe = Observe {
-            locks: Some(match mode {
+            locks: reading.locks.then_some(match mode {
                 Mode::Estimate => Stage::Planned,
                 Mode::Analyze => Stage::Ran,
             }),
             watch: watch.as_ref().filter(|_| mode == Mode::Analyze),
+            writes: reading.writes,
             server_version: self.server_version,
         };
         let result = self.runtime.block_on(exec::explain_observed(
@@ -303,8 +342,37 @@ impl Database {
             safety,
             observe,
         ));
+        self.classify(result, safety).map(|(plan, observed)| {
+            (
+                plan,
+                Observation {
+                    locks: observed.locks,
+                    writes: observed.writes,
+                },
+            )
+        })
+    }
+
+    /// The statement measured again without `indexes`, dropped in the same
+    /// transaction, which is rolled back with them, and what it wrote: to
+    /// test whether its updates are HOT without them. Needs `--allow-ddl`.
+    /// Dropping an index locks its table until the rollback; it gives up
+    /// after waiting 2 seconds for the lock.
+    pub fn explain_without(
+        &self,
+        sql: &str,
+        indexes: &[QualifiedName],
+        safety: Safety,
+    ) -> Result<(String, WriteCapture), Error> {
+        self.canceller.cancelled.store(false, Ordering::SeqCst);
+        let result = self.runtime.block_on(writes::prove(
+            &self.client,
+            sql,
+            indexes,
+            safety,
+            self.server_version,
+        ));
         self.classify(result, safety)
-            .map(|(plan, observed)| (plan, observed.locks))
     }
 
     /// `runs` measured plans of a statement under planner settings, after a
