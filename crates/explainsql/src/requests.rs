@@ -130,23 +130,28 @@ fn prove_loop(
     reference(db, item, &types, safety);
     let batched = requests::batch(&item.single, &item.varying, &types)?;
 
-    // One run's values, each varying parameter an array of all the runs'.
-    let mut values = item.values[0].clone();
-    let mut distinct = 0;
-    for &number in &item.varying {
-        let all: Vec<Option<&str>> = item
-            .values
+    // One run's values, each varying parameter an array of all the runs'
+    // values. With several, the arrays line up run by run, as unnest pairs
+    // them; a run that repeats another's values is left out.
+    let mut tuples: Vec<Vec<Option<&str>>> = Vec::new();
+    for run in &item.values {
+        let tuple: Vec<Option<&str>> = item
+            .varying
             .iter()
-            .map(|run| run.get(number - 1).and_then(Option::as_deref))
+            .map(|&number| run.get(number - 1).and_then(Option::as_deref))
             .collect();
-        let mut seen: Vec<&str> = all.iter().flatten().copied().collect();
-        seen.sort_unstable();
-        seen.dedup();
-        distinct = distinct.max(seen.len());
-        if let Some(slot) = values.get_mut(number - 1) {
-            *slot = Some(requests::array_literal(&all));
+        if !tuples.contains(&tuple) {
+            tuples.push(tuple);
         }
     }
+    let mut values = item.values[0].clone();
+    for (position, &number) in item.varying.iter().enumerate() {
+        let column: Vec<Option<&str>> = tuples.iter().map(|tuple| tuple[position]).collect();
+        if let Some(slot) = values.get_mut(number - 1) {
+            *slot = Some(requests::array_literal(&column));
+        }
+    }
+    let distinct = tuples.len();
     // The batched statement first: its warm-up run reads what the runs
     // read, so both sides find it cached.
     let runs = usize::from(args.runs);

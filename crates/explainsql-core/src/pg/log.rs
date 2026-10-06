@@ -143,6 +143,7 @@ const CSV_DATABASE: usize = 2;
 const CSV_PID: usize = 3;
 const CSV_SESSION: usize = 5;
 const CSV_VXID: usize = 9;
+const CSV_SEVERITY: usize = 11;
 const CSV_MESSAGE: usize = 13;
 const CSV_DETAIL: usize = 14;
 const CSV_APPLICATION: usize = 22;
@@ -522,6 +523,9 @@ pub(super) fn statements(text: &str) -> Option<Vec<LoggedStatement>> {
     // statement a duration on its own would be of.
     let mut steps: std::collections::HashMap<String, u64> = std::collections::HashMap::new();
     let mut last: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    // The steps of a statement logged without its duration, for the
+    // duration that follows it.
+    let mut carried: std::collections::HashMap<String, u64> = std::collections::HashMap::new();
     for message in messages {
         let session = session_key(&message.meta);
         match logged(&message.text) {
@@ -530,7 +534,8 @@ pub(super) fn statements(text: &str) -> Option<Vec<LoggedStatement>> {
                 if let Some(&index) = last.get(&session) {
                     let statement: &mut LoggedStatement = &mut statements[index];
                     if statement.meta.duration_us.is_none() {
-                        statement.meta.duration_us = Some(us);
+                        statement.meta.duration_us =
+                            Some(us + carried.remove(&session).unwrap_or(0));
                         statement.meta.timestamp.clone_from(&message.meta.timestamp);
                     }
                 }
@@ -543,6 +548,9 @@ pub(super) fn statements(text: &str) -> Option<Vec<LoggedStatement>> {
                 let steps = steps.remove(&session).unwrap_or(0);
                 let mut meta = message.meta;
                 meta.duration_us = duration_us.map(|us| us + steps);
+                if duration_us.is_none() {
+                    carried.insert(session.clone(), steps);
+                }
                 last.insert(session, statements.len());
                 statements.push(LoggedStatement {
                     meta,
@@ -627,15 +635,12 @@ fn csv_messages(text: &str) -> Option<Vec<Message>> {
     let records = normalize::csv_records_at(text);
     // A stderr log starts with a time too; a csvlog's records have its
     // columns.
-    if !records
-        .iter()
-        .any(|(_, record)| record.len() > CSV_APPLICATION && record[CSV_PID].parse::<u32>().is_ok())
-    {
+    if !records.iter().any(|(_, record)| is_csv_record(record)) {
         return None;
     }
     let mut messages = Vec::new();
     for (line, record) in records {
-        if record.len() <= CSV_MESSAGE || !normalize::starts_log_entry(&record[CSV_TIMESTAMP]) {
+        if !is_csv_record(&record) {
             continue;
         }
         let field = |index: usize| record.get(index).filter(|value| !value.is_empty()).cloned();
@@ -659,6 +664,19 @@ fn csv_messages(text: &str) -> Option<Vec<Message>> {
         });
     }
     Some(messages)
+}
+
+/// Whether a record has a csvlog's columns: a time alone in the first, a
+/// process id, a severity. A stderr line split at its commas has not.
+fn is_csv_record(record: &[String]) -> bool {
+    record.len() > CSV_APPLICATION
+        && normalize::starts_log_entry(&record[CSV_TIMESTAMP])
+        && record[CSV_TIMESTAMP].split_whitespace().count() <= 3
+        && record[CSV_PID].parse::<u32>().is_ok()
+        && !record[CSV_SEVERITY].is_empty()
+        && !record[CSV_SEVERITY]
+            .chars()
+            .any(|c| c.is_lowercase() || c.is_whitespace())
 }
 
 /// The messages of a stderr log: each line with a severity, and the lines
@@ -862,5 +880,34 @@ mod tests {
         assert_eq!(meta.session.as_deref(), Some("6ac51bfc.151b"));
         assert_eq!(meta.vxid, None);
         assert_eq!(meta.pid, Some(5403));
+    }
+
+    #[test]
+    fn tells_a_stderr_log_with_many_commas_from_a_csvlog() {
+        let values: Vec<String> = (1..=30).map(|n| n.to_string()).collect();
+        let log = format!(
+            "2026-10-06 06:00:00.100 UTC [7] app@shop LOG:  duration: 1.000 ms  statement: INSERT INTO t VALUES ({})\n",
+            values.join(",")
+        );
+        let found = statements(&log).unwrap();
+        assert_eq!(found.len(), 1);
+        assert!(found[0].text.starts_with("INSERT INTO t VALUES (1,2,3"));
+        assert_eq!(found[0].meta.pid, Some(7));
+    }
+
+    #[test]
+    fn adds_the_steps_of_log_statement_to_its_duration() {
+        // log_statement = all with log_min_duration_statement = 0: the
+        // execution's duration comes on its own, after the statement.
+        let log = "2026-10-06 06:00:00.100 UTC [7] app@shop LOG:  duration: 0.100 ms  parse <unnamed>: SELECT $1\n\
+                   2026-10-06 06:00:00.101 UTC [7] app@shop LOG:  duration: 0.200 ms  bind <unnamed>: SELECT $1\n\
+                   2026-10-06 06:00:00.101 UTC [7] app@shop DETAIL:  parameters: $1 = '1'\n\
+                   2026-10-06 06:00:00.101 UTC [7] app@shop LOG:  execute <unnamed>: SELECT $1\n\
+                   2026-10-06 06:00:00.101 UTC [7] app@shop DETAIL:  parameters: $1 = '1'\n\
+                   2026-10-06 06:00:00.102 UTC [7] app@shop LOG:  duration: 1.000 ms\n";
+        let found = statements(log).unwrap();
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].meta.duration_us, Some(1_300));
+        assert_eq!(found[0].parameters, vec![Some("1".to_owned())]);
     }
 }

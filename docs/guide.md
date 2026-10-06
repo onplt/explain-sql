@@ -281,9 +281,10 @@ For the second and third, add `%c %v` to `log_line_prefix`, for instance `'%m [%
 - the statement before the loop, often the one that read the parents;
 - the request it looped most in, statement by statement;
 - the batched statement:
-  - `col = ANY($1)` in place of `col = $1`: what an ORM's batch fetching sends;
-  - when the rows must stay per value, because of a `LIMIT`, an aggregate or a `GROUP BY`, the statement in a `LATERAL` subquery over `unnest($1)`, where each value keeps its own `LIMIT` or count;
-  - an `INSERT` per row is not rewritten: the report says how to send the rows together;
+  - `col = ANY($1)` in place of `col = $1` or `col IN ($1)`, when that comparison is a term of the statement's own `WHERE`: what an ORM's batch fetching sends;
+  - when the rows must stay per value, because of a `LIMIT`, an aggregate, a `GROUP BY`, a `DISTINCT` or a window function, or when the value is cast or computed, the statement in a `LATERAL` subquery over `unnest($1)`, where each value keeps its own `LIMIT` or count;
+  - an `INSERT` per row is not rewritten: the report says how to send the rows together; an `UPDATE` or a `DELETE` is rewritten only with `= ANY`;
+  - a loop whose log has no values for its parameters is shown, but not batched;
 - what to change in the application: JPA (`JOIN FETCH`, `@EntityGraph`, `@BatchSize`), Django (`select_related`, `prefetch_related`) or Rails (`includes`). When the statements carry sqlcommenter's `framework` tag, only that framework's fix is shown.
 
 **Measuring the batched statement (`-d`).** With a database, explainsql runs each loop's batched statement with all the values of the request it looped most in, and the runs one by one, at most 20 of them, scaled to all. Every run is prepared as the application ran it and rolled back, `READ ONLY` unless `--allow-dml`; the batched statement runs first, after a run that warms the cache, so both sides find the data cached. The report compares their time and pages, says when the batched statement reads its tables another way (a large array can turn index scans into a sequential scan or a hash join), and adds the round trips: the median time of a `SELECT 1` from this machine, once for the batched statement and once per run. It also names the foreign key behind the loop, from the column in the generic plan: the rows that reference one parent (a collection, `@OneToMany`), or the parent of each row (`@ManyToOne`). Measuring needs PostgreSQL 12 or later. `--runs` takes the median of several runs of the batched statement; `--limit` sets how many loops are shown and measured.

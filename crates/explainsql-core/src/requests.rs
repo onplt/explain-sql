@@ -549,7 +549,11 @@ fn loops(statements: &[LoggedStatement], requests: &mut [Request], options: Opti
                 .iter()
                 .map(|&index| values(&statements[index]))
                 .collect();
-            let varied = values.windows(2).any(|pair| pair[0] != pair[1]);
+            // Without the values in the log, it cannot be called a repeat.
+            let unknown = values
+                .iter()
+                .any(|values| matches!(values, Values::Parameters(logged) if logged.is_empty()));
+            let varied = unknown || values.windows(2).any(|pair| pair[0] != pair[1]);
             let key = shape.key.clone();
             let entry = match found.iter_mut().position(|other| other.key == key) {
                 Some(at) => &mut found[at],
@@ -652,7 +656,12 @@ fn build(
 ) -> Loop {
     let first = &statements[runs[0]];
     let mut notes = Vec::new();
-    let (single, varying, values) = match values(first) {
+    let Runs {
+        single,
+        varying,
+        values,
+        unbatched,
+    } = match values(first) {
         Values::Parameters(_) => {
             let count = runs
                 .iter()
@@ -672,29 +681,31 @@ fn build(
                 .filter(|&at| values.iter().any(|run| run[at] != values[0][at]))
                 .map(|at| at + 1)
                 .collect();
-            if values.iter().all(|run| run.iter().all(Option::is_none)) && count > 0 {
-                notes.push(
-                    "the log has no values for its parameters: log them with log_min_duration_statement, which writes them in a DETAIL line"
-                        .to_owned(),
-                );
+            let unbatched = runs
+                .iter()
+                .all(|&index| statements[index].parameters.is_empty())
+                .then(|| {
+                    notes.push(
+                        "log_min_duration_statement and log_statement log the values of parameters in a DETAIL line, unless log_parameter_max_length is 0; auto_explain logs them from PostgreSQL 16"
+                            .to_owned(),
+                    );
+                    "the log has no values for its parameters".to_owned()
+                });
+            Runs {
+                single: first.text.clone(),
+                varying,
+                values,
+                unbatched,
             }
-            (first.text.clone(), varying, values)
         }
-        Values::Literals(_) => literal_loop(statements, runs, &mut notes),
+        Values::Literals(_) => literal_loop(statements, runs),
     };
 
-    let words = top_words(&tokens(&single));
-    let command = match words.first().map(String::as_str) {
-        Some("with") => words
-            .iter()
-            .find(|word| matches!(word.as_str(), "select" | "insert" | "update" | "delete"))
-            .cloned()
-            .unwrap_or_else(|| "select".to_owned()),
-        Some(word) => word.to_owned(),
-        None => String::new(),
-    };
+    let command = command_of(&top_words(&tokens(&single))).to_owned();
     let batched = if kind == LoopKind::Repeat {
         Err("it ran with the same values every time".to_owned())
+    } else if let Some(reason) = unbatched {
+        Err(reason)
     } else if varying.is_empty() {
         Err("the values that change from run to run could not be told apart".to_owned())
     } else {
@@ -744,14 +755,22 @@ fn build(
     item
 }
 
+/// What the runs of a loop give its batched statement.
+struct Runs {
+    /// The statement, with a parameter for each value that changes.
+    single: String,
+    /// The parameters whose values change from run to run, from 1.
+    varying: Vec<usize>,
+    /// Each run's values of the parameters.
+    values: Vec<Vec<Option<String>>>,
+    /// Why the runs cannot be batched, if they cannot.
+    unbatched: Option<String>,
+}
+
 /// A loop of statements with their values written in: the statement with
 /// `$1`, `$2`, … for each literal whose value changes from run to run, the
-/// others kept, and those values of each run.
-fn literal_loop(
-    statements: &[LoggedStatement],
-    runs: &[usize],
-    notes: &mut Vec<String>,
-) -> (String, Vec<usize>, Vec<Vec<Option<String>>>) {
+/// others kept.
+fn literal_loop(statements: &[LoggedStatement], runs: &[usize]) -> Runs {
     let first = &statements[runs[0]].text;
     let all: Vec<Vec<Token>> = runs
         .iter()
@@ -767,11 +786,15 @@ fn literal_loop(
         })
         .collect();
     if literals.iter().any(|run| run.len() != literals[0].len()) {
-        notes.push(
-            "its runs have lists of different lengths (IN (…)): the values that change could not be told apart"
-                .to_owned(),
-        );
-        return (first.clone(), Vec::new(), Vec::new());
+        return Runs {
+            single: first.clone(),
+            varying: Vec::new(),
+            values: Vec::new(),
+            unbatched: Some(
+                "its runs have lists of different lengths (IN (…)), so the values that change cannot be lined up"
+                    .to_owned(),
+            ),
+        };
     }
     let changing: Vec<usize> = (0..literals[0].len())
         .filter(|&at| {
@@ -786,14 +809,27 @@ fn literal_loop(
         let token = literals[0][at];
         single.push_str(&first[copied..token.start]);
         single.push_str(&format!("${}", number + 1));
-        copied = token.start + token.text.len();
+        copied = token.end();
     }
     single.push_str(&first[copied..]);
-    let values = literals
+    let values: Vec<Vec<Option<String>>> = literals
         .iter()
         .map(|run| changing.iter().map(|&at| run[at].value.clone()).collect())
         .collect();
-    (single, (1..=changing.len()).collect(), values)
+    // A string with escapes or a prefix (E'…', B'…') is not read back.
+    let unbatched = values
+        .iter()
+        .any(|run| run.iter().any(Option::is_none))
+        .then(|| {
+            "a value that changes is written in a form that is not read back (E'…', B'…')"
+                .to_owned()
+        });
+    Runs {
+        single,
+        varying: (1..=changing.len()).collect(),
+        values,
+        unbatched,
+    }
 }
 
 /// The column a parameter is compared with by `=` (or `IN ($n)`), as the
@@ -803,13 +839,13 @@ fn compared_column(sql: &str, number: usize) -> Option<String> {
     let at = tokens
         .iter()
         .position(|token| token.kind == Kind::Param(number))?;
-    equality(&tokens, at).map(|(column, _)| column)
+    equality(&tokens, at).map(|(column, _, _)| column)
 }
 
-/// The column a parameter at `at` is compared with for equality, and the
-/// first token of the comparison's right side: `col = $1` (`=`), or
-/// `col IN ($1)` (`IN`).
-fn equality(tokens: &[Token], at: usize) -> Option<(String, usize)> {
+/// The column a parameter at `at` is compared with for equality, the
+/// column's first token, and the first token of the comparison's right
+/// side: `col = $1` (`=`), or `col IN ($1)` (`IN`).
+fn equality(tokens: &[Token], at: usize) -> Option<(String, usize, usize)> {
     let before = |offset: usize| at.checked_sub(offset).map(|index| &tokens[index]);
     let (operator, column_end) = if before(1).is_some_and(|token| token.text == "=") {
         (at - 1, at - 1)
@@ -841,30 +877,33 @@ fn equality(tokens: &[Token], at: usize) -> Option<(String, usize)> {
         return None;
     }
     parts.reverse();
-    Some((parts.join("."), operator))
+    Some((parts.join("."), start, operator))
 }
 
 /// The statement that does the work of the runs of `single` at once: each
 /// parameter in `varying` takes an array of its values. `types` holds the
-/// parameters' types, from `$1`, when they are known.
+/// parameters' types, from `$1`, when they are known. Comments are left
+/// out.
 pub fn batch(single: &str, varying: &[usize], types: &[String]) -> Result<Batched, String> {
+    let single = strip_comments(single);
+    let single = single.as_str();
     let tokens = tokens(single);
     let words = top_words(&tokens);
-    let first = words.first().map(String::as_str).unwrap_or("");
+    let command = command_of(&words);
     let array = |number: usize| match types.get(number - 1) {
         Some(type_name) => format!("${number}::{type_name}[]"),
         None => format!("${number}"),
     };
-    if first == "insert" {
+    if command == "insert" {
         return Err(
             "it inserts one row at a time: send the rows in one INSERT … VALUES (…), (…), or as a batch (JDBC addBatch, hibernate.jdbc.batch_size)"
                 .to_owned(),
         );
     }
-    if !matches!(first, "select" | "with" | "update" | "delete") {
+    if !matches!(command, "select" | "update" | "delete") {
         return Err(format!(
             "a {} statement is not batched",
-            first.to_uppercase()
+            command.to_uppercase()
         ));
     }
     // Each varying parameter where it appears.
@@ -882,75 +921,89 @@ pub fn batch(single: &str, varying: &[usize], types: &[String]) -> Result<Batche
         places.extend(found.into_iter().map(|at| (number, at)));
     }
     // A literal that stands for a value of a type (`date '…'`) cannot take
-    // a parameter's place.
+    // a parameter's place: a name before a value is its type.
     if places.iter().any(|&(_, at)| {
-        at > 0
-            && tokens[at - 1].kind == Kind::Word
-            && !is_keyword(tokens[at - 1].text)
-            && tokens[at - 1].end() == tokens[at].start - 1
+        at > 0 && tokens[at - 1].kind == Kind::Word && !is_keyword(tokens[at - 1].text)
     }) {
         return Err("a value that changes is written as a typed literal".to_owned());
     }
 
-    // `= ANY`: one varying parameter, once, compared for equality in the
-    // statement's own WHERE, and nothing that works per value.
+    // `= ANY`: one varying parameter, once, compared for equality as a term
+    // of the statement's own WHERE, between its ANDs and ORs with nothing
+    // applied to either side (no NOT, cast or operator), and nothing that
+    // works per value. Then it finds the rows of all the runs.
     let where_at = tokens
         .iter()
         .position(|token| token.depth == 0 && token.text.eq_ignore_ascii_case("where"));
+    let word_is = |at: usize, list: &[&str]| {
+        tokens.get(at).is_some_and(|token| {
+            token.depth == 0
+                && token.kind == Kind::Word
+                && list.contains(&token.text.to_ascii_lowercase().as_str())
+        })
+    };
     let per_value = [
         "limit",
         "offset",
         "fetch",
         "group",
         "having",
-        "distinct",
         "window",
+        "over",
         "union",
         "intersect",
         "except",
     ];
+    // SELECT DISTINCT, not IS DISTINCT FROM.
+    let distinct = tokens.windows(2).any(|pair| {
+        pair[0].depth == 0
+            && pair[0].text.eq_ignore_ascii_case("select")
+            && pair[1].text.eq_ignore_ascii_case("distinct")
+    });
     let aggregate = has_aggregate(&tokens);
     let any = match places.as_slice() {
         [(number, at)]
-            if where_at.is_some_and(|where_at| where_at < *at)
+            if where_at.is_some_and(|where_at| {
+                where_at < *at
+                    && !(where_at..*at).any(|index| word_is(index, &["order", "for", "returning"]))
+            }) && !distinct
                 && !words.iter().any(|word| per_value.contains(&word.as_str()))
-                && !(first != "update" && first != "delete" && aggregate) =>
+                && !(command == "select" && aggregate) =>
         {
             equality(&tokens, *at)
-                .filter(|(_, operator)| tokens[*operator].depth == 0)
-                .map(|(column, operator)| (*number, *at, column, operator))
+                .filter(|&(_, start, operator)| {
+                    // The comparison's last token: the parameter, or the
+                    // parenthesis of IN ($1).
+                    let end = if tokens[operator].text == "=" {
+                        *at
+                    } else {
+                        at + 1
+                    };
+                    tokens[operator].depth == 0
+                        && start > 0
+                        && word_is(start - 1, &["where", "and", "or"])
+                        && (end + 1 == tokens.len()
+                            || tokens[end + 1].text == ";"
+                            || word_is(end + 1, &["and", "or", "order", "for", "returning"]))
+                })
+                .map(|(column, _, operator)| (*number, *at, column, operator))
         }
         _ => None,
     };
     if let Some((number, at, column, operator)) = any {
-        let mut sql = String::new();
-        let mut copied = 0;
-        for (index, token) in tokens.iter().enumerate() {
-            if token.kind == Kind::Comment {
-                sql.push_str(single[copied..token.start].trim_end());
-                copied = token.end();
-            } else if index == operator {
-                sql.push_str(&single[copied..token.start]);
-                sql.push_str(&format!("= ANY({})", array(number)));
-                // Past the parameter, and the parenthesis of IN ($1).
-                copied = if tokens[at + 1..]
-                    .first()
-                    .is_some_and(|next| next.text == ")" && token.text != "=")
-                {
-                    tokens[at + 1].end()
-                } else {
-                    tokens[at].end()
-                };
-            } else if index > operator && index <= at {
-                continue;
-            }
-        }
-        sql.push_str(&single[copied..]);
-        let sql = finish(&sql);
-        let selected = first == "update"
-            || first == "delete"
-            || selects(&tokens, &column)
-            || words.iter().any(|word| word == "returning") && selects(&tokens, &column);
+        // From the `=` to the parameter, or from the IN to its parenthesis.
+        let end = if tokens[operator].text == "=" {
+            tokens[at].end()
+        } else {
+            tokens[at + 1].end()
+        };
+        let sql = finish(&format!(
+            "{} = ANY({}){}",
+            single[..tokens[operator].start].trim_end(),
+            array(number),
+            &single[end..]
+        ));
+        let selected = command != "select" || selects(&tokens, &column);
         return Ok(Batched {
             form: Form::Any,
             sql,
@@ -959,7 +1012,7 @@ pub fn batch(single: &str, varying: &[usize], types: &[String]) -> Result<Batche
         });
     }
 
-    if first == "update" || first == "delete" {
+    if command != "select" {
         return Err(
             "the value that changes is not compared for equality in its WHERE: write the batched statement by hand"
                 .to_owned(),
@@ -977,22 +1030,15 @@ pub fn batch(single: &str, varying: &[usize], types: &[String]) -> Result<Batche
     let mut inner = String::new();
     let mut copied = 0;
     for token in &tokens {
-        let replacement = match token.kind {
-            Kind::Comment => Some(String::new()),
-            Kind::Param(number) => varying
-                .iter()
-                .position(|&other| other == number)
-                .map(|position| format!("batch.{}", names[position])),
-            _ => None,
+        let Kind::Param(number) = token.kind else {
+            continue;
         };
-        if let Some(replacement) = replacement {
-            inner.push_str(&single[copied..token.start]);
-            if token.kind == Kind::Comment {
-                inner = inner.trim_end().to_owned();
-            }
-            inner.push_str(&replacement);
-            copied = token.end();
-        }
+        let Some(position) = varying.iter().position(|&other| other == number) else {
+            continue;
+        };
+        inner.push_str(&single[copied..token.start]);
+        inner.push_str(&format!("batch.{}", names[position]));
+        copied = token.end();
     }
     inner.push_str(&single[copied..]);
     let inner = finish(&inner);
@@ -1008,6 +1054,36 @@ pub fn batch(single: &str, varying: &[usize], types: &[String]) -> Result<Batche
             "each value gets its own row, as a run did, even where no row matched".to_owned()
         }),
     })
+}
+
+/// A statement without its comments: each one, with the blanks around it,
+/// becomes one space, or nothing at its ends and next to brackets, commas
+/// and semicolons, which no operator has in it.
+fn strip_comments(sql: &str) -> String {
+    fn append(out: &mut String, chunk: &str, space: &mut bool) {
+        let chunk = if *space { chunk.trim_start() } else { chunk };
+        if chunk.is_empty() {
+            return;
+        }
+        if *space && !out.is_empty() && !out.ends_with('(') && !chunk.starts_with([';', ',', ')']) {
+            out.push(' ');
+        }
+        *space = false;
+        out.push_str(chunk);
+    }
+    let mut out = String::with_capacity(sql.len());
+    let mut copied = 0;
+    let mut space = false;
+    for token in tokens(sql)
+        .iter()
+        .filter(|token| token.kind == Kind::Comment)
+    {
+        append(&mut out, sql[copied..token.start].trim_end(), &mut space);
+        space = true;
+        copied = token.end();
+    }
+    append(&mut out, &sql[copied..], &mut space);
+    out
 }
 
 /// A statement without its final semicolons and blanks.
@@ -1262,17 +1338,14 @@ pub fn reference(
 }
 
 /// An array literal of values, for a parameter that takes an array:
-/// `{"1","2"}`. NULLs and repeated values are left out.
+/// `{"1","2",NULL}`.
 pub fn array_literal(values: &[Option<&str>]) -> String {
-    let mut seen: Vec<&str> = Vec::new();
-    for value in values.iter().flatten() {
-        if !seen.contains(value) {
-            seen.push(value);
-        }
-    }
-    let items: Vec<String> = seen
+    let items: Vec<String> = values
         .iter()
-        .map(|value| format!("\"{}\"", value.replace('\\', "\\\\").replace('"', "\\\"")))
+        .map(|value| match value {
+            Some(value) => format!("\"{}\"", value.replace('\\', "\\\\").replace('"', "\\\"")),
+            None => "NULL".to_owned(),
+        })
         .collect();
     format!("{{{}}}", items.join(","))
 }
@@ -1496,10 +1569,24 @@ fn top_words(tokens: &[Token]) -> Vec<String> {
         .collect()
 }
 
+/// A statement's command, from its top-level words: after a WITH's
+/// queries, the one they are for.
+fn command_of(words: &[String]) -> &str {
+    match words.first().map(String::as_str) {
+        Some("with") => words
+            .iter()
+            .map(String::as_str)
+            .find(|word| matches!(*word, "select" | "insert" | "update" | "delete"))
+            .unwrap_or("select"),
+        Some(word) => word,
+        None => "",
+    }
+}
+
 /// Words that may come before a value without making it a typed literal,
 /// and that are not a column's name.
 fn is_keyword(word: &str) -> bool {
-    const KEYWORDS: [&str; 30] = [
+    const KEYWORDS: [&str; 42] = [
         "and",
         "or",
         "not",
@@ -1530,6 +1617,18 @@ fn is_keyword(word: &str) -> bool {
         "on",
         "having",
         "returning",
+        "from",
+        "for",
+        "first",
+        "next",
+        "zone",
+        "default",
+        "placing",
+        "both",
+        "leading",
+        "trailing",
+        "symmetric",
+        "asymmetric",
     ];
     KEYWORDS.contains(&word.to_ascii_lowercase().as_str())
 }
@@ -1587,6 +1686,18 @@ mod tests {
             batched.note.as_deref(),
             Some("select i.order_id too, to tell which rows go with which value")
         );
+        // As Hibernate writes it.
+        let batched = batch(
+            "select o1_0.id,o1_0.order_id from order_items o1_0 where o1_0.order_id=$1",
+            &[1],
+            &[],
+        )
+        .unwrap();
+        assert_eq!(
+            batched.sql,
+            "select o1_0.id,o1_0.order_id from order_items o1_0 where o1_0.order_id = ANY($1)"
+        );
+        assert_eq!(batched.note, None);
         // A write.
         let batched = batch("UPDATE orders SET status = $1 WHERE id = $2", &[2], &[]).unwrap();
         assert_eq!(
@@ -1654,8 +1765,8 @@ mod tests {
                 .any(|token| token.text == "1" && token.kind == Kind::Literal)
         );
         assert_eq!(
-            array_literal(&[Some("1"), None, Some("a\"b"), Some("1")]),
-            "{\"1\",\"a\\\"b\"}"
+            array_literal(&[Some("1"), None, Some("a\"b\\")]),
+            "{\"1\",NULL,\"a\\\"b\\\\\"}"
         );
     }
 
@@ -1748,5 +1859,113 @@ mod tests {
         assert!(advice[0].contains("@ManyToOne mapped by order_items.order_id"));
         item.tags.clear();
         assert_eq!(super::advice(&item).len(), 3);
+    }
+
+    #[test]
+    fn batches_carefully() {
+        // Comments go, without gluing words together.
+        assert_eq!(
+            strip_comments("SELECT a/* x */FROM t -- y\nWHERE id = $1 /*tags*/;"),
+            "SELECT a FROM t WHERE id = $1;"
+        );
+        // A cast after the parameter: per value.
+        let batched = batch("SELECT a FROM t WHERE id = $1::uuid", &[1], &[]).unwrap();
+        assert_eq!(batched.form, Form::Lateral);
+        assert!(
+            batched.sql.contains("WHERE id = batch.value::uuid"),
+            "{}",
+            batched.sql
+        );
+        // A window function numbers the rows of each value.
+        let batched = batch(
+            "SELECT id, row_number() OVER (ORDER BY id) FROM t WHERE k = $1",
+            &[1],
+            &[],
+        )
+        .unwrap();
+        assert_eq!(batched.form, Form::Lateral);
+        // A value compared by a function of the column, in a write, or in
+        // the write of a WITH.
+        assert!(batch("DELETE FROM t WHERE lower(k) = $1", &[1], &[]).is_err());
+        assert!(
+            batch(
+                "WITH d AS (SELECT 1) DELETE FROM t WHERE lower(k) = $1",
+                &[1],
+                &[]
+            )
+            .is_err()
+        );
+        // = ANY only for a term of the WHERE: not negated, nothing applied
+        // to the value, not in the ORDER BY, without SELECT DISTINCT.
+        for single in [
+            "SELECT a FROM t WHERE NOT k = $1",
+            "SELECT a FROM t WHERE k NOT IN ($1)",
+            "SELECT a FROM t WHERE k = $1 + 1",
+            "SELECT a FROM t WHERE k = $1 COLLATE \"C\"",
+            "SELECT a FROM t WHERE x = 1 ORDER BY k = $1",
+            "SELECT DISTINCT a FROM t WHERE k = $1",
+        ] {
+            let batched = batch(single, &[1], &[]).unwrap();
+            assert_eq!(batched.form, Form::Lateral, "{single}");
+        }
+        let batched = batch(
+            "SELECT a, k FROM t WHERE a IS DISTINCT FROM b AND k = $1 OR c ORDER BY a",
+            &[1],
+            &[],
+        )
+        .unwrap();
+        assert_eq!(
+            batched.sql,
+            "SELECT a, k FROM t WHERE a IS DISTINCT FROM b AND k = ANY($1) OR c ORDER BY a"
+        );
+        // A FETCH FIRST parameter that does not change.
+        let batched = batch(
+            "SELECT id FROM t WHERE k = $1 ORDER BY id FETCH FIRST $2 ROWS ONLY",
+            &[1],
+            &[],
+        )
+        .unwrap();
+        assert_eq!(batched.form, Form::Lateral);
+    }
+
+    #[test]
+    fn calls_runs_without_values_a_loop() {
+        // log_statement without the values: not a repeat, and not batched.
+        let statements: Vec<LoggedStatement> = (0..3)
+            .map(|n| {
+                statement(
+                    &format!("06:00:00.0{n}0"),
+                    0.1,
+                    "SELECT v FROM kv WHERE k = $1",
+                    &[],
+                )
+            })
+            .collect();
+        let found = &profile_of(&statements).loops[0];
+        assert_eq!(found.kind, LoopKind::Loop);
+        assert_eq!(
+            found.batched,
+            Err("the log has no values for its parameters".to_owned())
+        );
+        // Values written as escaped strings are not read back.
+        let statements: Vec<LoggedStatement> = (0..3)
+            .map(|n| {
+                statement(
+                    &format!("06:00:00.0{n}0"),
+                    0.1,
+                    &format!("SELECT v FROM kv WHERE k = E'a\\\\{n}'"),
+                    &[],
+                )
+            })
+            .collect();
+        let found = &profile_of(&statements).loops[0];
+        assert_eq!(found.kind, LoopKind::Loop);
+        assert!(
+            found
+                .batched
+                .as_ref()
+                .unwrap_err()
+                .contains("not read back")
+        );
     }
 }
