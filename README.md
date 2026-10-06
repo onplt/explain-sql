@@ -114,7 +114,13 @@ The [contributing guide](https://github.com/onplt/explain-sql/blob/main/docs/con
 
 ## Status
 
-ExplainSQL is young but complete for its first scope. Version 0.1 shipped the diagnosis, the viewer, the index advisor and the proof loop. Version 0.2 brought it into team workflows: plan diffs, a CI gate and GitHub Action, statements with parameters, server logs, pg_stat_statements, the icicle view and plan anonymization. Version 0.3 adds lock footprints, the cost of writes and N+1 detection in requests. Feedback and issues are very welcome.
+The latest release is **0.3.0** (October 2026), with binaries for Linux, macOS and Windows and the crates on crates.io.
+
+- **0.1** shipped the diagnosis, the viewer, the index advisor and the proof loop.
+- **0.2** brought it into team workflows: plan diffs, a CI gate and GitHub Action, statements with parameters, server logs, pg_stat_statements, the icicle view and plan anonymization.
+- **0.3** looks past the plan: the locks a statement takes (`--locks`), what a write costs in index entries, HOT updates and WAL, and N+1 loops in server logs (`explainsql requests`).
+
+The [changelog](https://github.com/onplt/explain-sql/blob/main/CHANGELOG.md) lists every change. Feedback and issues are very welcome.
 
 ## License
 
