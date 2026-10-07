@@ -1,0 +1,44 @@
+# A local database for trying ExplainSQL: PostgreSQL 16 with the fixture
+# schema, pg_stat_statements and HypoPG. See README.md.
+#
+#   docker compose -f playground/compose.yaml up -d --build --wait
+#   docker compose -f playground/compose.yaml down -v
+name: explainsql-playground
+
+services:
+  postgres:
+    build: .
+    image: explainsql-playground:16
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: explainsql
+      POSTGRES_DB: shop
+    ports:
+      # 55432 on the host, so it does not clash with a PostgreSQL you already run.
+      - "${EXPLAINSQL_PLAYGROUND_PORT:-55432}:5432"
+    command:
+      - postgres
+      - -c
+      - shared_preload_libraries=pg_stat_statements
+      - -c
+      - track_io_timing=on
+      # As in the fixture corpus: statistics and the visibility map stay as
+      # schema.sql leaves them, so the stale-statistics examples stay stale.
+      - -c
+      - autovacuum=off
+    volumes:
+      - ../fixtures/schema.sql:/docker-entrypoint-initdb.d/10-schema.sql:ro
+      - ./initdb/20-extensions.sql:/docker-entrypoint-initdb.d/20-extensions.sql:ro
+      - ./initdb/30-workload.sql:/docker-entrypoint-initdb.d/30-workload.sql:ro
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      # Only the final server listens on TCP; the one that runs the init
+      # scripts does not. Healthy therefore means the data is loaded.
+      test: ["CMD", "pg_isready", "-h", "127.0.0.1", "-U", "postgres", "-d", "shop"]
+      interval: 2s
+      timeout: 3s
+      retries: 90
+      start_period: 10s
+
+volumes:
+  pgdata:
