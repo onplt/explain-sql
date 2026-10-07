@@ -44,6 +44,8 @@ explainsql --demo
 
 The demo is a real plan with a real problem: a nested loop that scans a whole table once per outer row. Move around with the arrow keys or `j` and `k`, press `?` for the keys and `q` to quit.
 
+No database at hand to try connected mode on? With Docker, the repository's [playground](https://github.com/onplt/explain-sql/tree/main/playground) starts a local PostgreSQL with sample data and a statement for each feature, in one command.
+
 ## Read your first plan
 
 Give it any plan you have:

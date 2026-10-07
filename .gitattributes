@@ -10,3 +10,5 @@ fixtures/logs/** text eol=lf
 fixtures/requests/** text eol=lf
 # Report snapshots compare byte for byte.
 crates/explainsql-core/tests/snapshots/*.snap text eol=lf
+# Mounted into a Linux container: keep LF on Windows checkouts too.
+playground/** text eol=lf

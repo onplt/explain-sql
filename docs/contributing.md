@@ -13,7 +13,7 @@ ExplainSQL is a Rust workspace with four crates:
 | `explainsql-tui` | The viewer, built on Ratatui and Crossterm, and the `top` list. |
 | `explainsql` | The binary: the command line, connected mode, and the `check`, `logs`, `top` and `requests` commands. |
 
-Besides the crates, `fixtures/` holds the test corpus, `xtask/` the project's own tasks, `fuzz/` the fuzz targets, `tools/cross-check/` a comparison with other tools, `install/` the install scripts and release packaging, `action/` the GitHub Action's scripts, and `docs/` this site.
+Besides the crates, `fixtures/` holds the test corpus, `xtask/` the project's own tasks, `fuzz/` the fuzz targets, `tools/cross-check/` a comparison with other tools, `install/` the install scripts and release packaging, `action/` the GitHub Action's scripts, `playground/` a local database to try the tool against, and `docs/` this site.
 
 ## Build and test
 

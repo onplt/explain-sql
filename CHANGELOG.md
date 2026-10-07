@@ -6,6 +6,13 @@ All notable changes to ExplainSQL. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- `playground/`: a local PostgreSQL 16 to try ExplainSQL against, started
+  with `docker compose -f playground/compose.yaml up -d --build --wait`. It
+  has the fixture schema, HypoPG, pg_stat_statements filled with a small
+  workload for `top`, and a sample statement for each feature.
+
 ## [0.3.0] - 2026-10-06
 
 ### Added
